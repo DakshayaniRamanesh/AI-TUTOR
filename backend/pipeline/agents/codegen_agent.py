@@ -20,8 +20,8 @@ class CodeGenAgent:
 
     def _generate(self, prompt: str) -> str:
         if self._sdk == "new":
-            # Try gemini-2.0-flash first; fall back to gemini-1.5-flash if 429 rate-limited
-            for model_name in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+            # Try gemini-2.0-flash first; fall back to gemini-2.0-flash-lite / gemini-1.5-pro if rate-limited
+            for model_name in ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"]:
                 try:
                     response = self._client.models.generate_content(
                         model=model_name,
@@ -32,8 +32,11 @@ class CodeGenAgent:
                 except Exception as e:
                     print(f"[CodeGenAgent] Model {model_name} error: {e}")
         elif self._sdk == "legacy":
-            model = self._legacy.GenerativeModel("gemini-1.5-flash")
-            return model.generate_content(prompt).text
+            try:
+                model = self._legacy.GenerativeModel("gemini-2.0-flash")
+                return model.generate_content(prompt).text
+            except Exception as e:
+                print(f"[CodeGenAgent] Legacy LLM error: {e}")
         return ""
 
     def run(self, job: VideoJob) -> VideoJob:
@@ -41,8 +44,9 @@ class CodeGenAgent:
         job.progress_percentage = 60
 
         error_context = ""
-        if job.ci_error_log:
-            error_context = f"\nPREVIOUS BUILD ERROR (Fix this in your code):\n{job.ci_error_log}\n"
+        build_err = getattr(job, "build_error_trace", None) or getattr(job, "ci_error_log", None)
+        if build_err:
+            error_context = f"\nPREVIOUS BUILD ERROR (Fix this in your code):\n{build_err}\n"
 
         prompt = f"""You are an expert Manim CE (v0.20.1) Python code developer.
 User Topic: "{job.user_prompt}"

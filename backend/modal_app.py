@@ -136,16 +136,23 @@ def _process_annotation_job(job_id: str, annotations_raw: list) -> Dict[str, Any
     return result
 
 
+from fastapi import Request
+
 # ── HTTP Endpoints ─────────────────────────────────────────────────────────────
 
 @app.function(image=manim_image, gpu="A10G", timeout=600, secrets=secrets)
 @modal.fastapi_endpoint(method="POST")
-def generate(body: dict) -> dict:
+async def generate(request: Request) -> dict:
     """
     POST /generate
-    Accepts multipart data (proxied through Next.js → JSON body with pdf_bytes in base64).
+    Accepts JSON body with prompt & pdf_bytes in base64.
     Returns job_id immediately; poll /status for completion.
     """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
     job_id = body.get("job_id") or f"job_{uuid.uuid4().hex[:10]}"
     prompt = body.get("prompt", "Explain the document concepts.")
     import base64
@@ -171,12 +178,17 @@ def generate(body: dict) -> dict:
 
 @app.function(image=manim_image, gpu="A10G", timeout=300, secrets=secrets)
 @modal.fastapi_endpoint(method="POST")
-def annotate(body: dict) -> dict:
+async def annotate(request: Request) -> dict:
     """
     POST /annotate
     Accepts {job_id, annotations: [{timestamp, frame_image, paths, comment}]}
     Returns stitched video_url with annotation clips inserted.
     """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
     job_id = body.get("job_id", "")
     annotations = body.get("annotations", [])
     result = _process_annotation_job.remote(job_id, annotations)
@@ -185,15 +197,16 @@ def annotate(body: dict) -> dict:
 
 @app.function(image=manim_image, secrets=secrets)
 @modal.fastapi_endpoint(method="GET")
-def status(job_id: str) -> dict:
+async def status(request: Request, job_id: str = "") -> dict:
     """
-    GET /status/{job_id}
+    GET /status?job_id=xxx or GET /status/xxx
     Poll for current job state.
     """
-    if job_id in jobs_db:
-        job = jobs_db[job_id]
+    target_id = job_id or request.query_params.get("job_id", "")
+    if target_id and target_id in jobs_db:
+        job = jobs_db[target_id]
         return {
-            "job_id": job_id,
+            "job_id": target_id,
             "status": job.get("status", "processing"),
             "current_stage": job.get("step", "pipeline"),
             "video_url": job.get("video_url"),
@@ -201,7 +214,7 @@ def status(job_id: str) -> dict:
             "error_message": job.get("error_message"),
         }
     return {
-        "job_id": job_id,
+        "job_id": target_id,
         "status": "processing",
         "current_stage": "pipeline",
         "video_url": None,
