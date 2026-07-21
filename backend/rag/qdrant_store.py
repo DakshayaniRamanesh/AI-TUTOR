@@ -18,7 +18,7 @@ from qdrant_client.models import (
     VectorParams, Distance, PointStruct, Filter, FieldCondition, MatchValue,
 )
 
-COLLECTION_NAME = "manim-docs"
+COLLECTION_NAME = "manim-docs-v2"
 EMBEDDING_DIM = 768  # text-embedding-004 output dimension
 
 
@@ -28,7 +28,7 @@ class GeminiEmbeddings:
     Falls back to a deterministic pseudo-embedding for offline/mock testing.
     """
 
-    MODEL = "models/text-embedding-004"
+    MODEL = "text-embedding-004"
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
