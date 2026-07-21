@@ -55,13 +55,13 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(({
 
           // Manim visual shapes and text
           ctx.fillStyle = '#6366f1';
-          ctx.font = 'bold 36px Outfit, sans-serif';
+          ctx.font = 'bold 32px Outfit, sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillText('Manim AI Visual Proof', canvas.width / 2, 80);
+          ctx.fillText('Manim AI Visual Explanation', canvas.width / 2, 80);
 
           ctx.fillStyle = '#818cf8';
-          ctx.font = '28px "Fira Code", monospace';
-          ctx.fillText('E = mc²', canvas.width / 2, 160);
+          ctx.font = '22px "Fira Code", monospace';
+          ctx.fillText('Concept Analysis & Visual Proof', canvas.width / 2, 140);
 
           // Animated rotating geometric circle/polygon
           const centerX = canvas.width / 2;

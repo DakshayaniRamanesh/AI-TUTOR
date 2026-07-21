@@ -53,7 +53,8 @@ CRITICAL RULES:
 4. Ensure all Mobjects stay within screen boundaries (config.frame_width x config.frame_height).
 5. Use a dark theme with vibrant accent colors.
 6. Do NOT import external packages beyond manim, math, numpy.
-7. The code must be fully self-contained and run without any modification."""
+7. Use valid Manim color constants (BLUE, TEAL, GREEN, YELLOW, RED, PURPLE, ORANGE, WHITE, GRAY) or hex strings (e.g. '#00ffff'). Do NOT use CYAN.
+8. The code must be fully self-contained and run without any modification."""
 
         if self.api_key:
             try:
@@ -67,28 +68,36 @@ CRITICAL RULES:
             except Exception as e:
                 print(f"[CodeGenAgent] LLM error: {e}. Using fallback Manim template.")
 
-        # Fallback Manim code
-        title_safe = (job.user_prompt or "Topic")[:30].replace('"', "'")
+        # Dynamic fallback Manim code based on user prompt and document text
+        import json
+        title_clean = (job.user_prompt or "Document Concept").strip().replace("\n", " ")[:35]
+        sub_clean = (job.document_text or "Visual Analysis").strip().replace("\n", " ")[:40]
+
+        title_json = json.dumps(title_clean)
+        sub_json = json.dumps(sub_clean)
+
         job.manim_code = f'''from manim import *
 
 class MainScene(Scene):
     def construct(self):
-        self.camera.background_color = "#0f0f23"
+        self.camera.background_color = "#090d16"
 
-        title = Text("{title_safe}", font_size=42, color=BLUE)
-        subtitle = Text("Generated with Manim AI", font_size=24, color=WHITE).next_to(title, DOWN)
+        title = Text({title_json}, font_size=38, color=BLUE)
+        subtitle = Text("Concept Breakdown", font_size=24, color=GRAY).next_to(title, DOWN)
 
         self.play(Write(title), run_time=1.5)
         self.play(FadeIn(subtitle), run_time=1.0)
         self.wait(1)
 
-        formula = MathTex(r"E = mc^2", font_size=60, color=YELLOW)
+        detail_box = RoundedRectangle(corner_radius=0.2, height=2.2, width=7.0, color=TEAL)
+        detail_text = Text({sub_json}, font_size=20, color=WHITE).move_to(detail_box.get_center())
         group = VGroup(title, subtitle)
+        box_group = VGroup(detail_box, detail_text)
 
-        self.play(ReplacementTransform(group, formula))
+        self.play(ReplacementTransform(group, box_group))
         self.wait(2)
 
-        box = SurroundingRectangle(formula, color=GREEN, buff=MED_SMALL_BUFF)
-        self.play(Create(box))
+        highlight = SurroundingRectangle(box_group, color=YELLOW, buff=MED_SMALL_BUFF)
+        self.play(Create(highlight))
         self.wait(2)'''.strip()
         return job

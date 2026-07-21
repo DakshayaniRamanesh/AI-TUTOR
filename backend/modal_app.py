@@ -7,6 +7,8 @@ import modal
 # Modal Container Image — matches spec exactly
 # - manim==0.20.1, boto3==1.35.99 (pin: 1.36.0 breaks DO Spaces)
 # - gpu="A10G" for render endpoints
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+
 manim_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install([
@@ -38,12 +40,13 @@ manim_image = (
         "pydantic>=2.5.0",
         "requests",
     ])
+    .add_local_dir(backend_dir, remote_path="/root/backend")
 )
 
 app = modal.App("manim-app", image=manim_image)
 
-# ── In-memory job state (for dev). In production replace with Firestore lookups. ──
-jobs_db: Dict[str, Any] = {}
+# ── Persistent shared job state across Modal containers ─────────────────────────
+jobs_db = modal.Dict.from_name("manim-jobs-db", create_if_missing=True)
 
 
 # Define secrets from backend/.env unconditionally for Modal cloud deployment

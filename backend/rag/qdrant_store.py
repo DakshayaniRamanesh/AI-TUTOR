@@ -19,16 +19,16 @@ from qdrant_client.models import (
 )
 
 COLLECTION_NAME = "manim-docs"
-EMBEDDING_DIM = 3072  # gemini-embedding-2 output dimension
+EMBEDDING_DIM = 768  # text-embedding-004 output dimension
 
 
 class GeminiEmbeddings:
     """
-    Wrapper around gemini-embedding-2 (multimodal, natively understands PDF pages).
+    Wrapper around text-embedding-004.
     Falls back to a deterministic pseudo-embedding for offline/mock testing.
     """
 
-    MODEL = "models/gemini-embedding-2"
+    MODEL = "models/text-embedding-004"
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
@@ -56,7 +56,7 @@ class GeminiEmbeddings:
             try:
                 result = self._client.models.embed_content(
                     model=self.MODEL,
-                    content=text,
+                    contents=text,
                 )
                 return result.embedding.values
             except Exception as e:
@@ -117,6 +117,16 @@ class QdrantRAGStore:
                     vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE),
                 )
                 print(f"[QdrantRAGStore] Created collection '{COLLECTION_NAME}' (dim={EMBEDDING_DIM})")
+            
+            # Create payload index for job_id field (required by Qdrant Cloud)
+            try:
+                self.client.create_payload_index(
+                    collection_name=COLLECTION_NAME,
+                    field_name="job_id",
+                    field_schema="keyword",
+                )
+            except Exception:
+                pass
         except Exception as e:
             print(f"[QdrantRAGStore] Collection setup error: {e}")
 

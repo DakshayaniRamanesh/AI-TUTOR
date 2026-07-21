@@ -39,8 +39,21 @@ class UploaderAgent:
             except Exception as e:
                 print(f"[UploaderAgent] DO Spaces upload error: {e}")
 
-        # Local or mock video URL fallback
-        job.video_url = f"/api/video/{job.job_id}_v{job.version}.mp4"
+        # Fallback: Convert rendered video to base64 Data URL so browser plays it directly without S3
+        if job.video_path and os.path.exists(job.video_path):
+            try:
+                import base64
+                with open(job.video_path, "rb") as vf:
+                    v_bytes = vf.read()
+                b64_str = base64.b64encode(v_bytes).decode("utf-8")
+                job.video_url = f"data:video/mp4;base64,{b64_str}"
+                print(f"[UploaderAgent] Encoded {len(v_bytes)} video bytes into Data URL for job {job.job_id}")
+            except Exception as e:
+                print(f"[UploaderAgent] Base64 encoding error: {e}")
+                job.video_url = f"/api/video/{job.job_id}_v{job.version}.mp4"
+        else:
+            job.video_url = f"/api/video/{job.job_id}_v{job.version}.mp4"
+
         job.status = JobStatus.DONE
         job.progress_percentage = 100
         return job

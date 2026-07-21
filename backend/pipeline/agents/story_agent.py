@@ -62,17 +62,19 @@ Output ONLY the script, no preamble."""
             except Exception as e:
                 print(f"[StoryAgent] LLM error: {e}. Using fallback script.")
 
-        # Fallback script template
-        job.story_script = f"""## Scene 1: Introduction to {job.user_prompt}
-- Visual: Title text "{job.user_prompt}" fades in with a gradient background.
-- Narration: Welcome to this visual explanation of {job.user_prompt}.
+        # Fallback script template — dynamically generated from PDF text and prompt
+        topic = (job.user_prompt or "Document Concept Analysis")[:60]
+        snippet = (job.document_text or "Visual breakdown of main principles.")[:200].replace("\n", " ")
+        job.story_script = f"""## Scene 1: Introduction to {topic}
+- Visual: Title text "{topic}" fades in with a dark gradient background.
+- Narration: Welcome to this visual explanation of {topic}.
 
-## Scene 2: Core Concepts
-- Visual: Animated geometric shapes illustrating the key principles.
-- Equation: E = mc^2
-- Narration: Let's explore the core concepts step by step.
+## Scene 2: Core Analysis
+- Visual: Key excerpts and formula breakdown: "{snippet}".
+- Visual: Geometric nodes and connections illustrating principles.
+- Narration: Let's inspect the underlying principles extracted from the document.
 
-## Scene 3: Summary
-- Visual: Summary text with key takeaways.
-- Narration: That concludes our visual explanation."""
+## Scene 3: Summary & Takeaways
+- Visual: Summary card highlighting main takeaways for {topic}.
+- Narration: That concludes our visual explanation of {topic}."""
         return job
