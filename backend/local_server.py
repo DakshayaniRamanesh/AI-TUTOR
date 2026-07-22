@@ -122,7 +122,7 @@ async def annotate(payload: dict):
             )
         )
 
-    handler = AnnotationHandler(pipeline.rag_store)
+    handler = AnnotationHandler(QdrantRAGStore())
     updated_job = handler.process_annotations(job, parsed_annotations)
     jobs_store[job_id] = updated_job
 

@@ -35,9 +35,29 @@ export async function POST(request: Request) {
       body: JSON.stringify({ prompt, pdf_bytes: pdfBytes }),
     });
 
+    if (!res.ok) {
+      // Read the actual error body from the backend for easier debugging
+      let detail = res.statusText;
+      try {
+        const errBody = await res.json();
+        detail = errBody.detail || errBody.error || JSON.stringify(errBody);
+      } catch {
+        try { detail = await res.text(); } catch { /* ignore */ }
+      }
+      console.error(`[/api/generate] Backend error ${res.status}: ${detail}`);
+      return NextResponse.json(
+        { error: `Backend returned ${res.status}: ${detail}` },
+        { status: res.status }
+      );
+    }
+
     const data = await res.json();
     return NextResponse.json(data);
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('[/api/generate] Fetch/network error:', error.message);
+    return NextResponse.json(
+      { error: `Cannot reach backend: ${error.message}` },
+      { status: 500 }
+    );
   }
 }

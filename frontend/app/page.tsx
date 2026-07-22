@@ -34,34 +34,85 @@ export default function HomePage() {
     setProgressStep('Initializing multi-agent pipeline...');
 
     try {
-      const { job_id } = await generateVideo(pdfFile, prompt);
+      const { job_id, status, video_url, cache_hit } = await generateVideo(pdfFile, prompt) as any;
       setJobId(job_id);
 
-      // Poll status until done
-      const interval = setInterval(async () => {
-        try {
-          const statusRes = await pollJobStatus(job_id);
-          setProgressPercentage(statusRes.progress_percentage || 50);
-          setProgressStep(statusRes.step ? `Executing agent: ${statusRes.step}` : 'Generating Manim scenes...');
+      // ── Cache hit: instant response (no pipeline needed) ──────────────────────
+      if (cache_hit && video_url) {
+        setProgressPercentage(100);
+        setProgressStep('⚡ Served from cache — instant response!');
+        setVideoUrl(video_url);
+        setIsProcessing(false);
+        setPhase('player');
+        return;
+      }
 
-          if (statusRes.status === 'done' || statusRes.video_url) {
-            clearInterval(interval);
-            setVideoUrl(statusRes.video_url || '/api/video/sample_manim.mp4');
-            setIsProcessing(false);
-            setPhase('player');
-          } else if (statusRes.status === 'error') {
-            clearInterval(interval);
-            setIsProcessing(false);
-            alert(`Generation failed: ${statusRes.error_message}`);
+      // ── SSE: push-based status updates (replaces polling) ──────────────────
+      // Uses EventSource (Server-Sent Events) to receive updates the instant
+      // each pipeline stage completes. Falls back to polling if SSE unsupported.
+      const backendUrl = process.env.NEXT_PUBLIC_MODAL_BACKEND_URL || '';
+      const sseUrl = `${backendUrl}/stream_status?job_id=${job_id}`;
+
+      if (typeof EventSource !== 'undefined' && backendUrl) {
+        const source = new EventSource(sseUrl);
+        source.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            setProgressPercentage(data.progress_percentage || 50);
+            setProgressStep(data.current_stage ? `✓ ${data.current_stage}` : 'Generating Manim scenes...');
+
+            if (data.status === 'done' || data.video_url) {
+              source.close();
+              setVideoUrl(data.video_url || '/api/video/sample_manim.mp4');
+              setIsProcessing(false);
+              setPhase('player');
+            } else if (data.status === 'error') {
+              source.close();
+              setIsProcessing(false);
+              alert(`Generation failed: ${data.error_message}`);
+            }
+          } catch (e) {
+            console.error('SSE parse error:', e);
           }
-        } catch (e) {
-          console.error('Polling error:', e);
-        }
-      }, 1500);
+        };
+        source.onerror = () => {
+          // SSE failed — fall back to polling
+          source.close();
+          console.warn('[SSE] Connection failed, falling back to polling');
+          startPolling(job_id);
+        };
+      } else {
+        // Fallback: polling (when SSE unavailable or no backend URL configured)
+        startPolling(job_id);
+      }
     } catch (err: any) {
       setIsProcessing(false);
       alert(`Failed to start video generation: ${err.message}`);
     }
+  };
+
+  // Polling fallback (used when SSE is unavailable)
+  const startPolling = (job_id: string) => {
+    const interval = setInterval(async () => {
+      try {
+        const statusRes = await pollJobStatus(job_id);
+        setProgressPercentage(statusRes.progress_percentage || 50);
+        setProgressStep(statusRes.step ? `Executing agent: ${statusRes.step}` : 'Generating Manim scenes...');
+
+        if (statusRes.status === 'done' || statusRes.video_url) {
+          clearInterval(interval);
+          setVideoUrl(statusRes.video_url || '/api/video/sample_manim.mp4');
+          setIsProcessing(false);
+          setPhase('player');
+        } else if (statusRes.status === 'error') {
+          clearInterval(interval);
+          setIsProcessing(false);
+          alert(`Generation failed: ${statusRes.error_message}`);
+        }
+      } catch (e) {
+        console.error('Polling error:', e);
+      }
+    }, 1500);
   };
 
   const handleTogglePlay = () => {

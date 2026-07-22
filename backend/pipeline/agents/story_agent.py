@@ -49,6 +49,10 @@ class StoryAgent:
         doc_text = (job.document_text or "")[:3000]
         full_context = (context_text or doc_text or "No specific document context found.")
 
+        print(f"[StoryAgent] RAG chunks retrieved: {len(relevant_chunks)} | doc_text length: {len(doc_text)}")
+        print(f"[StoryAgent] Context being used: {'PDF chunks' if relevant_chunks else 'doc_text fallback' if doc_text else 'NO CONTEXT — generic script likely'}")
+        print(f"[StoryAgent] api_key present: {bool(self.api_key)} | sdk: {self._sdk}")
+
         prompt = f"""You are an award-winning 3Blue1Brown mathematical animator and computer science educator.
 User Topic: "{job.user_prompt}"
 Reference Material / Document Excerpts:

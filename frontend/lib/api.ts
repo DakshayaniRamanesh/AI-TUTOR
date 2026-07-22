@@ -1,6 +1,6 @@
 export interface AnnotationPoint {
-  x: float;
-  y: float;
+  x: number;
+  y: number;
 }
 
 export interface AnnotationPayload {

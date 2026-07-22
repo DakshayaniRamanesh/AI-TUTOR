@@ -57,6 +57,7 @@ def _process_generation_job(job_dict: Dict[str, Any], pdf_bytes: bytes) -> Dict[
     """Heavy GPU worker: runs the full LangGraph pipeline."""
     from backend.pipeline.models import VideoJob
     from backend.pipeline.graph import VideoGenerationPipeline
+    from backend.rag.qdrant_store import QdrantRAGStore
 
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     temp_pdf.write(pdf_bytes)
@@ -84,6 +85,27 @@ def _process_generation_job(job_dict: Dict[str, Any], pdf_bytes: bytes) -> Dict[
         "version": final_job.version,
     }
     jobs_db[final_job.job_id] = result
+
+    # ── Store result in cross-student cache (NEW) ─────────────────────────────
+    # If the job succeeded, cache the result so future students with the same
+    # PDF + prompt get an instant response instead of re-running the pipeline.
+    if final_job.video_url and final_job.status.value == "done":
+        try:
+            rag = QdrantRAGStore()
+            content_hash = rag.compute_content_hash(
+                final_job.document_text or "",
+                final_job.user_prompt,
+            )
+            rag.cache_video_result(
+                content_hash=content_hash,
+                video_url=final_job.video_url,
+                manim_code=final_job.manim_code or "",
+                story_script=final_job.story_script or "",
+                user_prompt=final_job.user_prompt,
+            )
+        except Exception as e:
+            print(f"[modal_app] Cache store failed (non-critical): {e}")
+
     return result
 
 
@@ -146,7 +168,12 @@ async def generate(request: Request) -> dict:
     """
     POST /generate
     Accepts JSON body with prompt & pdf_bytes in base64.
-    Returns job_id immediately; poll /status for completion.
+
+    ── Cache check (NEW) ───────────────────────────────────────────────────
+    Before spawning the GPU pipeline, compute hash(pdf_content + prompt)
+    and check if a finished video exists in the Qdrant cache.
+    If yes, return it immediately (multi-minute pipeline → instant response).
+    If no, spawn the pipeline as before and store result in cache on completion.
     """
     try:
         body = await request.json()
@@ -159,6 +186,31 @@ async def generate(request: Request) -> dict:
     pdf_b64 = body.get("pdf_bytes", "")
     pdf_bytes = base64.b64decode(pdf_b64) if pdf_b64 else b""
 
+    # ── Cache check before GPU pipeline ───────────────────────────────────────
+    try:
+        from backend.rag.qdrant_store import QdrantRAGStore
+        rag = QdrantRAGStore()
+        # Decode PDF text for hashing (first 2000 chars only, no full parse needed)
+        pdf_text_for_hash = pdf_bytes[:4000].decode("utf-8", errors="ignore") if pdf_bytes else ""
+        content_hash = rag.compute_content_hash(pdf_text_for_hash, prompt)
+        cached = rag.get_cached_video(content_hash, prompt)
+        if cached and cached.get("video_url"):
+            # Cache hit — return instantly without spawning GPU job
+            cached_result = {
+                "job_id": job_id,
+                "status": "done",
+                "video_url": cached["video_url"],
+                "estimated_seconds": 0,
+                "cache_hit": True,
+                "cache_type": cached.get("cache_type", "exact"),
+            }
+            jobs_db[job_id] = cached_result
+            print(f"[generate] ⚡ Cache hit ({cached.get('cache_type')}) for job {job_id} — skipping GPU pipeline")
+            return cached_result
+    except Exception as e:
+        print(f"[generate] Cache check failed (non-critical, continuing with pipeline): {e}")
+
+    # Cache miss — run full pipeline
     jobs_db[job_id] = {
         "job_id": job_id,
         "status": "processing",
@@ -173,6 +225,7 @@ async def generate(request: Request) -> dict:
         "status": "processing",
         "video_url": None,
         "estimated_seconds": 90,
+        "cache_hit": False,
     }
 
 
@@ -199,7 +252,7 @@ async def annotate(request: Request) -> dict:
 @modal.fastapi_endpoint(method="GET")
 async def status(request: Request, job_id: str = "") -> dict:
     """
-    GET /status?job_id=xxx or GET /status/xxx
+    GET /status?job_id=xxx
     Poll for current job state.
     """
     target_id = job_id or request.query_params.get("job_id", "")
@@ -212,6 +265,7 @@ async def status(request: Request, job_id: str = "") -> dict:
             "video_url": job.get("video_url"),
             "story_script": job.get("story_script"),
             "error_message": job.get("error_message"),
+            "cache_hit": job.get("cache_hit", False),
         }
     return {
         "job_id": target_id,
@@ -219,4 +273,55 @@ async def status(request: Request, job_id: str = "") -> dict:
         "current_stage": "pipeline",
         "video_url": None,
         "error_message": None,
+        "cache_hit": False,
     }
+
+
+@app.function(image=manim_image, secrets=secrets)
+@modal.fastapi_endpoint(method="GET")
+async def stream_status(request: Request, job_id: str = "") -> Any:
+    """
+    GET /stream_status?job_id=xxx
+    Server-Sent Events endpoint — pushes status updates to frontend.
+
+    Advantage over polling:
+      - Frontend receives updates instantly the moment they are available
+      - Eliminates 60+ unnecessary HTTP requests during a 90s render
+      - Better perceived performance (student sees each pipeline stage complete)
+
+    Frontend usage:
+        const source = new EventSource(`/stream_status?job_id=${jobId}`);
+        source.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            if (data.status === 'done') source.close();
+        };
+    """
+    import asyncio
+    import json as json_lib
+    from fastapi.responses import StreamingResponse
+
+    target_id = job_id or request.query_params.get("job_id", "")
+
+    async def event_generator():
+        max_polls = 120   # 120 × 2s = 4 min max wait
+        interval = 2.0    # seconds between checks
+        for _ in range(max_polls):
+            if target_id in jobs_db:
+                job = jobs_db[target_id]
+                payload = {
+                    "job_id": target_id,
+                    "status": job.get("status", "processing"),
+                    "current_stage": job.get("step", "pipeline"),
+                    "video_url": job.get("video_url"),
+                    "error_message": job.get("error_message"),
+                    "cache_hit": job.get("cache_hit", False),
+                }
+                yield f"data: {json_lib.dumps(payload)}\n\n"
+                if job.get("status") in ("done", "error"):
+                    break
+            else:
+                yield f"data: {{\"status\": \"processing\", \"job_id\": \"{target_id}\"}}\n\n"
+            await asyncio.sleep(interval)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

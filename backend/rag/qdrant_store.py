@@ -11,6 +11,7 @@ Spec requirements:
 import os
 import uuid
 import hashlib
+import json
 from typing import List, Dict, Any, Optional
 
 from qdrant_client import QdrantClient
@@ -20,6 +21,11 @@ from qdrant_client.models import (
 
 COLLECTION_NAME = "manim-docs-v2"
 EMBEDDING_DIM = 768  # text-embedding-004 output dimension
+
+# Cross-student video cache collection
+# Keyed by hash(pdf_content + user_prompt) — serves repeat requests instantly
+CACHE_COLLECTION_NAME = "manim-video-cache"
+CACHE_VECTOR_DIM = 768  # same embedding model
 
 
 class GeminiEmbeddings:
@@ -117,7 +123,15 @@ class QdrantRAGStore:
                     vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE),
                 )
                 print(f"[QdrantRAGStore] Created collection '{COLLECTION_NAME}' (dim={EMBEDDING_DIM})")
-            
+
+            # Create the cross-student video cache collection (NEW)
+            if CACHE_COLLECTION_NAME not in existing:
+                self.client.create_collection(
+                    collection_name=CACHE_COLLECTION_NAME,
+                    vectors_config=VectorParams(size=CACHE_VECTOR_DIM, distance=Distance.COSINE),
+                )
+                print(f"[QdrantRAGStore] Created cache collection '{CACHE_COLLECTION_NAME}'")
+
             # Create payload index for job_id field (required by Qdrant Cloud)
             try:
                 self.client.create_payload_index(
@@ -127,8 +141,129 @@ class QdrantRAGStore:
                 )
             except Exception:
                 pass
+            try:
+                self.client.create_payload_index(
+                    collection_name=CACHE_COLLECTION_NAME,
+                    field_name="content_hash",
+                    field_schema="keyword",
+                )
+            except Exception:
+                pass
         except Exception as e:
             print(f"[QdrantRAGStore] Collection setup error: {e}")
+
+    # ── Cross-student Video Cache (NEW) ──────────────────────────────────────────────
+
+    @staticmethod
+    def compute_content_hash(pdf_text: str, user_prompt: str) -> str:
+        """
+        Compute a stable cache key from the PDF content and user prompt.
+        Two requests with the same textbook chapter and similar question
+        will hash to the same key and serve a cached video.
+
+        Uses SHA-256 of (normalized_prompt + first_2000_chars_of_pdf_text).
+        """
+        # Normalize: lowercase, strip whitespace for prompt-level dedup
+        normalized_prompt = " ".join(user_prompt.lower().split())
+        # Use first 2000 chars of PDF to identify the chapter/section
+        pdf_fingerprint = pdf_text[:2000] if pdf_text else ""
+        raw = f"{normalized_prompt}||{pdf_fingerprint}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def cache_video_result(
+        self,
+        content_hash: str,
+        video_url: str,
+        manim_code: str,
+        story_script: str,
+        user_prompt: str,
+    ) -> None:
+        """
+        Store a finished video result in the cross-student cache.
+        Called by UploaderAgent after a successful render + upload.
+        """
+        try:
+            # Embed the user prompt for semantic retrieval (catches near-duplicate questions)
+            vector = self.embeddings.embed_text(user_prompt)
+            self.client.upsert(
+                collection_name=CACHE_COLLECTION_NAME,
+                points=[
+                    PointStruct(
+                        id=str(uuid.uuid4()),
+                        vector=vector,
+                        payload={
+                            "content_hash": content_hash,
+                            "video_url": video_url,
+                            "manim_code": manim_code[:5000],  # truncate for storage
+                            "story_script": story_script[:3000],
+                            "user_prompt": user_prompt,
+                        },
+                    )
+                ],
+            )
+            print(f"[QdrantRAGStore] Cached video result for hash {content_hash[:12]}...")
+        except Exception as e:
+            print(f"[QdrantRAGStore] Cache store failed (non-critical): {e}")
+
+    def get_cached_video(
+        self,
+        content_hash: str,
+        user_prompt: str,
+        similarity_threshold: float = 0.92,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Look up a cached video result.
+
+        Two-phase lookup:
+          1. Exact hash match (same PDF section + same prompt text)
+          2. Semantic similarity match (same PDF section + similar prompt)
+             with a high threshold (0.92) to avoid false positives.
+
+        Returns dict with {video_url, manim_code, story_script} or None.
+        """
+        try:
+            # Phase 1: exact hash lookup via payload filter
+            exact_results = self.client.scroll(
+                collection_name=CACHE_COLLECTION_NAME,
+                scroll_filter=Filter(
+                    must=[FieldCondition(key="content_hash", match=MatchValue(value=content_hash))]
+                ),
+                limit=1,
+                with_payload=True,
+            )
+            points, _ = exact_results
+            if points:
+                payload = points[0].payload
+                print(f"[QdrantRAGStore] ✅ Exact cache hit for hash {content_hash[:12]}...")
+                return {
+                    "video_url": payload.get("video_url"),
+                    "manim_code": payload.get("manim_code"),
+                    "story_script": payload.get("story_script"),
+                    "cache_type": "exact",
+                }
+
+            # Phase 2: semantic similarity lookup
+            query_vector = self.embeddings.embed_text(user_prompt)
+            semantic_results = self.client.query_points(
+                collection_name=CACHE_COLLECTION_NAME,
+                query=query_vector,
+                limit=1,
+            ).points
+
+            if semantic_results and semantic_results[0].score >= similarity_threshold:
+                payload = semantic_results[0].payload
+                print(f"[QdrantRAGStore] ✅ Semantic cache hit (score={semantic_results[0].score:.3f}) for '{user_prompt[:40]}'")
+                return {
+                    "video_url": payload.get("video_url"),
+                    "manim_code": payload.get("manim_code"),
+                    "story_script": payload.get("story_script"),
+                    "cache_type": "semantic",
+                }
+        except Exception as e:
+            print(f"[QdrantRAGStore] Cache lookup failed (non-critical): {e}")
+
+        return None  # Cache miss — run full pipeline
+
 
     def upsert_chunks(self, chunks: List[Dict[str, Any]], job_id: str):
         """Embed and store document chunks for a given job_id."""
