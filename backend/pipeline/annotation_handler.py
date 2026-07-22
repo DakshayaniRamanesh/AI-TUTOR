@@ -157,24 +157,36 @@ class AnnotationHandler:
         if not frame_image_b64:
             return comment
 
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
             return comment
 
         try:
-            # Inline image bytes for Gemini vision
-            image_data = base64.b64decode(frame_image_b64.split(",")[-1])
-            import google.generativeai as genai  # type: ignore
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            from google.generativeai.types import BlobDict
-            response = model.generate_content([
-                {"mime_type": "image/png", "data": image_data},
-                f"Describe what is highlighted/circled in this video frame. User question: {comment}",
-            ])
-            return response.text or comment
+            from groq import Groq
+            client = Groq(api_key=api_key)
+            # Ensure the frame_image_b64 is a proper data URL
+            image_url = frame_image_b64 if frame_image_b64.startswith("data:image") else f"data:image/png;base64,{frame_image_b64}"
+            
+            response = client.chat.completions.create(
+                model="llama-3.2-11b-vision-preview",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"Describe what is highlighted/circled in this video frame. User question: {comment}"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": image_url,
+                                },
+                            },
+                        ],
+                    }
+                ]
+            )
+            return response.choices[0].message.content or comment
         except Exception as e:
-            print(f"[AnnotationHandler] Vision description failed: {e}")
+            print(f"[AnnotationHandler] Groq Vision description failed: {e}")
             return comment
 
     def _stitch(

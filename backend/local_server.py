@@ -6,6 +6,14 @@ from dotenv import load_dotenv
 # Load backend/.env environment variables
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
+try:
+    import imageio_ffmpeg
+    ffmpeg_dir = os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
+    os.environ["PATH"] += os.pathsep + ffmpeg_dir
+    print(f"[Setup] Injected FFmpeg into PATH from {ffmpeg_dir}")
+except ImportError:
+    pass
+
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -122,7 +130,7 @@ async def annotate(payload: dict):
             )
         )
 
-    handler = AnnotationHandler(pipeline.rag_store)
+    handler = AnnotationHandler(QdrantRAGStore())
     updated_job = handler.process_annotations(job, parsed_annotations)
     jobs_store[job_id] = updated_job
 
@@ -138,7 +146,7 @@ async def annotate(payload: dict):
         "video_url": video_url
     }
 
-@app.get("/video/{filename}")
+@app.api_route("/video/{filename}", methods=["GET", "HEAD"])
 async def serve_video(filename: str):
     # Find matching file in temp or job directories
     for job in jobs_store.values():
@@ -146,6 +154,28 @@ async def serve_video(filename: str):
             if os.path.exists(job.video_path):
                 return FileResponse(job.video_path, media_type="video/mp4")
     return JSONResponse({"error": "Video file not found"}, status_code=404)
+
+@app.get("/test-llm")
+async def test_llm():
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return JSONResponse({"status": "error", "message": "GROQ_API_KEY is missing from backend/.env"}, status_code=400)
+    
+    try:
+        from groq import Groq
+        client = Groq(api_key=api_key)
+        resp = client.chat.completions.create(
+            model="llama-3.1-8b-instant", # Fast/cheap model for testing
+            messages=[{"role": "user", "content": "Reply with exactly one word: OK"}],
+            max_tokens=10
+        )
+        reply = resp.choices[0].message.content
+        if reply:
+            return {"status": "success", "message": f"Groq API working! (Response: {reply.strip()})"}
+                
+        return JSONResponse({"status": "error", "message": "LLM returned empty response."}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 if __name__ == "__main__":
     import uvicorn
