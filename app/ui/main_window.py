@@ -1,12 +1,12 @@
 """
 Main Application Window (Apple Freeform Shell Layout)
-Sidebar (~260px), Top Toolbar, Infinite Canvas, Zoom HUD, Floating Tool Palette & AskBar
+Sidebar (~260px), Top Toolbar, Infinite Canvas, Zoom HUD, Floating Tool Palette, AskBar & Notebooks Panel
 """
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QListWidget,
     QListWidgetItem, QPushButton, QLineEdit, QLabel, QFrame,
-    QSplitter, QStackedWidget, QFileDialog
+    QSplitter, QStackedWidget, QFileDialog, QInputDialog, QMessageBox
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont, QColor
@@ -26,9 +26,12 @@ from .items.graph_card import GraphCard
 
 from .widgets.ask_bar import AskBar
 from .widgets.reference_panel import ReferencePanel
+from .views.notebooks_panel import NotebooksPanel
+
 from ..backend.stem_solver import solve_stem_question
 from ..backend.video_gen_client import request_video_generation
 from ..storage.board_model import BoardModel
+from ..storage.notebook_storage import NotebookStorage
 from ..storage.downloads_manager import DownloadsManager
 
 class MainWindow(QMainWindow):
@@ -44,8 +47,9 @@ class MainWindow(QMainWindow):
         self.reference_panel.insert_data_requested.connect(self._on_insert_reference_table)
 
         self._apply_global_styles()
+        self._init_ui()
 
-        # Root layout
+    def _init_ui(self):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         root_layout = QVBoxLayout(central_widget)
@@ -56,7 +60,7 @@ class MainWindow(QMainWindow):
         self.title_bar = self._create_title_bar()
         root_layout.addWidget(self.title_bar)
 
-        # 2. Main Content Splitter (Sidebar + Canvas)
+        # 2. Main Content Splitter (Sidebar + Main View Stack)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setHandleWidth(1)
 
@@ -74,8 +78,11 @@ class MainWindow(QMainWindow):
         self.toolbar = self._create_top_toolbar()
         cc_layout.addWidget(self.toolbar)
 
-        # Canvas Stack Area
-        canvas_wrapper = QWidget(self.canvas_container)
+        # Main View Stack (Index 0: Canvas View, Index 1: Notebooks View)
+        self.main_stack = QStackedWidget(self.canvas_container)
+
+        # Canvas View Wrapper
+        canvas_wrapper = QWidget(self.main_stack)
         cw_layout = QVBoxLayout(canvas_wrapper)
         cw_layout.setContentsMargins(0, 0, 0, 0)
         cw_layout.setSpacing(0)
@@ -90,13 +97,20 @@ class MainWindow(QMainWindow):
         self.hud_overlay = self._create_hud_overlay()
         cw_layout.addWidget(self.hud_overlay)
 
-        cc_layout.addWidget(canvas_wrapper)
+        self.main_stack.addWidget(canvas_wrapper) # Index 0
+
+        # Notebooks View Panel
+        self.notebooks_panel = NotebooksPanel(self.main_stack)
+        self.notebooks_panel.open_notebook_requested.connect(self._on_load_notebook_requested)
+        self.notebooks_panel.create_notebook_requested.connect(self._on_new_notebook_requested)
+        self.main_stack.addWidget(self.notebooks_panel) # Index 1
+
+        cc_layout.addWidget(self.main_stack)
         self.splitter.addWidget(self.canvas_container)
 
         self.splitter.setSizes([260, 1020])
         root_layout.addWidget(self.splitter)
 
-        # Populate Initial Demo Content on Canvas
         self._populate_demo_canvas()
 
     def _apply_global_styles(self):
@@ -177,6 +191,7 @@ class MainWindow(QMainWindow):
         self.sidebar_list = QListWidget(sb)
         items = [
             "📋 All Boards",
+            "📓 Notebooks",
             "🕒 Recents",
             "👥 Shared",
             "⭐ Favourites",
@@ -244,6 +259,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_sb_toggle)
 
         btn_back = QPushButton(qta.icon('fa5s.chevron-left', color='#007aff'), "", tb)
+        btn_back.clicked.connect(lambda: self.main_stack.setCurrentIndex(0))
         layout.addWidget(btn_back)
 
         # Board Title
@@ -272,6 +288,10 @@ class MainWindow(QMainWindow):
         pill_layout.setContentsMargins(4, 2, 4, 2)
         pill_layout.setSpacing(2)
 
+        btn_save = QPushButton(qta.icon('fa5s.save', color='#007aff'), "Save", pill)
+        btn_save.setStyleSheet("color: #007aff; font-weight: bold;")
+        btn_save.clicked.connect(self._on_toolbar_save)
+
         btn_paste = QPushButton(qta.icon('fa5s.paste', color='#007aff'), "Paste", pill)
         btn_paste.clicked.connect(self._on_toolbar_paste)
 
@@ -292,6 +312,7 @@ class MainWindow(QMainWindow):
         self.btn_grid_mode.setStyleSheet("color: #007aff; font-weight: bold;")
         self.btn_grid_mode.clicked.connect(self._toggle_grid_mode)
 
+        pill_layout.addWidget(btn_save)
         pill_layout.addWidget(btn_paste)
         pill_layout.addWidget(btn_sticky)
         pill_layout.addWidget(btn_note)
@@ -322,9 +343,8 @@ class MainWindow(QMainWindow):
             QPushButton {
                 border: none;
                 background: transparent;
-                font-weight: bold;
                 font-size: 14px;
-                color: #1c1c1e;
+                font-weight: bold;
                 padding: 4px 8px;
             }
             QLabel {
@@ -334,15 +354,16 @@ class MainWindow(QMainWindow):
             }
         """)
         zh_layout = QHBoxLayout(zoom_hud)
-        zh_layout.setContentsMargins(8, 4, 8, 4)
+        zh_layout.setContentsMargins(6, 4, 6, 4)
+        zh_layout.setSpacing(4)
 
         btn_zoom_out = QPushButton("–", zoom_hud)
-        btn_zoom_out.clicked.connect(lambda: self.view.set_zoom(self.view.current_zoom * 0.85))
+        btn_zoom_out.clicked.connect(lambda: self.view.zoom_by(0.8))
 
         self.lbl_zoom = QLabel("100%", zoom_hud)
 
         btn_zoom_in = QPushButton("+", zoom_hud)
-        btn_zoom_in.clicked.connect(lambda: self.view.set_zoom(self.view.current_zoom * 1.15))
+        btn_zoom_in.clicked.connect(lambda: self.view.zoom_by(1.2))
 
         zh_layout.addWidget(btn_zoom_out)
         zh_layout.addWidget(self.lbl_zoom)
@@ -350,14 +371,14 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(zoom_hud)
 
-        # Center: Docked STEM AskBar
+        # Center: AskBar Floating Widget
         self.ask_bar = AskBar(hud)
         self.ask_bar.question_submitted.connect(self._on_stem_question_asked)
         layout.addWidget(self.ask_bar)
 
-        # Right: Radial / Floating Tool Palette
-        tool_hud = QWidget(hud)
-        tool_hud.setStyleSheet("""
+        # Right: Floating Drawing Tools (Select, Pen, Highlighter, Eraser)
+        tools_hud = QWidget(hud)
+        tools_hud.setStyleSheet("""
             QWidget {
                 background-color: rgba(255, 255, 255, 0.9);
                 border: 1px solid #d1d1d6;
@@ -365,49 +386,52 @@ class MainWindow(QMainWindow):
             }
             QPushButton {
                 border: none;
-                background: transparent;
+                border-radius: 12px;
                 padding: 6px;
             }
+            QPushButton:hover {
+                background-color: #e5e5ea;
+            }
         """)
-        th_layout = QHBoxLayout(tool_hud)
-        th_layout.setContentsMargins(8, 4, 8, 4)
+        th_layout = QHBoxLayout(tools_hud)
+        th_layout.setContentsMargins(6, 4, 6, 4)
+        th_layout.setSpacing(4)
 
-        btn_select = QPushButton(qta.icon('fa5s.mouse-pointer', color='#007aff'), "", tool_hud)
-        btn_select.setToolTip("Select & Move Tool")
-        btn_select.clicked.connect(lambda: self._set_scene_tool("select"))
+        btn_cursor = QPushButton(qta.icon('fa5s.mouse-pointer', color='#007aff'), "", tools_hud)
+        btn_cursor.clicked.connect(lambda: self._set_tool("select"))
 
-        btn_pen = QPushButton(qta.icon('fa5s.pen', color='#007aff'), "", tool_hud)
-        btn_pen.setToolTip("Pen Drawing Tool")
-        btn_pen.clicked.connect(lambda: self._set_scene_tool("pen"))
+        btn_pen = QPushButton(qta.icon('fa5s.pen-nib', color='#1c1c1e'), "", tools_hud)
+        btn_pen.clicked.connect(lambda: self._set_tool("pen"))
 
-        btn_hl = QPushButton(qta.icon('fa5s.highlighter', color='#f57f17'), "", tool_hud)
-        btn_hl.setToolTip("Highlighter Tool")
-        btn_hl.clicked.connect(lambda: self._set_scene_tool("highlighter"))
+        btn_highlighter = QPushButton(qta.icon('fa5s.highlighter', color='#ff9500'), "", tools_hud)
+        btn_highlighter.clicked.connect(lambda: self._set_tool("highlighter"))
 
-        btn_eraser = QPushButton(qta.icon('fa5s.eraser', color='#d32f2f'), "", tool_hud)
-        btn_eraser.setToolTip("Eraser Tool")
-        btn_eraser.clicked.connect(lambda: self._set_scene_tool("eraser"))
+        btn_eraser = QPushButton(qta.icon('fa5s.eraser', color='#ff3b30'), "", tools_hud)
+        btn_eraser.clicked.connect(lambda: self._set_tool("eraser"))
 
-        th_layout.addWidget(btn_select)
+        th_layout.addWidget(btn_cursor)
         th_layout.addWidget(btn_pen)
-        th_layout.addWidget(btn_hl)
+        th_layout.addWidget(btn_highlighter)
         th_layout.addWidget(btn_eraser)
 
-        layout.addWidget(tool_hud)
+        layout.addWidget(tools_hud)
 
         return hud
 
-    def _set_scene_tool(self, tool_name: str):
+    def _set_tool(self, tool_name: str):
         self.scene.active_tool = tool_name
-        if tool_name == "eraser":
-            self.scene.erase_selected_items()
 
     def _toggle_sidebar(self):
-        sizes = self.splitter.sizes()
-        if sizes[0] > 0:
-            self.splitter.setSizes([0, sizes[0] + sizes[1]])
+        if self.sidebar.isVisible():
+            self.sidebar.hide()
         else:
-            self.splitter.setSizes([260, 1020])
+            self.sidebar.show()
+
+    def _toggle_reference_panel(self):
+        if self.reference_panel.isVisible():
+            self.reference_panel.hide()
+        else:
+            self.reference_panel.show_panel(self)
 
     def _toggle_grid_mode(self):
         if self.scene.background_mode == "ruled":
@@ -417,12 +441,6 @@ class MainWindow(QMainWindow):
             self.scene.set_background_mode("ruled")
             self.btn_grid_mode.setText("📄 Ruled Paper")
 
-    def _toggle_reference_panel(self):
-        if self.reference_panel.isVisible():
-            self.reference_panel.hide()
-        else:
-            self.reference_panel.show()
-
     def _on_zoom_changed(self, zoom_factor: float):
         self.lbl_zoom.setText(f"{int(zoom_factor * 100)}%")
 
@@ -430,8 +448,60 @@ class MainWindow(QMainWindow):
         self.current_board.title = self.title_edit.text()
 
     def _on_sidebar_changed(self, row: int):
-        # Refresh board views
-        pass
+        if row == 1: # "📓 Notebooks"
+            self.notebooks_panel.refresh()
+            self.main_stack.setCurrentIndex(1)
+        else:
+            self.main_stack.setCurrentIndex(0)
+
+    def _on_toolbar_save(self):
+        current_name = self.current_board.title or "Untitled Notebook"
+        name, ok = QInputDialog.getText(self, "Save Notebook", "Enter Notebook Name:", text=current_name)
+        if ok and name.strip():
+            try:
+                name_clean = name.strip()
+                items_data = self.scene.to_dict_list()
+                NotebookStorage.save_notebook(self.current_board.board_id, name_clean, items_data)
+                self.current_board.title = name_clean
+                self.title_edit.setText(name_clean)
+                QMessageBox.information(self, "Saved", f"Notebook '{name_clean}' saved successfully!")
+                self.notebooks_panel.refresh()
+            except Exception as err:
+                QMessageBox.warning(self, "Save Failed", f"Could not save notebook:\n{err}")
+
+    def _on_load_notebook_requested(self, notebook_id: str):
+        try:
+            payload = NotebookStorage.load_notebook(notebook_id)
+            self.current_board.board_id = payload.get("board_id", notebook_id)
+            self.current_board.title = payload.get("title", "Notebook")
+            self.title_edit.setText(self.current_board.title)
+            
+            self.scene.load_from_dict_list(
+                payload.get("items", []),
+                video_requested_callback=self._on_generate_video_requested
+            )
+            
+            self.main_stack.setCurrentIndex(0)
+            self.sidebar_list.setCurrentRow(0)
+        except Exception as err:
+            QMessageBox.warning(self, "Load Failed", f"Could not load notebook:\n{err}")
+
+    def _on_new_notebook_requested(self):
+        name, ok = QInputDialog.getText(self, "New Notebook", "Enter Notebook Name:", text="Untitled Notebook")
+        if ok and name.strip():
+            try:
+                meta = NotebookStorage.create_notebook(name.strip())
+                self.current_board.board_id = meta["id"]
+                self.current_board.title = meta["name"]
+                self.title_edit.setText(meta["name"])
+                
+                self.scene.clear_all()
+                
+                self.main_stack.setCurrentIndex(0)
+                self.sidebar_list.setCurrentRow(0)
+                self.notebooks_panel.refresh()
+            except Exception as err:
+                QMessageBox.warning(self, "Create Failed", f"Could not create notebook:\n{err}")
 
     def _on_toolbar_paste(self):
         self.scene.active_tool = "select"

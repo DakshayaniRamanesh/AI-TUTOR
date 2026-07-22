@@ -1,11 +1,20 @@
 """
-Freeform Canvas Scene (Infinite SceneRect, Dotted & Ruled Paper Backgrounds, Freehand Drawing & Universal Eraser)
+Freeform Canvas Scene (Infinite SceneRect, Dotted & Ruled Paper Backgrounds, Freehand Drawing, Universal Eraser & Serialization)
 """
 
 from PyQt6.QtWidgets import QGraphicsScene, QGraphicsPathItem, QGraphicsProxyWidget
 from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QPainter
 from PyQt6.QtCore import Qt, QRectF, QPointF
+
 from .items.ink_stroke import InkStroke
+from .items.sticky_note import StickyNote
+from .items.handwriting_note import HandwritingNote
+from .items.table_item import TableItem
+from .items.card_item import CardItem
+from .items.graph_card import GraphCard
+from .items.video_float_item import VideoFloatItem
+from .items.answer_bubble import AnswerBubble
+from .items.group_selection import GroupSelection
 
 class CanvasScene(QGraphicsScene):
     def __init__(self, parent=None):
@@ -31,7 +40,6 @@ class CanvasScene(QGraphicsScene):
             self.update()
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
-        # Fill base background color
         painter.fillRect(rect, QColor("#f4f4f6"))
         
         grid_size = 28
@@ -47,31 +55,88 @@ class CanvasScene(QGraphicsScene):
                     painter.drawPoint(x, y)
                     
         elif self.background_mode == "ruled":
-            # Ruled lined paper: faint horizontal lines
             painter.setPen(QPen(QColor("#d1d1d6"), 1))
             for y in range(top, bottom, grid_size):
                 painter.drawLine(left, y, right, y)
 
     def erase_items_at(self, pos: QPointF):
-        """
-        Erases any canvas item (ink stroke, note card, sticky note, table, etc.) at pos.
-        """
         items = self.items(pos)
         for item in items:
             if item.scene() == self:
                 self.removeItem(item)
 
     def erase_selected_items(self):
-        """
-        Erases all currently selected section/items on the canvas.
-        """
         for item in self.selectedItems():
             self.removeItem(item)
+
+    def clear_all(self):
+        """
+        Clears all items from the canvas scene.
+        """
+        self.clear()
+
+    def to_dict_list(self) -> list[dict]:
+        """
+        Serializes all supported canvas items into a list of dict payloads.
+        """
+        items_data = []
+        for item in self.items():
+            if hasattr(item, "to_dict"):
+                try:
+                    items_data.append(item.to_dict())
+                except Exception as err:
+                    print(f"[CanvasScene] Notice serializing item: {err}")
+        return items_data
+
+    def load_from_dict_list(self, items_data: list[dict], video_requested_callback=None):
+        """
+        Restores canvas items from a list of dict payloads.
+        """
+        self.clear_all()
+        if not items_data:
+            return
+
+        for data in items_data:
+            itype = data.get("type")
+            x = data.get("x", 0)
+            y = data.get("y", 0)
+
+            item = None
+            if itype == "StickyNote":
+                item = StickyNote(text=data.get("text", ""), color_key=data.get("color_key", "yellow"))
+            elif itype == "HandwritingNote":
+                item = HandwritingNote(text=data.get("text", ""))
+                if video_requested_callback and hasattr(item, "widget"):
+                    item.widget.video_requested.connect(video_requested_callback)
+            elif itype == "TableItem":
+                item = TableItem(headers=data.get("headers"), rows=data.get("rows"))
+            elif itype == "CardItem":
+                item = CardItem(title=data.get("title", "Card"), content=data.get("content", ""))
+            elif itype == "GraphCard":
+                item = GraphCard(title=data.get("title", "Plot"), image_path=data.get("image_path", ""))
+            elif itype == "VideoFloatItem":
+                item = VideoFloatItem(
+                    job_id=data.get("job_id", ""),
+                    title=data.get("title", "Video"),
+                    video_url_or_path=data.get("video_path", "")
+                )
+            elif itype == "AnswerBubble":
+                item = AnswerBubble(
+                    question=data.get("question", ""),
+                    full_text=data.get("full_text", "")
+                )
+            elif itype == "GroupSelection":
+                item = GroupSelection(title=data.get("title", "Group"))
+
+            if item:
+                item.setPos(x, y)
+                if "z_value" in data:
+                    item.setZValue(data["z_value"])
+                self.addItem(item)
 
     def mousePressEvent(self, event):
         if self.active_tool == "eraser" and event.button() == Qt.MouseButton.LeftButton:
             self._is_erasing = True
-            # Erase any selected items or items under cursor
             self.erase_selected_items()
             self.erase_items_at(event.scenePos())
             event.accept()
