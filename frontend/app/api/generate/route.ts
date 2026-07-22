@@ -20,19 +20,10 @@ export async function POST(request: Request) {
     }
 
     const formData = await request.formData();
-    const prompt = (formData.get('prompt') as string) ?? '';
-    const pdfFile = formData.get('pdf') as File | null;
-
-    let pdfBytes = '';
-    if (pdfFile) {
-      const buffer = await pdfFile.arrayBuffer();
-      pdfBytes = Buffer.from(buffer).toString('base64');
-    }
 
     const res = await fetch(generateUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, pdf_bytes: pdfBytes }),
+      body: formData, // Forward the multipart form data directly to FastAPI
     });
 
     if (!res.ok) {

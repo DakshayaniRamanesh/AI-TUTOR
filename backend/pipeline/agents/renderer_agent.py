@@ -1,6 +1,7 @@
 import os
 import subprocess
 import tempfile
+import sys
 from backend.pipeline.models import VideoJob, JobStatus
 
 # Detect if running on a GPU-capable environment (Modal A10G)
@@ -48,8 +49,7 @@ class RendererAgent:
             # Use --renderer=opengl where GPU supports it for accelerated rendering.
             # Falls back gracefully to Cairo if OpenGL is unavailable.
             cmd = [
-                "manim", "render", "-qh",   # High quality (1080p)
-                "--renderer=opengl",          # GPU-accelerated rendering (new)
+                sys.executable, "-m", "manim", "render", "-qh",   # High quality (1080p)
                 "--media_dir", output_media_dir,
                 script_path, "MainScene"
             ]
@@ -59,7 +59,7 @@ class RendererAgent:
                 # OpenGL renderer failed — fall back to default Cairo renderer
                 print(f"[RendererAgent] OpenGL renderer failed, falling back to Cairo: {result.stderr[:200]}")
                 cmd = [
-                    "manim", "render", "-ql",
+                    sys.executable, "-m", "manim", "render", "-ql",
                     "--media_dir", output_media_dir,
                     script_path, "MainScene"
                 ]
@@ -69,10 +69,14 @@ class RendererAgent:
                 # Find rendered MP4
                 mp4_file = None
                 for root, _, files in os.walk(output_media_dir):
+                    if "partial_movie_files" in root:
+                        continue
                     for file in files:
                         if file.endswith(".mp4"):
                             mp4_file = os.path.join(root, file)
                             break
+                    if mp4_file:
+                        break
 
                 if mp4_file and os.path.exists(mp4_file):
                     # ── GPU Encode step (NEW) ──────────────────────────────────────────
@@ -82,8 +86,14 @@ class RendererAgent:
                     # no GPU encoder is detected (local dev / non-GPU Modal tier).
                     encoded_path = os.path.join(temp_dir, f"{job.job_id}_encoded.mp4")
                     encoder = "h264_nvenc" if _GPU_ENCODE else "libx264"
+                    try:
+                        import imageio_ffmpeg
+                        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+                    except ImportError:
+                        ffmpeg_exe = "ffmpeg"
+                    
                     encode_cmd = [
-                        "ffmpeg", "-y",
+                        ffmpeg_exe, "-y",
                         "-i", mp4_file,
                         "-c:v", encoder,
                         "-preset", "fast",   # nvenc: fast; libx264: fast (both valid)

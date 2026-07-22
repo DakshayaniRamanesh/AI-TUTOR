@@ -1,4 +1,5 @@
 import os
+import sys
 import py_compile
 import subprocess
 import tempfile
@@ -64,10 +65,16 @@ class CIPipelineHarness:
             # ── Stage 3: Manim --dry_run CLI scene graph check ────────────────────
             if MANIM_AVAILABLE:
                 try:
-                    cmd = ["manim", "render", "--dry_run", file_path, scene_name]
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    cmd = [sys.executable, "-m", "manim", "render", "-ql", "-v", "WARNING", "--dry_run", file_path, scene_name]
+                    try:
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+                    except subprocess.TimeoutExpired:
+                        return False, "[Stage3] Manim Dry Run Error: Execution timed out. Did you use an infinite loop, time.sleep(), or input()? REMOVE THEM."
+                    
                     if result.returncode != 0:
-                        return False, f"[Stage3] Manim Dry Run Error:\n{result.stderr}"
+                        # Filter out any lingering tqdm progress bars if verbosity flag fails
+                        clean_stderr = "\n".join([l for l in result.stderr.splitlines() if not ("|" in l and "%" in l and "it/s" in l)])
+                        return False, f"[Stage3] Manim Dry Run Error:\n{clean_stderr[-3500:]}"
                 except FileNotFoundError:
                     print("[CIPipelineHarness] Manim CLI not found. Skipping stage 3 dry-run CLI check.")
                 except Exception as e:
@@ -85,7 +92,7 @@ class CIPipelineHarness:
                     smoke_media_dir = os.path.join(temp_dir, "smoke_media")
                     os.makedirs(smoke_media_dir, exist_ok=True)
                     cmd = [
-                        "manim", "render", "-ql",
+                        sys.executable, "-m", "manim", "render", "-ql", "-v", "WARNING",
                         "--media_dir", smoke_media_dir,
                         "-s",   # save last frame (renders only the first frame snapshot)
                         file_path,
@@ -94,9 +101,11 @@ class CIPipelineHarness:
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                     if result.returncode != 0:
                         stderr = result.stderr or result.stdout or "Unknown smoke-render error"
+                        # Filter out any lingering tqdm progress bars
+                        clean_stderr = "\n".join([l for l in stderr.splitlines() if not ("|" in l and "%" in l and "it/s" in l)])
                         # Extract the most relevant error line from LaTeX / Manim output
-                        error_lines = [l for l in stderr.splitlines() if "Error" in l or "error" in l or "Exception" in l]
-                        condensed = "\n".join(error_lines[:5]) if error_lines else stderr[-800:]
+                        error_lines = [l for l in clean_stderr.splitlines() if "Error" in l or "error" in l or "Exception" in l]
+                        condensed = "\n".join(error_lines[:5]) if error_lines else clean_stderr[-3500:]
                         return False, f"[Stage4] Smoke Render Failed (LaTeX/Runtime Error):\n{condensed}"
                 except FileNotFoundError:
                     print("[CIPipelineHarness] Manim CLI not found. Skipping stage 4 smoke render.")

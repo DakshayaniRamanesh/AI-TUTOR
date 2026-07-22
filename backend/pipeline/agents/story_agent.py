@@ -6,38 +6,51 @@ from backend.rag.qdrant_store import QdrantRAGStore
 class StoryAgent:
     def __init__(self, rag_store: QdrantRAGStore):
         self.rag_store = rag_store
-        self.api_key = os.getenv("GOOGLE_API_KEY")
-        self._sdk = None
-        if self.api_key:
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
+        self.google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.api_key = self.google_api_key or self.groq_api_key # For logging
+
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=FutureWarning)
             try:
-                from google import genai
-                self._client = genai.Client(api_key=self.api_key)
-                self._sdk = "new"
+                import google.generativeai as genai
+                if self.google_api_key:
+                    genai.configure(api_key=self.google_api_key)
+                    self.gemini_model = genai.GenerativeModel('gemini-3.5-flash-lite')
+                else:
+                    self.gemini_model = None
             except ImportError:
-                import google.generativeai as genai_legacy  # type: ignore
-                genai_legacy.configure(api_key=self.api_key)
-                self._legacy = genai_legacy
-                self._sdk = "legacy"
+                self.gemini_model = None
+
+        if self.groq_api_key:
+            try:
+                from groq import Groq
+                self._groq_client = Groq(api_key=self.groq_api_key)
+            except ImportError:
+                self._groq_client = None
+        else:
+            self._groq_client = None
 
     def _generate(self, prompt: str) -> str:
-        if self._sdk == "new":
-            # Try gemini-2.0-flash first; fall back to gemini-2.0-flash-lite / gemini-1.5-pro if 429 rate-limited
-            for model_name in ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"]:
-                try:
-                    response = self._client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                    )
-                    if response.text:
-                        return response.text
-                except Exception as e:
-                    print(f"[StoryAgent] Model {model_name} error: {e}")
-        elif self._sdk == "legacy":
+        if getattr(self, "gemini_model", None):
             try:
-                model = self._legacy.GenerativeModel("gemini-2.0-flash")
-                return model.generate_content(prompt).text
+                response = self.gemini_model.generate_content(prompt)
+                if response and response.text:
+                    return response.text
             except Exception as e:
-                print(f"[StoryAgent] Legacy LLM error: {e}")
+                print(f"[StoryAgent] Gemini LLM error: {e}. Falling back to Groq...")
+
+        if getattr(self, "_groq_client", None):
+            try:
+                response = self._groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                if response.choices and response.choices[0].message.content:
+                    return response.choices[0].message.content
+            except Exception as e:
+                print(f"[StoryAgent] Groq LLM error: {e}")
         return ""
 
     def run(self, job: VideoJob) -> VideoJob:
@@ -51,7 +64,7 @@ class StoryAgent:
 
         print(f"[StoryAgent] RAG chunks retrieved: {len(relevant_chunks)} | doc_text length: {len(doc_text)}")
         print(f"[StoryAgent] Context being used: {'PDF chunks' if relevant_chunks else 'doc_text fallback' if doc_text else 'NO CONTEXT — generic script likely'}")
-        print(f"[StoryAgent] api_key present: {bool(self.api_key)} | sdk: {self._sdk}")
+        print(f"[StoryAgent] api_key present: {bool(self.api_key)} | Gemini: {bool(self.google_api_key)} | Groq: {bool(self.groq_api_key)}")
 
         prompt = f"""You are an award-winning 3Blue1Brown mathematical animator and computer science educator.
 User Topic: "{job.user_prompt}"

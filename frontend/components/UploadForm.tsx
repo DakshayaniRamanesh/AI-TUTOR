@@ -19,6 +19,25 @@ export default function UploadForm({
   const [file, setFile] = useState<File | null>(null);
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
+  
+  const [testStatus, setTestStatus] = useState<{ loading: boolean, message: string | null, isError: boolean }>({
+    loading: false, message: null, isError: false
+  });
+
+  const handleTestApi = async () => {
+    setTestStatus({ loading: true, message: 'Testing Gemini API...', isError: false });
+    try {
+      const res = await fetch('/api/test-llm');
+      const data = await res.json();
+      if (data.status === 'error' || !res.ok) {
+        setTestStatus({ loading: false, message: data.message || 'Unknown error', isError: true });
+      } else {
+        setTestStatus({ loading: false, message: data.message || 'API connected successfully!', isError: false });
+      }
+    } catch (e: any) {
+      setTestStatus({ loading: false, message: e.message, isError: true });
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -105,6 +124,27 @@ export default function UploadForm({
             <span>{error}</span>
           </div>
         )}
+
+        {/* API Tester */}
+        <div style={{ background: 'rgba(15, 23, 42, 0.4)', borderRadius: 'var(--radius-sm)', padding: '12px', border: '1px solid var(--border-glass)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Check API Status</span>
+            <button 
+              type="button" 
+              onClick={handleTestApi} 
+              disabled={testStatus.loading}
+              className="btn-secondary" 
+              style={{ fontSize: '12px', padding: '6px 12px' }}
+            >
+              {testStatus.loading ? 'Testing...' : 'Test API Connection'}
+            </button>
+          </div>
+          {testStatus.message && (
+            <div style={{ marginTop: '10px', fontSize: '13px', color: testStatus.isError ? '#ef4444' : 'var(--cyan-glow)' }}>
+              {testStatus.isError ? '❌ ' : '✅ '}{testStatus.message}
+            </div>
+          )}
+        </div>
 
         {/* Action Button & Progress */}
         {!isProcessing ? (

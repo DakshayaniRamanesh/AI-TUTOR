@@ -6,39 +6,52 @@ from backend.pipeline.scene_templates import SceneTemplateLibrary
 
 class CodeGenAgent:
     def __init__(self):
-        self.api_key = os.getenv("GOOGLE_API_KEY")
-        self._sdk = None
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
+        self.google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.api_key = self.google_api_key or self.groq_api_key
         self._template_lib = SceneTemplateLibrary()
-        if self.api_key:
+
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=FutureWarning)
             try:
-                from google import genai
-                self._client = genai.Client(api_key=self.api_key)
-                self._sdk = "new"
+                import google.generativeai as genai
+                if self.google_api_key:
+                    genai.configure(api_key=self.google_api_key)
+                    self.gemini_model = genai.GenerativeModel('gemini-3.5-flash-lite')
+                else:
+                    self.gemini_model = None
             except ImportError:
-                import google.generativeai as genai_legacy  # type: ignore
-                genai_legacy.configure(api_key=self.api_key)
-                self._legacy = genai_legacy
-                self._sdk = "legacy"
+                self.gemini_model = None
+
+        if self.groq_api_key:
+            try:
+                from groq import Groq
+                self._groq_client = Groq(api_key=self.groq_api_key)
+            except ImportError:
+                self._groq_client = None
+        else:
+            self._groq_client = None
 
     def _generate(self, prompt: str) -> str:
-        if self._sdk == "new":
-            # Try gemini-2.0-flash first; fall back to gemini-2.0-flash-lite / gemini-1.5-pro if rate-limited
-            for model_name in ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"]:
-                try:
-                    response = self._client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                    )
-                    if response.text:
-                        return response.text
-                except Exception as e:
-                    print(f"[CodeGenAgent] Model {model_name} error: {e}")
-        elif self._sdk == "legacy":
+        if getattr(self, "gemini_model", None):
             try:
-                model = self._legacy.GenerativeModel("gemini-2.0-flash")
-                return model.generate_content(prompt).text
+                response = self.gemini_model.generate_content(prompt)
+                if response and response.text:
+                    return response.text
             except Exception as e:
-                print(f"[CodeGenAgent] Legacy LLM error: {e}")
+                print(f"[CodeGenAgent] Gemini LLM error: {e}. Falling back to Groq...")
+
+        if getattr(self, "_groq_client", None):
+            try:
+                response = self._groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                if response.choices and response.choices[0].message.content:
+                    return response.choices[0].message.content
+            except Exception as e:
+                print(f"[CodeGenAgent] Groq LLM error: {e}")
         return ""
 
     def _fill_template_via_llm(self, job: VideoJob, template_name: str) -> str:
@@ -75,8 +88,8 @@ Below is a partially filled Manim Python template. The title ($topic) is already
 Your job is to fill in the REMAINING $variable placeholders with content specific to "{job.user_prompt}".
 
 STRICT RULES:
-- Text variables (concept_label, step1, step2, step3, summary etc.) → plain English, NO LaTeX, max 45 chars
-- LaTeX variables (latex_formula, transform_formula) → valid LaTeX math ONLY, e.g. r"A\\mathbf{{v}} = \\lambda\\mathbf{{v}}"
+- Text variables (concept_label, step1, step2, step3, summary etc.) → plain English, max 45 chars
+- LaTeX variables (latex_formula, transform_formula) → plain string math ONLY using Text(), e.g. "Av = \\lambda v". Do NOT use MathTex.
 - Make content SPECIFIC to "{job.user_prompt}" — not generic placeholder text
 - Do NOT change any Python code structure — only replace $variable placeholders
 - Return ONLY the complete Python code block, no explanation
@@ -120,7 +133,7 @@ Return only executable Python code."""
 
         print(f"[CodeGenAgent] START | job={job.job_id} | prompt='{job.user_prompt[:60]}'")
         print(f"[CodeGenAgent] story_script length: {len(job.story_script or '')} chars")
-        print(f"[CodeGenAgent] api_key present: {bool(self.api_key)} | sdk: {self._sdk}")
+        print(f"[CodeGenAgent] api_key present: {bool(self.api_key)} | Gemini: {bool(self.google_api_key)} | Groq: {bool(self.groq_api_key)}")
 
         error_context = ""
         build_err = getattr(job, "build_error_trace", None) or getattr(job, "ci_error_log", None)
@@ -129,7 +142,9 @@ Return only executable Python code."""
             print(f"[CodeGenAgent] Retry mode — build error: {build_err[:100]}")
 
         # ── Strategy 1: Template-based generation (low error rate) ────────────
-        if self.api_key and not build_err:
+        # DISABLED: Templates are too short for detailed user prompts. We now rely on
+        # the full LLM generation (Strategy 2) for all requests to ensure detailed videos.
+        if False: # self.api_key and not build_err:
             try:
                 chosen_template = self._template_lib.select_template_for_topic(
                     job.user_prompt, job.story_script or ""
@@ -137,7 +152,10 @@ Return only executable Python code."""
                 print(f"[CodeGenAgent] Selected template: '{chosen_template}'")
                 template_code = self._fill_template_via_llm(job, chosen_template)
                 if template_code and "class MainScene" in template_code:
-                    print(f"[CodeGenAgent] ✅ Strategy 1 (template) succeeded")
+                    print(f"[CodeGenAgent] Strategy 1 (template) succeeded")
+                    # Inject LaTeX monkeypatch
+                    patch = "\nclass MathTex(Text):\n    def __init__(self, *args, **kwargs):\n        super().__init__(' '.join(args), **{k:v for k,v in kwargs.items() if k in ['color', 'font_size']})\nclass Tex(MathTex): pass\n"
+                    template_code = template_code.replace("class MainScene", f"{patch}\nclass MainScene")
                     job.manim_code = template_code
                     return job
                 else:
@@ -157,20 +175,22 @@ CRITICAL INSTRUCTIONS:
 Create a rich, 3Blue1Brown-style 2D animated lesson explaining "{job.user_prompt}".
 DO NOT just print plain text strings. Create visual 2D diagrams!
 - Use geometric shapes: Square, Circle, Rectangle, Arrow, VGroup, NumberPlane, Matrix.
-- IMPORTANT TEXT RULE: Use Text() for ALL prose, labels, and descriptions.
-  Only use MathTex() when displaying an actual mathematical formula or equation.
-  Example: Text("The mitochondria is the powerhouse") NOT MathTex("The mitochondria...")
-  Example: MathTex(r"E = mc^2") for actual equations ONLY.
-  This prevents unnecessary LaTeX compilation which slows rendering significantly.
-- Use dynamic animations: Create, Write, FadeIn, Transform, ReplacementTransform, Indicate, SurroundingRectangle.
-- Ensure all objects fit within standard camera bounds (14x8 frame).
+- DO NOT USE MathTex() or Tex() AT ALL. LaTeX is NOT installed on this system.
+- Use Text() or MarkupText() for ALL prose, labels, descriptions, and math formulas!
+  Example: Text("E = mc^2") NOT MathTex("E = mc^2")
+- Layout: DO NOT try to manually position many text objects with .shift(). Instead, group them in a VGroup and use .arrange(DOWN, buff=0.5) so they do not overlap.
+- Text Size: Keep font_size around 24 to 36 so it fits on screen. Break long sentences into multiple lines using \\n.
+- Pacing: Add self.wait(2) or self.wait(3) between major animations so the viewer has time to read.
+- Clean Transitions: When moving to a completely new concept, use self.play(*[FadeOut(m) for m in self.mobjects]) to clear the screen!
 
 FORMATTING RULES:
 1. Output ONLY executable Python code inside ```python ``` blocks.
 2. Define a single class `MainScene(Scene):` with a `construct(self)` method.
 3. Do NOT import external packages beyond manim, math, numpy.
-4. Use valid Manim color constants (BLUE, TEAL, GREEN, YELLOW, RED, PURPLE, ORANGE, WHITE, GRAY) or hex strings (e.g. '#00ffff'). Do NOT use CYAN.
-5. The code must be fully self-contained and run without error."""
+4. Use valid Manim color constants (BLUE, TEAL, GREEN, YELLOW, RED, PURPLE, ORANGE, WHITE, GRAY).
+5. The code must be fully self-contained and run without error.
+6. CRITICAL: DO NOT use `while` loops, infinite loops, `time.sleep()`, or any network calls.
+7. CRITICAL: Use only standard Manim animations. Do not try to open UI windows."""
 
         if self.api_key:
             try:
@@ -179,7 +199,19 @@ FORMATTING RULES:
                     code_text = code_text.split("```python")[1].split("```")[0].strip()
                 elif "```" in code_text:
                     code_text = code_text.split("```")[1].split("```")[0].strip()
-                if code_text and "class MainScene" in code_text:
+                if code_text:
+                    # Robustly inject LaTeX monkeypatch after imports
+                    patch = "\nclass MathTex(Text):\n    def __init__(self, *args, **kwargs):\n        super().__init__(' '.join(args), **{k:v for k,v in kwargs.items() if k in ['color', 'font_size']})\nclass Tex(MathTex): pass\n"
+                    import re
+                    # Find the last import statement
+                    imports = list(re.finditer(r"^(?:from\s+\S+\s+import\s+.*|import\s+.*)$", code_text, re.MULTILINE))
+                    if imports:
+                        last_import = imports[-1]
+                        insert_idx = last_import.end()
+                        code_text = code_text[:insert_idx] + "\n" + patch + code_text[insert_idx:]
+                    else:
+                        code_text = patch + code_text
+                    
                     job.manim_code = code_text
                     return job
             except Exception as e:
@@ -222,7 +254,7 @@ class MainScene(Scene):
 
         # ── Stage 3: Transformation Arrow & Formula ──
         arrow = Arrow(LEFT * 1.5, RIGHT * 0.5, color=YELLOW, buff=0.1).shift(DOWN * 0.5)
-        formula = MathTex(r"Y = f(W \\cdot X + b)", font_size=32, color=YELLOW).next_to(arrow, UP, buff=0.2)
+        formula = Text("Y = f(W * X + b)", font_size=32, color=YELLOW).next_to(arrow, UP, buff=0.2)
 
         self.play(GrowArrow(arrow), Write(formula), run_time=1.2)
         self.wait(1)

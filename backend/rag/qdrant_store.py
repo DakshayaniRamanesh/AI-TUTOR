@@ -1,11 +1,10 @@
 """
-QdrantRAGStore — Qdrant vector DB client using gemini-embedding-2.
+QdrantRAGStore — Qdrant vector DB client using Gemini embeddings.
 
 Spec requirements:
-- Collection: "manim-docs"
-- Vector size: 3072  (gemini-embedding-2 output dimension, GA April 2026)
+- Collection: "manim-docs-v4"
+- Vector size: 768  (models/embedding-001)
 - Distance: COSINE
-- Env var: GOOGLE_API_KEY  (not GEMINI_API_KEY)
 """
 
 import os
@@ -19,72 +18,71 @@ from qdrant_client.models import (
     VectorParams, Distance, PointStruct, Filter, FieldCondition, MatchValue,
 )
 
-COLLECTION_NAME = "manim-docs-v2"
-EMBEDDING_DIM = 768  # text-embedding-004 output dimension
+COLLECTION_NAME = "manim-docs-v4"
+EMBEDDING_DIM = 768  # Gemini models/embedding-001 output dimension
 
 # Cross-student video cache collection
 # Keyed by hash(pdf_content + user_prompt) — serves repeat requests instantly
-CACHE_COLLECTION_NAME = "manim-video-cache"
+CACHE_COLLECTION_NAME = "manim-video-cache-v3"
 CACHE_VECTOR_DIM = 768  # same embedding model
 
 
 class GeminiEmbeddings:
     """
-    Wrapper around text-embedding-004.
-    Falls back to a deterministic pseudo-embedding for offline/mock testing.
+    Wrapper around Google Gemini embeddings API (models/embedding-001).
     """
 
-    MODEL = "text-embedding-004"
-
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-        self._client = None
-        if self.api_key:
+    def __init__(self, api_key: str):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=FutureWarning)
             try:
-                # Prefer new google.genai SDK; fall back to legacy google.generativeai
-                try:
-                    import google.genai as genai  # type: ignore
-                    self._client = genai.Client(api_key=self.api_key)
-                    self._sdk = "new"
-                except ImportError:
-                    import google.generativeai as genai  # type: ignore
-                    genai.configure(api_key=self.api_key)
-                    self._legacy_genai = genai
-                    self._sdk = "legacy"
+                import google.generativeai as genai
+                genai.configure(api_key=api_key)
+                self.model_name = "models/text-embedding-004"
+                self._available = True
             except Exception as e:
-                print(f"[GeminiEmbeddings] SDK init error: {e}. Falling back to pseudo-embeddings.")
-                self._sdk = None
-        else:
-            self._sdk = None
+                print(f"[GeminiEmbeddings] Model load error: {e}")
+                self._available = False
 
     def embed_text(self, text: str) -> List[float]:
-        if self._sdk == "new":
+        if not self._available:
+            return self._pseudo_embed(text)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=FutureWarning)
             try:
-                result = self._client.models.embed_content(
-                    model=self.MODEL,
-                    contents=text,
-                )
-                return result.embedding.values
-            except Exception as e:
-                print(f"[GeminiEmbeddings] embed_text error: {e}. Using pseudo-embedding.")
-        elif self._sdk == "legacy":
-            try:
-                result = self._legacy_genai.embed_content(
-                    model=self.MODEL,
+                import google.generativeai as genai
+                result = genai.embed_content(
+                    model=self.model_name,
                     content=text,
-                    task_type="retrieval_document",
+                    task_type="retrieval_document"
                 )
-                return result["embedding"]
+                return result['embedding']
             except Exception as e:
-                print(f"[GeminiEmbeddings] (legacy) embed_text error: {e}. Using pseudo-embedding.")
-
-        return self._pseudo_embed(text)
+                print(f"[GeminiEmbeddings] embed error: {e}")
+                return self._pseudo_embed(text)
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        return [self.embed_text(t) for t in texts]
+        if not self._available:
+            return [self._pseudo_embed(t) for t in texts]
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=FutureWarning)
+            try:
+                import google.generativeai as genai
+                result = genai.embed_content(
+                    model=self.model_name,
+                    content=texts,
+                    task_type="retrieval_document"
+                )
+                return result['embedding']
+            except Exception as e:
+                print(f"[GeminiEmbeddings] batch embed error: {e}")
+                return [self._pseudo_embed(t) for t in texts]
 
     def _pseudo_embed(self, text: str) -> List[float]:
-        """Deterministic pseudo-embedding for offline/mock testing."""
+        """Deterministic pseudo-embedding fallback."""
         digest = hashlib.sha256(text.encode("utf-8")).digest()
         embedding: List[float] = []
         for i in range(EMBEDDING_DIM):
@@ -105,7 +103,7 @@ class QdrantRAGStore:
     def __init__(self, host: Optional[str] = None, api_key: Optional[str] = None):
         qdrant_url = host or os.getenv("QDRANT_URL") or os.getenv("QDRANT_HOST", ":memory:")
         qdrant_key = api_key or os.getenv("QDRANT_API_KEY")
-        self.embeddings = GeminiEmbeddings()
+        self.embeddings = GeminiEmbeddings(api_key=os.getenv("GOOGLE_API_KEY"))
 
         if qdrant_url == ":memory:":
             self.client = QdrantClient(location=":memory:")
