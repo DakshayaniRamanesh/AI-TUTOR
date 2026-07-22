@@ -26,7 +26,7 @@ def get_handwritten_font(point_size: int = 16, bold: bool = False) -> QFont:
                 
     # Fallback script font
     font = QFont("Comic Sans MS", point_size)
-    font.setStyleHint(QFont.StyleHint.Comic)
+    font.setStyleHint(QFont.StyleHint.Cursive)
     font.setBold(bold)
     return font
 
