@@ -74,6 +74,10 @@ Reference Material / Document Excerpts:
 Create a deep-dive, step-by-step visual lesson script explaining the mechanics of "{job.user_prompt}".
 DO NOT just repeat the topic name on screen. Explain HOW it works step by step!
 
+Guidelines:
+- If reference material / textbook excerpts are provided above, quote key formulas, definitions, or equations from the text.
+- Combine textbook passages with rich visual intuition, clear analogies, and step-by-step mathematical derivations.
+
 Structure:
 ## Scene 1: Intuition & Visual Setup
 - Title banner and visual intuition setup.
