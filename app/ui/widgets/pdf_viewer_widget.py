@@ -1,120 +1,168 @@
 """
-PDF Split-Screen Viewer Widget with Native Page Rendering, Page Navigation & Floating Contextual Action Popup
-Allows selecting text passages in PDF and triggering grounded AI actions (Explain, Solve, Summarize, Define).
+PDF Split-Screen Visual Viewer Widget
+Renders the exact visual PDF document pages with QPdfView (preserving original fonts, diagrams, math equations, and layout),
+provides standard mouse text selection highlighting, surrounding paragraph context extraction, and floating 'Reply ↰' button.
 """
 
 import os
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QStackedWidget, QTextBrowser, QFrame, QGraphicsDropShadowEffect
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGraphicsDropShadowEffect
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QUrl
-from PyQt6.QtGui import QColor, QCursor, QFont
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QPointF, QRectF, QObject, QEvent
+from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPen
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
 from pypdf import PdfReader
 
-class SelectionActionPopup(QFrame):
+
+class PdfHighlightOverlayWidget(QWidget):
     """
-    Floating contextual popup menu (Claude/ChatGPT style) that appears near selected text.
-    Offers quick AI actions: Explain, Solve, Summarize, Define.
+    Transparent overlay rendered over QPdfView's viewport to paint standard mouse text selection highlights.
     """
-    action_clicked = pyqtSignal(str, str, int) # action_type, selected_text, page_num
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.highlight_rects = []
+
+    def set_highlight_rects(self, rects: list):
+        self.highlight_rects = rects or []
+        self.update()
+
+    def clear_highlight(self):
+        self.highlight_rects = []
+        self.update()
+
+    def paintEvent(self, event):
+        if not self.highlight_rects:
+            return
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        fill_color = QColor(64, 156, 255, 70)
+        border_color = QColor(0, 122, 255, 180)
+        
+        painter.setBrush(QBrush(fill_color))
+        painter.setPen(QPen(border_color, 1.2))
+        
+        for rect in self.highlight_rects:
+            if isinstance(rect, QRectF):
+                painter.drawRoundedRect(rect, 3, 3)
+            elif isinstance(rect, (tuple, list)):
+                if len(rect) == 4:
+                    r = QRectF(rect[0], rect[1], rect[2], rect[3])
+                    painter.drawRoundedRect(r, 3, 3)
+
+
+class ReplyPillButton(QFrame):
+    """
+    Sleek, minimal dark pill button ('Reply ↰') floating directly above selected text on the PDF document.
+    """
+    reply_clicked = pyqtSignal(str, int, str) # selected_text, page_num, surrounding_context
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.selected_text = ""
         self.current_page = 1
+        self.surrounding_context = ""
+        
+        self.setObjectName("ReplyPillRoot")
+        self.setFixedSize(95, 34)
         
         self.setStyleSheet("""
-            QFrame#SelectionPopupRoot {
-                background-color: #1c1c1e;
+            QFrame#ReplyPillRoot {
+                background-color: #222224;
                 border: 1px solid #3a3a3c;
-                border-radius: 10px;
-                padding: 4px;
+                border-radius: 16px;
             }
-            QPushButton {
-                background-color: #2c2c2e;
+            QPushButton#BtnReplyPill {
+                background-color: transparent;
                 color: #ffffff;
-                font-size: 11px;
+                font-size: 13px;
                 font-weight: 600;
                 border: none;
-                border-radius: 6px;
-                padding: 5px 10px;
+                padding: 4px 8px;
             }
-            QPushButton:hover {
-                background-color: #007aff;
-            }
-            QLabel {
-                color: #8e8e93;
-                font-size: 10px;
-                font-weight: bold;
-                padding-left: 4px;
+            QPushButton#BtnReplyPill:hover {
+                color: #007aff;
             }
         """)
 
-        self.setObjectName("SelectionPopupRoot")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(0)
 
-        lbl_tag = QLabel("Ask AI:", self)
-        layout.addWidget(lbl_tag)
+        self.btn_reply = QPushButton("Reply ↰", self)
+        self.btn_reply.setObjectName("BtnReplyPill")
+        self.btn_reply.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_reply.clicked.connect(self._on_click)
+        layout.addWidget(self.btn_reply)
 
-        btn_explain = QPushButton("💡 Explain", self)
-        btn_explain.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_explain.clicked.connect(lambda: self._on_action("Explain"))
-
-        btn_solve = QPushButton("🧮 Solve", self)
-        btn_solve.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_solve.clicked.connect(lambda: self._on_action("Solve"))
-
-        btn_summarize = QPushButton("📝 Summarize", self)
-        btn_summarize.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_summarize.clicked.connect(lambda: self._on_action("Summarize this part"))
-
-        btn_define = QPushButton("📖 Define", self)
-        btn_define.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_define.clicked.connect(lambda: self._on_action("Define"))
-
-        layout.addWidget(btn_explain)
-        layout.addWidget(btn_solve)
-        layout.addWidget(btn_summarize)
-        layout.addWidget(btn_define)
-
-        # Shadow effect
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(12)
-        shadow.setColor(QColor(0, 0, 0, 100))
+        shadow.setColor(QColor(0, 0, 0, 90))
         shadow.setOffset(0, 3)
         self.setGraphicsEffect(shadow)
 
         self.hide()
 
-    def show_at(self, global_pos: QPoint, text: str, page_num: int):
+    def show_at(self, global_pos: QPoint, text: str, page_num: int, context: str):
         self.selected_text = text.strip()
         self.current_page = page_num
-        if not self.selected_text:
-            self.hide()
-            return
+        self.surrounding_context = context.strip()
             
         parent_widget = self.parentWidget()
         if parent_widget:
             local_pos = parent_widget.mapFromGlobal(global_pos)
-            # Position slightly above selection
-            self.move(max(10, local_pos.x() - 100), max(10, local_pos.y() - 45))
+            px = max(10, min(parent_widget.width() - 105, local_pos.x() - 45))
+            py = max(10, min(parent_widget.height() - 45, local_pos.y() - 42))
+            self.move(px, py)
         self.show()
         self.raise_()
 
-    def _on_action(self, action_type: str):
-        if self.selected_text:
-            self.action_clicked.emit(action_type, self.selected_text, self.current_page)
-        self.hide()
+    def _on_click(self):
+        self.reply_clicked.emit(self.selected_text, self.current_page, self.surrounding_context)
+
+
+class PdfViewportEventFilter(QObject):
+    """
+    Event filter installed on QPdfView's viewport to capture mouse text selection on the visual PDF.
+    """
+    def __init__(self, pdf_widget):
+        super().__init__(pdf_widget)
+        self.pdf_widget = pdf_widget
+        self.press_pos = None
+        self.is_dragging = False
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.press_pos = event.pos()
+                self.is_dragging = True
+                self.pdf_widget.overlay.clear_highlight()
+                self.pdf_widget.reply_pill.hide()
+
+        elif event.type() == QEvent.Type.MouseMove:
+            if self.is_dragging and self.press_pos is not None:
+                current_pos = event.pos()
+                self.pdf_widget._update_selection_highlight(self.press_pos, current_pos)
+
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.MouseButton.LeftButton and self.press_pos is not None:
+                release_pos = event.pos()
+                global_pos = QCursor.pos()
+                self.is_dragging = False
+                
+                self.pdf_widget._update_selection_highlight(self.press_pos, release_pos)
+                self.pdf_widget._handle_selection_released(self.press_pos, release_pos, global_pos)
+                self.press_pos = None
+
+        return False
 
 
 class PdfViewerWidget(QWidget):
     close_requested = pyqtSignal()
-    contextual_action_requested = pyqtSignal(str, str, int) # action_type, selected_text, page_num
+    reply_clicked = pyqtSignal(str, int, str) # selected_text, page_num, surrounding_context
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -165,15 +213,6 @@ class PdfViewerWidget(QWidget):
             QPushButton#BtnClosePdf:hover {
                 background-color: #d32f2f;
             }
-            QTextBrowser#PdfTextBrowser {
-                background-color: #ffffff;
-                border: none;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                font-size: 14px;
-                line-height: 1.6;
-                padding: 20px;
-                color: #1c1c1e;
-            }
         """)
 
         self.setObjectName("PdfViewerRoot")
@@ -215,24 +254,38 @@ class PdfViewerWidget(QWidget):
 
         main_layout.addWidget(header)
 
-        # 2. Main PDF Text & View Stack
-        self.stack = QStackedWidget(self)
+        # 2. Pure Visual PDF View (QPdfView) - Render original visual PDF pages
+        self.pdf_view = QPdfView(self)
+        self.pdf_view.setDocument(self.pdf_doc)
+        self.pdf_view.setPageMode(QPdfView.PageMode.SinglePage)
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
+        self.pdf_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.pdf_view.customContextMenuRequested.connect(self._on_custom_context_menu)
 
-        # Page View Widget with Native Selection
-        self.text_browser = QTextBrowser(self.stack)
-        self.text_browser.setObjectName("PdfTextBrowser")
-        self.text_browser.selectionChanged.connect(self._on_text_selected)
-        
-        self.stack.addWidget(self.text_browser)
-        main_layout.addWidget(self.stack)
+        if hasattr(self.pdf_view, 'pageNavigator') and self.pdf_view.pageNavigator():
+            self.pdf_view.pageNavigator().currentPageChanged.connect(self._on_visual_page_changed)
+        main_layout.addWidget(self.pdf_view)
 
-        # 3. Contextual Popup Action Menu
-        self.popup = SelectionActionPopup(self)
-        self.popup.action_clicked.connect(self._on_popup_action_clicked)
+        # Transparent Highlight Overlay Widget over QPdfView's viewport
+        self.overlay = PdfHighlightOverlayWidget(self.pdf_view.viewport())
+        self.overlay.setGeometry(self.pdf_view.viewport().rect())
+
+        # Install viewport event filter for mouse selection
+        self.event_filter = PdfViewportEventFilter(self)
+        self.pdf_view.viewport().installEventFilter(self.event_filter)
+
+        # 3. Floating 'Reply ↰' Pill Button
+        self.reply_pill = ReplyPillButton(self)
+        self.reply_pill.reply_clicked.connect(self.reply_clicked.emit)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'overlay') and hasattr(self, 'pdf_view'):
+            self.overlay.setGeometry(self.pdf_view.viewport().rect())
 
     def load_pdf(self, file_path: str) -> bool:
         """
-        Loads PDF into native viewer & extracts page text layers for interactive selection.
+        Loads PDF into native QPdfView for exact visual page rendering & extracts text layers for RAG.
         """
         if not os.path.exists(file_path):
             return False
@@ -242,11 +295,13 @@ class PdfViewerWidget(QWidget):
             fname = os.path.basename(file_path)
             self.lbl_title.setText(f"📄 {fname[:24]}..." if len(fname) > 26 else f"📄 {fname}")
 
-            # Extract pages with pypdf
-            reader = PdfReader(file_path)
-            self.total_pages = len(reader.pages)
-            self.pages_text = {}
+            # Load document into native QPdfDocument for visual page rendering
+            self.pdf_doc.load(file_path)
+            self.total_pages = self.pdf_doc.pageCount() if self.pdf_doc.pageCount() > 0 else 1
 
+            # Extract page text with pypdf for RAG & context extraction
+            reader = PdfReader(file_path)
+            self.pages_text = {}
             for idx, page in enumerate(reader.pages):
                 text = page.extract_text() or ""
                 self.pages_text[idx + 1] = text.strip()
@@ -260,21 +315,78 @@ class PdfViewerWidget(QWidget):
 
     def _render_current_page(self):
         self.lbl_page.setText(f"Page {self.current_page} of {self.total_pages}")
-        text = self.pages_text.get(self.current_page, "(No readable text on this page)")
         
-        # Format HTML with page title
-        html_content = f"""
-        <div style="font-family: sans-serif; padding: 15px; color: #1c1c1e;">
-            <div style="font-size: 11px; font-weight: bold; color: #007aff; margin-bottom: 12px; text-transform: uppercase;">
-                Page {self.current_page} of {self.total_pages} — {os.path.basename(self.file_path)}
-            </div>
-            <div style="font-size: 14px; line-height: 1.7; white-space: pre-wrap;">
-                {text}
-            </div>
-        </div>
+        if hasattr(self.pdf_view, 'pageNavigator') and self.pdf_view.pageNavigator():
+            try:
+                self.pdf_view.pageNavigator().jump(self.current_page - 1, QPointF())
+            except Exception:
+                pass
+        self.overlay.clear_highlight()
+        self.reply_pill.hide()
+
+    def _update_selection_highlight(self, press_pos: QPoint, current_pos: QPoint):
         """
-        self.text_browser.setHtml(html_content)
-        self.popup.hide()
+        Paints visual blue selection highlight box over selected sentence during/after mouse drag.
+        """
+        rects = []
+        try:
+            sel = self.pdf_doc.getSelection(self.current_page - 1, QPointF(press_pos), QPointF(current_pos))
+            if sel and sel.isValid() and sel.bounds():
+                rects = sel.bounds()
+        except Exception:
+            pass
+
+        if not rects:
+            rects = [QRectF(QPointF(press_pos), QPointF(current_pos)).normalized()]
+
+        self.overlay.set_highlight_rects(rects)
+
+    def _handle_selection_released(self, press_pos: QPoint, release_pos: QPoint, global_pos: QPoint):
+        """
+        Called when mouse selection is completed; positions the floating 'Reply ↰' pill button.
+        """
+        selected_text = ""
+        try:
+            sel = self.pdf_doc.getSelection(self.current_page - 1, QPointF(press_pos), QPointF(release_pos))
+            if sel and sel.isValid() and sel.text().strip():
+                selected_text = sel.text().strip()
+        except Exception:
+            pass
+
+        if not selected_text:
+            page_content = self.pages_text.get(self.current_page, "")
+            selected_text = page_content[:300] if page_content else f"Passage on Page {self.current_page}"
+
+        page_content = self.pages_text.get(self.current_page, "")
+        surrounding_context = self._extract_surrounding_context(selected_text, page_content)
+
+        self.reply_pill.show_at(global_pos, selected_text, self.current_page, surrounding_context)
+
+    def _extract_surrounding_context(self, selected_text: str, full_page_text: str) -> str:
+        if not full_page_text or not selected_text:
+            return selected_text
+
+        paragraphs = full_page_text.split('\n\n')
+        for p in paragraphs:
+            if selected_text in p or any(w in p for w in selected_text.split()[:4]):
+                return p.strip()
+        
+        return full_page_text[:400]
+
+    def _on_custom_context_menu(self, pos: QPoint):
+        global_pos = self.pdf_view.mapToGlobal(pos)
+        page_content = self.pages_text.get(self.current_page, "")
+        selected_text = page_content[:300] if page_content else f"Passage on Page {self.current_page}"
+        surrounding_context = self._extract_surrounding_context(selected_text, page_content)
+        self.reply_pill.show_at(global_pos, selected_text, self.current_page, surrounding_context)
+
+    def _on_visual_page_changed(self, page_index: int):
+        new_page = page_index + 1
+        if 1 <= new_page <= self.total_pages and new_page != self.current_page:
+            self.current_page = new_page
+            self.lbl_page.setText(f"Page {self.current_page} of {self.total_pages}")
+            self.overlay.clear_highlight()
+            self.reply_pill.hide()
 
     def _prev_page(self):
         if self.current_page > 1:
@@ -285,16 +397,3 @@ class PdfViewerWidget(QWidget):
         if self.current_page < self.total_pages:
             self.current_page += 1
             self._render_current_page()
-
-    def _on_text_selected(self):
-        cursor = self.text_browser.textCursor()
-        selected = cursor.selectedText().strip()
-
-        if selected and len(selected) > 3:
-            global_pos = QCursor.pos()
-            self.popup.show_at(global_pos, selected, self.current_page)
-        else:
-            self.popup.hide()
-
-    def _on_popup_action_clicked(self, action_type: str, selected_text: str, page_num: int):
-        self.contextual_action_requested.emit(action_type, selected_text, page_num)

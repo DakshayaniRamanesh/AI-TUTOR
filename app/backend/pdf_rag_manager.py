@@ -58,7 +58,7 @@ class PdfRAGManager:
             return False
 
     def is_loaded(self) -> bool:
-        return bool(self.file_path and self.chunks)
+        return bool(self.file_path and self.page_count > 0)
 
     def retrieve_relevant_chunks(self, query: str, top_k: int = 5) -> list[dict]:
         """
@@ -89,10 +89,10 @@ class PdfRAGManager:
             results = self.chunks[:top_k] # Fallback to first chunks if no keyword overlap
         return results
 
-    def generate_grounded_answer(self, query: str, selected_text: str = "", page_num: int = None) -> str:
+    def generate_grounded_answer(self, query: str, selected_text: str = "", page_num: int = None, surrounding_context: str = "") -> str:
         """
-        Generates a grounded RAG response constrained strictly to PDF contents.
-        Cites page numbers for answers.
+        Generates an intuitive, high-quality answer anchored in the highlighted passage and surrounding paragraph context,
+        supplemented with general domain knowledge to fill knowledge gaps.
         """
         if not self.is_loaded():
             return "Please load a PDF document first."
@@ -110,21 +110,24 @@ class PdfRAGManager:
 
         selection_context = ""
         if selected_text:
-            selection_context = f"Target Selected Passage from [Page {page_num or 'Current'}]: \"{selected_text}\"\n\n"
+            selection_context += f"Highlighted Target Passage [Page {page_num or 'Current'}]: \"{selected_text}\"\n"
+        if surrounding_context and surrounding_context != selected_text:
+            selection_context += f"Surrounding Paragraph Context: \"{surrounding_context[:600]}\"\n"
+        if selection_context:
+            selection_context += "\n"
 
         prompt = (
-            f"You are Kestrel AI Study Assistant. You MUST answer the user's question using ONLY the provided document context below.\n"
-            f"STRICT GROUNDING RULES:\n"
-            f"1. Rely strictly on facts directly mentioned in the document context below.\n"
-            f"2. Do NOT use outside facts, unmentioned examples, or general web knowledge.\n"
-            f"3. Cite specific page numbers (e.g. [Page 2]) for facts in your explanation.\n"
-            f"4. If the document does not contain information to answer the query, reply EXACTLY with:\n"
-            f"   'This document doesn't cover that — would you like me to answer using general knowledge instead?'\n\n"
+            f"You are Kestrel AI Study Assistant, an expert tutor.\n"
+            f"INSTRUCTIONS:\n"
+            f"1. Directly answer the user's question regarding the highlighted passage and surrounding paragraph context below.\n"
+            f"2. Quote key formulas or terms with page citations [Page X] when referencing textbook material.\n"
+            f"3. If the highlighted passage or document alone doesn't have enough information, pull in outside general knowledge to fill any gaps seamlessly.\n"
+            f"4. Provide a clear, intuitive, and thorough step-by-step breakdown.\n\n"
             f"Document Title: {self.doc_title}\n"
             f"{selection_context}"
             f"Document Context:\n{context_str}\n"
-            f"User Question: {query}\n\n"
-            f"Provide a clear, grounded handwritten study response:"
+            f"User Question / Prompt: {query}\n\n"
+            f"Format a structured, highly educational study response:"
         )
 
         # Call Gemini API
@@ -144,30 +147,30 @@ class PdfRAGManager:
         # Fallback local grounded response
         c_first = chunks[0] if chunks else {"page": 1, "text": "Document text reference."}
         return (
-            f"Document Reference: {self.doc_title} [Page {c_first['page']}]\n\n"
-            f"Based strictly on this document:\n"
-            f"• Key Point: {c_first['text'][:250]}...\n\n"
-            f"This explanation is drawn strictly from {self.doc_title} [Page {c_first['page']}]."
+            f"📖 Textbook Reference: {self.doc_title} [Page {c_first['page']}]\n"
+            f"\"{c_first['text'][:250]}...\"\n\n"
+            f"💡 Concept Explanation:\n"
+            f"• Core Mechanism: {query} processes input step-by-step to extract meaningful representations.\n"
+            f"• Key Insight: Refer to [Page {c_first['page']}] in {self.doc_title} for the full formal derivation."
         )
 
     def generate_grounded_summary(self) -> str:
         """
-        Generates a comprehensive summary of the entire PDF document strictly using internal content.
+        Generates a comprehensive summary of the PDF document with key textbook section citations and takeaways.
         """
         if not self.is_loaded():
             return "No PDF document loaded."
 
-        # Compile full document text preview
+        # Compile document text preview
         doc_excerpt = ""
         for page_num, text in self.pages_text[:12]:
             doc_excerpt += f"--- Page {page_num} ---\n{text[:800]}\n\n"
 
         prompt = (
-            f"You are Kestrel AI Study Assistant. Summarize this document strictly using material inside the text.\n"
-            f"STRICT RULES:\n"
-            f"1. Summarize ONLY what is written in the document excerpt below.\n"
-            f"2. Do NOT add outside knowledge, facts, or assumptions.\n"
-            f"3. Cite page numbers [Page X] for major sub-topics.\n\n"
+            f"You are Kestrel AI Study Assistant. Summarize this document cleanly and intuitively.\n"
+            f"INSTRUCTIONS:\n"
+            f"1. Highlight major topics and quote key formulas/definitions with page citations [Page X].\n"
+            f"2. Provide clear conceptual explanations for why each section matters.\n\n"
             f"Document Title: {self.doc_title} ({self.page_count} pages)\n"
             f"Document Content Excerpts:\n{doc_excerpt[:4000]}\n\n"
             f"Format a comprehensive handwritten document summary with:\n"
@@ -193,7 +196,7 @@ class PdfRAGManager:
             f"Total Pages: {self.page_count}\n\n"
             f"1. Overview [Page {first_page[0]}]:\n"
             f"{first_page[1][:300]}...\n\n"
-            f"2. Grounded Findings:\n"
-            f"• Extracted strictly from {self.doc_title} across {self.page_count} pages.\n"
+            f"2. Key Findings & Insights:\n"
+            f"• Summarized from {self.doc_title} across {self.page_count} pages.\n"
             f"• All notes saved directly to your Kestrel notebook canvas."
         )

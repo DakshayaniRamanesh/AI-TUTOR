@@ -29,6 +29,7 @@ from .items.graph_card import GraphCard
 from .widgets.ask_bar import AskBar
 from .widgets.reference_panel import ReferencePanel
 from .widgets.pdf_viewer_widget import PdfViewerWidget
+from .widgets.folder_tree_widget import FolderTreeWidget
 from .views.notebooks_panel import NotebooksPanel
 
 from ..backend.stem_solver import solve_stem_question
@@ -100,7 +101,7 @@ class MainWindow(QMainWindow):
         # PDF Viewer Widget
         self.pdf_viewer_widget = PdfViewerWidget(self.pdf_canvas_splitter)
         self.pdf_viewer_widget.close_requested.connect(self._close_pdf_split_screen)
-        self.pdf_viewer_widget.contextual_action_requested.connect(self._on_pdf_contextual_action)
+        self.pdf_viewer_widget.reply_clicked.connect(self._on_pdf_reply_clicked)
         self.pdf_viewer_widget.hide() # Hidden by default until PDF is opened
         self.pdf_canvas_splitter.addWidget(self.pdf_viewer_widget)
 
@@ -122,6 +123,7 @@ class MainWindow(QMainWindow):
         self.notebooks_panel = NotebooksPanel(self.main_stack)
         self.notebooks_panel.open_notebook_requested.connect(self._on_load_notebook_requested)
         self.notebooks_panel.create_notebook_requested.connect(self._on_new_notebook_requested)
+        self.notebooks_panel.folder_navigated.connect(self._on_panel_folder_navigated)
         self.main_stack.addWidget(self.notebooks_panel) # Index 1
 
         cc_layout.addWidget(self.main_stack)
@@ -202,6 +204,7 @@ class MainWindow(QMainWindow):
 
         layout = QVBoxLayout(sb)
         layout.setContentsMargins(4, 8, 4, 8)
+        layout.setSpacing(0)
 
         lbl_sec = QLabel("NAVIGATION", sb)
         lbl_sec.setObjectName("SidebarTitle")
@@ -223,6 +226,15 @@ class MainWindow(QMainWindow):
         self.sidebar_list.setCurrentRow(0)
         self.sidebar_list.currentRowChanged.connect(self._on_sidebar_changed)
         layout.addWidget(self.sidebar_list)
+
+        # Folder Tree Widget (visible only when Notebooks is selected)
+        self.folder_tree = FolderTreeWidget(sb)
+        self.folder_tree.folder_selected.connect(self._on_sidebar_folder_selected)
+        self.folder_tree.tree_changed.connect(self._on_folder_tree_changed)
+        self.folder_tree.setVisible(False)
+        layout.addWidget(self.folder_tree)
+
+        layout.addStretch()
 
         # Reference Panel Button in Sidebar
         btn_ref = QPushButton("📚 Reference Database", sb)
@@ -398,6 +410,7 @@ class MainWindow(QMainWindow):
         # Center: AskBar Floating Widget
         self.ask_bar = AskBar(hud)
         self.ask_bar.question_submitted.connect(self._on_stem_question_asked)
+        self.ask_bar.question_with_context_submitted.connect(self._on_question_with_context_asked)
         self.ask_bar.pdf_requested.connect(self._open_pdf_dialog)
         layout.addWidget(self.ask_bar)
 
@@ -532,31 +545,39 @@ class MainWindow(QMainWindow):
         self.pdf_viewer_widget.hide()
         self.ask_bar.set_pdf_mode(False)
 
-    def _on_pdf_contextual_action(self, action_type: str, selected_text: str, page_num: int):
+    def _on_pdf_reply_clicked(self, selected_text: str, page_num: int, surrounding_context: str):
         """
-        Triggered when user clicks contextual popup action in PDF (Explain, Solve, Summarize, Define).
-        Generates a grounded RAG response and streams it onto the canvas paper side.
+        Triggered when user taps 'Reply ↰' floating pill button on highlighted PDF passage.
+        Links selection snippet & surrounding paragraph context to the AskBar and focuses input field.
+        """
+        self.ask_bar.set_selection_context(selected_text, page_num, surrounding_context)
+
+    def _on_question_with_context_asked(self, user_question: str, selected_text: str, page_num: int, surrounding_context: str):
+        """
+        Triggered when user submits a doubt or question in the AskBar with a PDF text selection context attached.
+        Generates grounded RAG solution & answer bubble onto the canvas paper.
         """
         if not self.pdf_rag_mgr.is_loaded():
             return
 
-        query = f"{action_type}: \"{selected_text}\""
         ai_response = self.pdf_rag_mgr.generate_grounded_answer(
-            query,
+            query=user_question,
             selected_text=selected_text,
-            page_num=page_num
+            page_num=page_num,
+            surrounding_context=surrounding_context
         )
 
+        passage_preview = selected_text[:120].replace('\n', ' ')
         full_text = (
-            f"Passage ({action_type}): \"{selected_text[:100]}...\" [Page {page_num}]\n\n"
-            f"Solution:\n{ai_response}"
+            f"📖 Highlighted Passage [Page {page_num}]:\n\"{passage_preview}...\"\n\n"
+            f"💡 Answer & Solution:\n{ai_response}"
         )
 
         center_pos = self.view.mapToScene(self.view.viewport().rect().center())
         bubble = AnswerBubble(
-            title=f"Grounded AI ({action_type})",
+            title=f"Doubt: {user_question[:25]}",
             full_text=full_text,
-            question=f"Context Action: {action_type}"
+            question=user_question
         )
         bubble.setPos(center_pos)
         self.scene.addItem(bubble)
@@ -589,10 +610,33 @@ class MainWindow(QMainWindow):
 
     def _on_sidebar_changed(self, row: int):
         if row == 1: # "📓 Notebooks"
+            self._refresh_folder_tree()
+            self.folder_tree.setVisible(True)
             self.notebooks_panel.refresh()
             self.main_stack.setCurrentIndex(1)
         else:
+            self.folder_tree.setVisible(False)
             self.main_stack.setCurrentIndex(0)
+
+    def _refresh_folder_tree(self):
+        from ..storage.notebook_storage import NotebookStorage
+        folders = NotebookStorage.get_folder_tree()
+        selected_id = self.notebooks_panel._current_folder_id
+        self.folder_tree.refresh(folders, selected_id=selected_id)
+
+    def _on_sidebar_folder_selected(self, folder_id: str):
+        """User clicked a folder in the sidebar tree — navigate notebooks panel."""
+        self.notebooks_panel.navigate_to_folder(folder_id or None)
+
+    def _on_folder_tree_changed(self):
+        """Folder tree had a structural change (create/rename/delete) — refresh both."""
+        self._refresh_folder_tree()
+        self.notebooks_panel.refresh()
+
+    def _on_panel_folder_navigated(self, folder_id):
+        """Panel navigated via breadcrumb or folder card — sync sidebar tree highlight."""
+        self._refresh_folder_tree()
+        self.folder_tree.select_folder(folder_id or "")
 
     def _on_toolbar_save(self):
         current_name = self.current_board.title or "Untitled Notebook"
@@ -627,21 +671,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Load Failed", f"Could not load notebook:\n{err}")
 
     def _on_new_notebook_requested(self):
-        name, ok = QInputDialog.getText(self, "New Notebook", "Enter Notebook Name:", text="Untitled Notebook")
-        if ok and name.strip():
-            try:
-                meta = NotebookStorage.create_notebook(name.strip())
-                self.current_board.board_id = meta["id"]
-                self.current_board.title = meta["name"]
-                self.title_edit.setText(meta["name"])
-                
-                self.scene.clear_all()
-                
-                self.main_stack.setCurrentIndex(0)
-                self.sidebar_list.setCurrentRow(0)
-                self.notebooks_panel.refresh()
-            except Exception as err:
-                QMessageBox.warning(self, "Create Failed", f"Could not create notebook:\n{err}")
+        """Legacy create_notebook_requested signal (now the panel handles new notebooks inline)."""
+        self.sidebar_list.setCurrentRow(1)  # Switch to Notebooks panel
 
     def _on_toolbar_paste(self):
         self.scene.active_tool = "select"

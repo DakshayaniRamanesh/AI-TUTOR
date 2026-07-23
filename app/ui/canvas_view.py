@@ -40,6 +40,9 @@ class CanvasView(QGraphicsView):
         self.scale(factor, factor)
         self.zoom_changed.emit(self.current_zoom)
 
+    def zoom_by(self, factor: float):
+        self.set_zoom(self.current_zoom * factor)
+
     def wheelEvent(self, event: QWheelEvent):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             # Zoom
