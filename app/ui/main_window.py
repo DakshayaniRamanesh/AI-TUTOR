@@ -1,15 +1,17 @@
 """
 Main Application Window (Apple Freeform Shell Layout)
-Sidebar (~260px), Top Toolbar, Infinite Canvas, Zoom HUD, Floating Tool Palette, AskBar & Notebooks Panel
+Sidebar (~260px), Top Toolbar, Infinite Canvas, Zoom HUD, Floating Tool Palette, AskBar, Notebooks Panel & PDF Split-Screen Study Mode
 """
 
+import os
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QListWidget,
     QListWidgetItem, QPushButton, QLineEdit, QLabel, QFrame,
-    QSplitter, QStackedWidget, QFileDialog, QInputDialog, QMessageBox
+    QSplitter, QStackedWidget, QFileDialog, QInputDialog, QMessageBox,
+    QMenu
 )
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont, QColor, QAction
 import qtawesome as qta
 
 from .canvas_scene import CanvasScene
@@ -26,9 +28,12 @@ from .items.graph_card import GraphCard
 
 from .widgets.ask_bar import AskBar
 from .widgets.reference_panel import ReferencePanel
+from .widgets.pdf_viewer_widget import PdfViewerWidget
+from .widgets.folder_tree_widget import FolderTreeWidget
 from .views.notebooks_panel import NotebooksPanel
 
 from ..backend.stem_solver import solve_stem_question
+from ..backend.pdf_rag_manager import PdfRAGManager
 from ..backend.video_gen_client import request_video_generation
 from ..storage.board_model import BoardModel
 from ..storage.notebook_storage import NotebookStorage
@@ -43,6 +48,8 @@ class MainWindow(QMainWindow):
 
         self.current_board = BoardModel("Notebook Board 1")
         self.downloads_mgr = DownloadsManager()
+        self.pdf_rag_mgr = PdfRAGManager()
+
         self.reference_panel = ReferencePanel()
         self.reference_panel.insert_data_requested.connect(self._on_insert_reference_table)
 
@@ -78,20 +85,33 @@ class MainWindow(QMainWindow):
         self.toolbar = self._create_top_toolbar()
         cc_layout.addWidget(self.toolbar)
 
-        # Main View Stack (Index 0: Canvas View, Index 1: Notebooks View)
+        # Main View Stack (Index 0: Canvas / Split View, Index 1: Notebooks View)
         self.main_stack = QStackedWidget(self.canvas_container)
 
-        # Canvas View Wrapper
+        # Canvas & PDF Split-Screen Wrapper
         canvas_wrapper = QWidget(self.main_stack)
         cw_layout = QVBoxLayout(canvas_wrapper)
         cw_layout.setContentsMargins(0, 0, 0, 0)
         cw_layout.setSpacing(0)
 
+        # PDF Splitter (Left: PDF Viewer, Right: Canvas View)
+        self.pdf_canvas_splitter = QSplitter(Qt.Orientation.Horizontal, canvas_wrapper)
+        self.pdf_canvas_splitter.setHandleWidth(2)
+
+        # PDF Viewer Widget
+        self.pdf_viewer_widget = PdfViewerWidget(self.pdf_canvas_splitter)
+        self.pdf_viewer_widget.close_requested.connect(self._close_pdf_split_screen)
+        self.pdf_viewer_widget.reply_clicked.connect(self._on_pdf_reply_clicked)
+        self.pdf_viewer_widget.hide() # Hidden by default until PDF is opened
+        self.pdf_canvas_splitter.addWidget(self.pdf_viewer_widget)
+
         # Scene and View
         self.scene = CanvasScene(self)
         self.view = CanvasView(self.scene, self)
         self.view.zoom_changed.connect(self._on_zoom_changed)
-        cw_layout.addWidget(self.view)
+        self.pdf_canvas_splitter.addWidget(self.view)
+
+        cw_layout.addWidget(self.pdf_canvas_splitter)
 
         # Bottom Floating HUD Overlay (AskBar + Zoom HUD + Floating Tools)
         self.hud_overlay = self._create_hud_overlay()
@@ -103,6 +123,7 @@ class MainWindow(QMainWindow):
         self.notebooks_panel = NotebooksPanel(self.main_stack)
         self.notebooks_panel.open_notebook_requested.connect(self._on_load_notebook_requested)
         self.notebooks_panel.create_notebook_requested.connect(self._on_new_notebook_requested)
+        self.notebooks_panel.folder_navigated.connect(self._on_panel_folder_navigated)
         self.main_stack.addWidget(self.notebooks_panel) # Index 1
 
         cc_layout.addWidget(self.main_stack)
@@ -183,6 +204,7 @@ class MainWindow(QMainWindow):
 
         layout = QVBoxLayout(sb)
         layout.setContentsMargins(4, 8, 4, 8)
+        layout.setSpacing(0)
 
         lbl_sec = QLabel("NAVIGATION", sb)
         lbl_sec.setObjectName("SidebarTitle")
@@ -204,6 +226,15 @@ class MainWindow(QMainWindow):
         self.sidebar_list.setCurrentRow(0)
         self.sidebar_list.currentRowChanged.connect(self._on_sidebar_changed)
         layout.addWidget(self.sidebar_list)
+
+        # Folder Tree Widget (visible only when Notebooks is selected)
+        self.folder_tree = FolderTreeWidget(sb)
+        self.folder_tree.folder_selected.connect(self._on_sidebar_folder_selected)
+        self.folder_tree.tree_changed.connect(self._on_folder_tree_changed)
+        self.folder_tree.setVisible(False)
+        layout.addWidget(self.folder_tree)
+
+        layout.addStretch()
 
         # Reference Panel Button in Sidebar
         btn_ref = QPushButton("📚 Reference Database", sb)
@@ -288,6 +319,10 @@ class MainWindow(QMainWindow):
         pill_layout.setContentsMargins(4, 2, 4, 2)
         pill_layout.setSpacing(2)
 
+        btn_pdf = QPushButton(qta.icon('fa5s.file-pdf', color='#ff3b30'), "PDF Mode", pill)
+        btn_pdf.setStyleSheet("color: #ff3b30; font-weight: bold;")
+        btn_pdf.clicked.connect(self._open_pdf_dialog)
+
         btn_save = QPushButton(qta.icon('fa5s.save', color='#007aff'), "Save", pill)
         btn_save.setStyleSheet("color: #007aff; font-weight: bold;")
         btn_save.clicked.connect(self._on_toolbar_save)
@@ -312,6 +347,7 @@ class MainWindow(QMainWindow):
         self.btn_grid_mode.setStyleSheet("color: #007aff; font-weight: bold;")
         self.btn_grid_mode.clicked.connect(self._toggle_grid_mode)
 
+        pill_layout.addWidget(btn_pdf)
         pill_layout.addWidget(btn_save)
         pill_layout.addWidget(btn_paste)
         pill_layout.addWidget(btn_sticky)
@@ -374,9 +410,11 @@ class MainWindow(QMainWindow):
         # Center: AskBar Floating Widget
         self.ask_bar = AskBar(hud)
         self.ask_bar.question_submitted.connect(self._on_stem_question_asked)
+        self.ask_bar.question_with_context_submitted.connect(self._on_question_with_context_asked)
+        self.ask_bar.pdf_requested.connect(self._open_pdf_dialog)
         layout.addWidget(self.ask_bar)
 
-        # Right: Floating Drawing Tools (Select, Pen, Highlighter, Eraser)
+        # Right: Floating Drawing Tools (Select, Pen, Highlighter with Colors, Eraser)
         tools_hud = QWidget(hud)
         tools_hud.setStyleSheet("""
             QWidget {
@@ -403,23 +441,146 @@ class MainWindow(QMainWindow):
         btn_pen = QPushButton(qta.icon('fa5s.pen-nib', color='#1c1c1e'), "", tools_hud)
         btn_pen.clicked.connect(lambda: self._set_tool("pen"))
 
-        btn_highlighter = QPushButton(qta.icon('fa5s.highlighter', color='#ff9500'), "", tools_hud)
-        btn_highlighter.clicked.connect(lambda: self._set_tool("highlighter"))
+        # Highlighter Button with Color Menu
+        self.btn_highlighter = QPushButton(qta.icon('fa5s.highlighter', color='#ff9500'), "", tools_hud)
+        self.btn_highlighter.setToolTip("Highlighter (Click for Colors)")
+        self.btn_highlighter.clicked.connect(self._on_highlighter_clicked)
 
         btn_eraser = QPushButton(qta.icon('fa5s.eraser', color='#ff3b30'), "", tools_hud)
         btn_eraser.clicked.connect(lambda: self._set_tool("eraser"))
 
         th_layout.addWidget(btn_cursor)
         th_layout.addWidget(btn_pen)
-        th_layout.addWidget(btn_highlighter)
+        th_layout.addWidget(self.btn_highlighter)
         th_layout.addWidget(btn_eraser)
 
         layout.addWidget(tools_hud)
 
         return hud
 
+    def _on_highlighter_clicked(self):
+        """
+        Activates highlighter tool and pops up a color selection menu (Yellow, Green, Blue, Pink).
+        """
+        self._set_tool("highlighter")
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #d1d1d6;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: 600;
+            }
+            QMenu::item:selected {
+                background-color: #f2f2f7;
+            }
+        """)
+
+        act_yellow = QAction("🟡 Yellow (#ffe066)", self)
+        act_yellow.triggered.connect(lambda: self.scene.set_highlighter_color("#ffe066"))
+
+        act_green = QAction("🟢 Green (#a8e6cf)", self)
+        act_green.triggered.connect(lambda: self.scene.set_highlighter_color("#a8e6cf"))
+
+        act_blue = QAction("🔵 Blue (#90caf9)", self)
+        act_blue.triggered.connect(lambda: self.scene.set_highlighter_color("#90caf9"))
+
+        act_pink = QAction("🌸 Pink (#ffb7b2)", self)
+        act_pink.triggered.connect(lambda: self.scene.set_highlighter_color("#ffb7b2"))
+
+        menu.addAction(act_yellow)
+        menu.addAction(act_green)
+        menu.addAction(act_blue)
+        menu.addAction(act_pink)
+
+        pos = self.btn_highlighter.mapToGlobal(self.btn_highlighter.rect().topLeft())
+        menu.exec(pos)
+
     def _set_tool(self, tool_name: str):
         self.scene.active_tool = tool_name
+
+    def _open_pdf_dialog(self):
+        """
+        Opens QFileDialog to select a PDF file and loads it into Split-Screen RAG mode.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open PDF for Study Mode", "", "PDF Files (*.pdf);;All Files (*)"
+        )
+        if file_path:
+            self._load_pdf_into_split_screen(file_path)
+
+    def _load_pdf_into_split_screen(self, file_path: str):
+        try:
+            success_rag = self.pdf_rag_mgr.load_pdf(file_path)
+            success_view = self.pdf_viewer_widget.load_pdf(file_path)
+
+            if success_rag and success_view:
+                self.pdf_viewer_widget.show()
+                self.pdf_canvas_splitter.setSizes([520, 520])
+                
+                fname = os.path.basename(file_path)
+                self.ask_bar.set_pdf_mode(True, filename=fname)
+
+                # Generate initial Grounded Document Summary directly onto canvas paper
+                summary = self.pdf_rag_mgr.generate_grounded_summary()
+                center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+                bubble = AnswerBubble(
+                    title=f"PDF Summary: {fname[:20]}",
+                    full_text=summary,
+                    question=f"Summarize document: {fname}"
+                )
+                bubble.setPos(center_pos)
+                self.scene.addItem(bubble)
+            else:
+                QMessageBox.warning(self, "PDF Error", "Could not load the selected PDF document.")
+        except Exception as err:
+            QMessageBox.warning(self, "PDF Exception", f"Error opening PDF:\n{err}")
+
+    def _close_pdf_split_screen(self):
+        self.pdf_viewer_widget.hide()
+        self.ask_bar.set_pdf_mode(False)
+
+    def _on_pdf_reply_clicked(self, selected_text: str, page_num: int, surrounding_context: str):
+        """
+        Triggered when user taps 'Reply ↰' floating pill button on highlighted PDF passage.
+        Links selection snippet & surrounding paragraph context to the AskBar and focuses input field.
+        """
+        self.ask_bar.set_selection_context(selected_text, page_num, surrounding_context)
+
+    def _on_question_with_context_asked(self, user_question: str, selected_text: str, page_num: int, surrounding_context: str):
+        """
+        Triggered when user submits a doubt or question in the AskBar with a PDF text selection context attached.
+        Generates grounded RAG solution & answer bubble onto the canvas paper.
+        """
+        if not self.pdf_rag_mgr.is_loaded():
+            return
+
+        ai_response = self.pdf_rag_mgr.generate_grounded_answer(
+            query=user_question,
+            selected_text=selected_text,
+            page_num=page_num,
+            surrounding_context=surrounding_context
+        )
+
+        passage_preview = selected_text[:120].replace('\n', ' ')
+        full_text = (
+            f"📖 Highlighted Passage [Page {page_num}]:\n\"{passage_preview}...\"\n\n"
+            f"💡 Answer & Solution:\n{ai_response}"
+        )
+
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        bubble = AnswerBubble(
+            title=f"Doubt: {user_question[:25]}",
+            full_text=full_text,
+            question=user_question
+        )
+        bubble.setPos(center_pos)
+        self.scene.addItem(bubble)
 
     def _toggle_sidebar(self):
         if self.sidebar.isVisible():
@@ -449,10 +610,33 @@ class MainWindow(QMainWindow):
 
     def _on_sidebar_changed(self, row: int):
         if row == 1: # "📓 Notebooks"
+            self._refresh_folder_tree()
+            self.folder_tree.setVisible(True)
             self.notebooks_panel.refresh()
             self.main_stack.setCurrentIndex(1)
         else:
+            self.folder_tree.setVisible(False)
             self.main_stack.setCurrentIndex(0)
+
+    def _refresh_folder_tree(self):
+        from ..storage.notebook_storage import NotebookStorage
+        folders = NotebookStorage.get_folder_tree()
+        selected_id = self.notebooks_panel._current_folder_id
+        self.folder_tree.refresh(folders, selected_id=selected_id)
+
+    def _on_sidebar_folder_selected(self, folder_id: str):
+        """User clicked a folder in the sidebar tree — navigate notebooks panel."""
+        self.notebooks_panel.navigate_to_folder(folder_id or None)
+
+    def _on_folder_tree_changed(self):
+        """Folder tree had a structural change (create/rename/delete) — refresh both."""
+        self._refresh_folder_tree()
+        self.notebooks_panel.refresh()
+
+    def _on_panel_folder_navigated(self, folder_id):
+        """Panel navigated via breadcrumb or folder card — sync sidebar tree highlight."""
+        self._refresh_folder_tree()
+        self.folder_tree.select_folder(folder_id or "")
 
     def _on_toolbar_save(self):
         current_name = self.current_board.title or "Untitled Notebook"
@@ -487,21 +671,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Load Failed", f"Could not load notebook:\n{err}")
 
     def _on_new_notebook_requested(self):
-        name, ok = QInputDialog.getText(self, "New Notebook", "Enter Notebook Name:", text="Untitled Notebook")
-        if ok and name.strip():
-            try:
-                meta = NotebookStorage.create_notebook(name.strip())
-                self.current_board.board_id = meta["id"]
-                self.current_board.title = meta["name"]
-                self.title_edit.setText(meta["name"])
-                
-                self.scene.clear_all()
-                
-                self.main_stack.setCurrentIndex(0)
-                self.sidebar_list.setCurrentRow(0)
-                self.notebooks_panel.refresh()
-            except Exception as err:
-                QMessageBox.warning(self, "Create Failed", f"Could not create notebook:\n{err}")
+        """Legacy create_notebook_requested signal (now the panel handles new notebooks inline)."""
+        self.sidebar_list.setCurrentRow(1)  # Switch to Notebooks panel
 
     def _on_toolbar_paste(self):
         self.scene.active_tool = "select"
@@ -574,6 +745,16 @@ class MainWindow(QMainWindow):
         self.scene.addItem(v_item)
 
     def _on_stem_question_asked(self, question: str):
+        # 1. Grounded RAG if PDF Study Mode is active
+        if self.pdf_rag_mgr.is_loaded() and self.pdf_viewer_widget.isVisible():
+            ai_response = self.pdf_rag_mgr.generate_grounded_answer(question)
+            center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+            bubble = AnswerBubble(title="PDF Grounded Answer", full_text=ai_response, question=question)
+            bubble.setPos(center_pos)
+            self.scene.addItem(bubble)
+            return
+
+        # 2. Standard STEM Symbolic Solver
         res = solve_stem_question(question)
         solution = res.get("solution", "")
         plot_path = res.get("plot_path", "")
