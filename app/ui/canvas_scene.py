@@ -29,10 +29,16 @@ class CanvasScene(QGraphicsScene):
         self.active_tool = "select"
         self.pen_color = "#1c1c1e"
         self.pen_width = 3.0
+        self.highlighter_color = "#ffe066" # Yellow, Green, Blue, Pink
         
         self._current_path_item = None
         self._current_painter_path = None
+        self._stroke_start_pos = None
         self._is_erasing = False
+
+    def set_highlighter_color(self, color_hex: str):
+        self.highlighter_color = color_hex
+        self.active_tool = "highlighter"
 
     def set_background_mode(self, mode: str):
         if mode in ["dotted", "ruled"]:
@@ -141,14 +147,17 @@ class CanvasScene(QGraphicsScene):
             self.erase_items_at(event.scenePos())
             event.accept()
         elif self.active_tool in ["pen", "highlighter"] and event.button() == Qt.MouseButton.LeftButton:
+            self._stroke_start_pos = event.scenePos()
             self._current_painter_path = QPainterPath()
-            self._current_painter_path.moveTo(event.scenePos())
+            self._current_painter_path.moveTo(self._stroke_start_pos)
             
             tool_name = self.active_tool
+            color = self.highlighter_color if tool_name == "highlighter" else self.pen_color
+            
             self._current_path_item = InkStroke(
                 path=self._current_painter_path,
                 tool_mode=tool_name,
-                color=self.pen_color,
+                color=color,
                 width=self.pen_width
             )
             self.addItem(self._current_path_item)
@@ -161,8 +170,16 @@ class CanvasScene(QGraphicsScene):
             self.erase_items_at(event.scenePos())
             event.accept()
         elif self._current_path_item and self._current_painter_path:
-            self._current_painter_path.lineTo(event.scenePos())
-            self._current_path_item.setPath(self._current_painter_path)
+            if self.active_tool == "highlighter" and self._stroke_start_pos:
+                # Straight-line snapping for clean horizontal highlighting across text lines
+                snapped_pos = QPointF(event.scenePos().x(), self._stroke_start_pos.y())
+                new_path = QPainterPath()
+                new_path.moveTo(self._stroke_start_pos)
+                new_path.lineTo(snapped_pos)
+                self._current_path_item.setPath(new_path)
+            else:
+                self._current_painter_path.lineTo(event.scenePos())
+                self._current_path_item.setPath(self._current_painter_path)
             event.accept()
         else:
             super().mouseMoveEvent(event)
@@ -174,6 +191,7 @@ class CanvasScene(QGraphicsScene):
         elif self._current_path_item:
             self._current_path_item = None
             self._current_painter_path = None
+            self._stroke_start_pos = None
             event.accept()
         else:
             super().mouseReleaseEvent(event)
