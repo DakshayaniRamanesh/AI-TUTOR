@@ -78,3 +78,29 @@ class VideoJob:
     error_message: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class LatexJob:
+    """
+    LangGraph state object for the LaTeX conversion pipeline.
+    """
+    job_id: str
+    image_b64: str                     # base64 encoded QPixmap image of handwriting
+    template_type: str                 # "Assignment", "Research Paper", "Homework", "Lecture Slides"
+    
+    status: JobStatus = JobStatus.PENDING
+    step: str = "init"
+    progress_percentage: int = 0
+    
+    raw_transcription: Optional[str] = None  # output of transcribe step
+    structured_latex: Optional[str] = None   # output of structure step
+    final_tex_code: Optional[str] = None     # output of template_apply step
+    pdf_path: Optional[str] = None           # output of render step
+    pdf_url: Optional[str] = None            # if uploaded
+    
+    retry_count: int = 0
+    has_build_error: bool = False
+    build_error_trace: Optional[str] = None
+    
+    error_message: Optional[str] = None

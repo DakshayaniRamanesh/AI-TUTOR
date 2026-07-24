@@ -167,6 +167,8 @@ class PdfViewerWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.file_path = ""
+        self.latex_file_path = ""
+        self.current_mode = "source"  # "source" or "latex"
         self.current_page = 1
         self.total_pages = 1
         self.pages_text = {} # page_num -> text
@@ -231,6 +233,17 @@ class PdfViewerWidget(QWidget):
         self.lbl_title = QLabel("📄 Document", header)
         self.lbl_title.setObjectName("DocTitleLabel")
 
+        # Tabs
+        self.tab_source = QPushButton("Source PDF", header)
+        self.tab_source.setCheckable(True)
+        self.tab_source.setChecked(True)
+        self.tab_source.clicked.connect(lambda: self._switch_mode("source"))
+        
+        self.tab_latex = QPushButton("Generated LaTeX", header)
+        self.tab_latex.setCheckable(True)
+        self.tab_latex.setVisible(False)  # Hidden until latex is loaded
+        self.tab_latex.clicked.connect(lambda: self._switch_mode("latex"))
+
         self.lbl_page = QLabel("Page 1 of 1", header)
         self.lbl_page.setObjectName("PageNumLabel")
 
@@ -245,6 +258,9 @@ class PdfViewerWidget(QWidget):
         btn_close.clicked.connect(self.close_requested.emit)
 
         h_layout.addWidget(self.lbl_title)
+        h_layout.addSpacing(20)
+        h_layout.addWidget(self.tab_source)
+        h_layout.addWidget(self.tab_latex)
         h_layout.addStretch()
         h_layout.addWidget(btn_prev)
         h_layout.addWidget(self.lbl_page)
@@ -292,14 +308,16 @@ class PdfViewerWidget(QWidget):
 
         try:
             self.file_path = file_path
+            self.current_mode = "source"
+            self.tab_source.setChecked(True)
+            self.tab_latex.setChecked(False)
+            
             fname = os.path.basename(file_path)
             self.lbl_title.setText(f"📄 {fname[:24]}..." if len(fname) > 26 else f"📄 {fname}")
 
-            # Load document into native QPdfDocument for visual page rendering
             self.pdf_doc.load(file_path)
             self.total_pages = self.pdf_doc.pageCount() if self.pdf_doc.pageCount() > 0 else 1
 
-            # Extract page text with pypdf for RAG & context extraction
             reader = PdfReader(file_path)
             self.pages_text = {}
             for idx, page in enumerate(reader.pages):
@@ -312,6 +330,42 @@ class PdfViewerWidget(QWidget):
         except Exception as err:
             print(f"[PdfViewerWidget] Error loading PDF: {err}")
             return False
+
+    def load_latex_pdf(self, latex_file_path: str) -> bool:
+        """
+        Loads a generated LaTeX PDF. Shows the LaTeX tab and switches to it.
+        """
+        if not os.path.exists(latex_file_path):
+            return False
+            
+        try:
+            self.latex_file_path = latex_file_path
+            self.tab_latex.setVisible(True)
+            self._switch_mode("latex")
+            self.show()
+            return True
+        except Exception as err:
+            print(f"[PdfViewerWidget] Error loading LaTeX PDF: {err}")
+            return False
+
+    def _switch_mode(self, mode: str):
+        if mode == "source" and self.file_path:
+            self.current_mode = "source"
+            self.tab_source.setChecked(True)
+            self.tab_latex.setChecked(False)
+            self.pdf_doc.load(self.file_path)
+            self.total_pages = self.pdf_doc.pageCount() if self.pdf_doc.pageCount() > 0 else 1
+            self.current_page = 1
+            self._render_current_page()
+            
+        elif mode == "latex" and self.latex_file_path:
+            self.current_mode = "latex"
+            self.tab_source.setChecked(False)
+            self.tab_latex.setChecked(True)
+            self.pdf_doc.load(self.latex_file_path)
+            self.total_pages = self.pdf_doc.pageCount() if self.pdf_doc.pageCount() > 0 else 1
+            self.current_page = 1
+            self._render_current_page()
 
     def _render_current_page(self):
         self.lbl_page.setText(f"Page {self.current_page} of {self.total_pages}")

@@ -15,6 +15,7 @@ from .items.graph_card import GraphCard
 from .items.video_float_item import VideoFloatItem
 from .items.answer_bubble import AnswerBubble
 from .items.group_selection import GroupSelection
+from .items.image_item import ImageItem
 
 class CanvasScene(QGraphicsScene):
     def __init__(self, parent=None):
@@ -133,6 +134,19 @@ class CanvasScene(QGraphicsScene):
                 )
             elif itype == "GroupSelection":
                 item = GroupSelection(title=data.get("title", "Group"))
+            elif itype == "ImageItem":
+                import base64
+                from PyQt6.QtGui import QPixmap
+                from PyQt6.QtCore import QByteArray
+                
+                b64_data = data.get("image_b64", "")
+                if b64_data:
+                    byte_data = base64.b64decode(b64_data)
+                    pixmap = QPixmap()
+                    pixmap.loadFromData(QByteArray(byte_data), "PNG")
+                    item = ImageItem(pixmap)
+                    if "scale" in data:
+                        item.setScale(data["scale"])
 
             if item:
                 item.setPos(x, y)

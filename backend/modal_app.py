@@ -23,6 +23,7 @@ manim_image = (
         "cm-super",
         "dvisvgm",
         "pkg-config",
+        "tectonic",
     ])
     .pip_install([
         "fastapi[standard]",
@@ -47,7 +48,7 @@ app = modal.App("manim-app", image=manim_image)
 
 # ── Persistent shared job state across Modal containers ─────────────────────────
 jobs_db = modal.Dict.from_name("manim-jobs-db", create_if_missing=True)
-
+latex_jobs_db = modal.Dict.from_name("latex-jobs-db", create_if_missing=True)
 
 # Define secrets from backend/.env unconditionally for Modal cloud deployment
 secrets = [modal.Secret.from_dotenv()]
@@ -157,6 +158,46 @@ def _process_annotation_job(job_id: str, annotations_raw: list) -> Dict[str, Any
     jobs_db[job_id] = result
     return result
 
+
+@app.function(image=manim_image, timeout=600, secrets=secrets)
+def _process_latex_job(job_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Worker for latex generation pipeline."""
+    from backend.pipeline.models import LatexJob
+    from backend.pipeline.latex_graph import LatexGenerationPipeline
+
+    job = LatexJob(
+        job_id=job_dict["job_id"],
+        image_b64=job_dict["image_b64"],
+        template_type=job_dict["template_type"]
+    )
+
+    pipeline = LatexGenerationPipeline()
+    final_job = pipeline.run_pipeline(job)
+
+    # Read PDF as base64 to send it back via modal dict (or just rely on storage)
+    # Since modal functions don't easily serve files without a Volume, 
+    # we'll encode the PDF as base64 and return it, or the frontend can just get it if we upload it.
+    # Wait, the spec says "returns the URL/path". In Modal, local temp files are lost.
+    # Let's use AWS S3/DO Spaces to upload it, just like UploaderAgent does for videos, OR just base64 encode it in the DB.
+    # Since it's a PDF, base64 is usually small enough for modal.Dict (limit ~1MB or so).
+    # But wait, we can just save it as base64 inside the dict.
+    
+    pdf_b64 = None
+    if final_job.pdf_path and os.path.exists(final_job.pdf_path):
+        import base64
+        with open(final_job.pdf_path, "rb") as f:
+            pdf_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    result = {
+        "job_id": final_job.job_id,
+        "status": final_job.status.value if hasattr(final_job.status, "value") else str(final_job.status),
+        "pdf_b64": pdf_b64,
+        "error_message": final_job.error_message,
+        "step": final_job.step,
+        "progress_percentage": final_job.progress_percentage
+    }
+    latex_jobs_db[final_job.job_id] = result
+    return result
 
 from fastapi import Request
 
@@ -274,6 +315,58 @@ async def status(request: Request, job_id: str = "") -> dict:
         "video_url": None,
         "error_message": None,
         "cache_hit": False,
+    }
+
+
+@app.function(image=manim_image, secrets=secrets)
+@modal.fastapi_endpoint(method="POST")
+async def generate_latex(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    job_id = body.get("job_id") or f"latex_{uuid.uuid4().hex[:10]}"
+    image_b64 = body.get("image_b64", "")
+    template_type = body.get("template_type", "Homework")
+
+    latex_jobs_db[job_id] = {
+        "job_id": job_id,
+        "status": "processing",
+        "step": "init",
+        "progress_percentage": 0
+    }
+
+    _process_latex_job.spawn({
+        "job_id": job_id,
+        "image_b64": image_b64,
+        "template_type": template_type
+    })
+
+    return {
+        "job_id": job_id,
+        "status": "processing",
+        "message": "LaTeX generation pipeline started."
+    }
+
+@app.function(image=manim_image, secrets=secrets)
+@modal.fastapi_endpoint(method="GET")
+async def latex_status(request: Request, job_id: str = "") -> dict:
+    target_id = job_id or request.query_params.get("job_id", "")
+    if target_id and target_id in latex_jobs_db:
+        job = latex_jobs_db[target_id]
+        return {
+            "job_id": target_id,
+            "status": job.get("status", "processing"),
+            "step": job.get("step", "processing"),
+            "progress_percentage": job.get("progress_percentage", 0),
+            "pdf_b64": job.get("pdf_b64"),
+            "error_message": job.get("error_message"),
+        }
+    return {
+        "job_id": target_id,
+        "status": "error",
+        "error_message": "Job not found"
     }
 
 
