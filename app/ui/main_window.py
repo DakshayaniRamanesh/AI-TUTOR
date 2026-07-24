@@ -106,6 +106,7 @@ class MainWindow(QMainWindow):
         self.pdf_viewer_widget = PdfViewerWidget(self.pdf_canvas_splitter)
         self.pdf_viewer_widget.close_requested.connect(self._close_pdf_split_screen)
         self.pdf_viewer_widget.reply_clicked.connect(self._on_pdf_reply_clicked)
+        self.pdf_viewer_widget.latex_video_requested.connect(self._on_latex_video_requested)
         self.pdf_viewer_widget.hide() # Hidden by default until PDF is opened
         self.pdf_canvas_splitter.addWidget(self.pdf_viewer_widget)
 
@@ -816,6 +817,19 @@ class MainWindow(QMainWindow):
         v_item = VideoFloatItem(job_id=job_id, title=f"Manim: {selected_text[:18]}...", video_url_or_path="")
         v_item.setPos(center_pos.x() + 300, center_pos.y())
         self.scene.addItem(v_item)
+
+    def _on_latex_video_requested(self, pdf_path: str):
+        job_id = request_video_generation(selected_text="Explain this document in an animated lesson.", pdf_path=pdf_path)
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        v_item = VideoFloatItem(job_id=job_id, title="Manim: LaTeX Document Lesson", video_url_or_path="")
+        v_item.setPos(center_pos.x() + 300, center_pos.y())
+        self.scene.addItem(v_item)
+        
+        self.pdf_viewer_widget.video_generation_started()
+        v_item.player_widget.worker.status_updated.connect(self._on_latex_video_progress)
+
+    def _on_latex_video_progress(self, job_id, stage, progress):
+        self.pdf_viewer_widget.update_video_progress(stage, progress)
 
     def _on_stem_question_asked(self, question: str):
         # 1. Grounded RAG if PDF Study Mode is active

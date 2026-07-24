@@ -6,7 +6,7 @@ provides standard mouse text selection highlighting, surrounding paragraph conte
 
 import os
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGraphicsDropShadowEffect
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGraphicsDropShadowEffect, QProgressBar
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QPointF, QRectF, QObject, QEvent
 from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPen
@@ -161,8 +161,13 @@ class PdfViewportEventFilter(QObject):
 
 
 class PdfViewerWidget(QWidget):
+    """
+    Split-Screen Visual RAG + Document Viewer.
+    Allows viewing PDFs, extracting contextual text highlighting, and toggling between original and generated LaTeX formats.
+    """
     close_requested = pyqtSignal()
     reply_clicked = pyqtSignal(str, int, str) # selected_text, page_num, surrounding_context
+    latex_video_requested = pyqtSignal(str) # latex_file_path
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -243,6 +248,31 @@ class PdfViewerWidget(QWidget):
         self.tab_latex.setCheckable(True)
         self.tab_latex.setVisible(False)  # Hidden until latex is loaded
         self.tab_latex.clicked.connect(lambda: self._switch_mode("latex"))
+        
+        self.btn_generate_video = QPushButton("🎬 Generate Animation Video", header)
+        self.btn_generate_video.setStyleSheet("background-color: #34c759; color: white; border: none;")
+        self.btn_generate_video.setVisible(False)
+        self.btn_generate_video.clicked.connect(lambda: self.latex_video_requested.emit(self.latex_file_path))
+
+        self.video_progress_bar = QProgressBar(header)
+        self.video_progress_bar.setRange(0, 100)
+        self.video_progress_bar.setFixedSize(120, 20)
+        self.video_progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #d1d1d6;
+                border-radius: 4px;
+                text-align: center;
+                background-color: #f2f2f7;
+                color: #1c1c1e;
+                font-size: 10px;
+                font-weight: bold;
+            }
+            QProgressBar::chunk {
+                background-color: #34c759;
+                border-radius: 3px;
+            }
+        """)
+        self.video_progress_bar.setVisible(False)
 
         self.lbl_page = QLabel("Page 1 of 1", header)
         self.lbl_page.setObjectName("PageNumLabel")
@@ -261,6 +291,9 @@ class PdfViewerWidget(QWidget):
         h_layout.addSpacing(20)
         h_layout.addWidget(self.tab_source)
         h_layout.addWidget(self.tab_latex)
+        h_layout.addSpacing(10)
+        h_layout.addWidget(self.btn_generate_video)
+        h_layout.addWidget(self.video_progress_bar)
         h_layout.addStretch()
         h_layout.addWidget(btn_prev)
         h_layout.addWidget(self.lbl_page)
@@ -348,11 +381,34 @@ class PdfViewerWidget(QWidget):
             print(f"[PdfViewerWidget] Error loading LaTeX PDF: {err}")
             return False
 
+    def video_generation_started(self):
+        self.btn_generate_video.setVisible(False)
+        self.video_progress_bar.setValue(0)
+        self.video_progress_bar.setFormat("Initializing...")
+        self.video_progress_bar.setVisible(True)
+
+    def update_video_progress(self, stage: str, progress: int):
+        self.video_progress_bar.setValue(progress)
+        
+        # Clean up the stage string for a small progress bar
+        short_stage = stage.replace("🎬 ", "").replace("Manim: ", "")
+        if len(short_stage) > 15:
+            short_stage = short_stage[:15] + "..."
+            
+        self.video_progress_bar.setFormat(f"{progress}% - {short_stage}")
+        
+        if progress >= 100:
+            self.video_progress_bar.setVisible(False)
+            self.btn_generate_video.setText("✓ Video Generated")
+            self.btn_generate_video.setVisible(True)
+
     def _switch_mode(self, mode: str):
         if mode == "source" and self.file_path:
             self.current_mode = "source"
             self.tab_source.setChecked(True)
             self.tab_latex.setChecked(False)
+            self.btn_generate_video.setVisible(False)
+            self.video_progress_bar.setVisible(False)
             self.pdf_doc.load(self.file_path)
             self.total_pages = self.pdf_doc.pageCount() if self.pdf_doc.pageCount() > 0 else 1
             self.current_page = 1
@@ -362,6 +418,8 @@ class PdfViewerWidget(QWidget):
             self.current_mode = "latex"
             self.tab_source.setChecked(False)
             self.tab_latex.setChecked(True)
+            if not self.video_progress_bar.isVisible():
+                self.btn_generate_video.setVisible(True)
             self.pdf_doc.load(self.latex_file_path)
             self.total_pages = self.pdf_doc.pageCount() if self.pdf_doc.pageCount() > 0 else 1
             self.current_page = 1

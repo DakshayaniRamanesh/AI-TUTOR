@@ -102,6 +102,7 @@ async def status(job_id: str):
         "step": job.step,
         "progress_percentage": job.progress_percentage,
         "video_url": video_url or job.video_url,
+        "video_local_path": job.video_path,
         "error_message": job.error_message,
         "version": job.version,
         "story_script": job.story_script

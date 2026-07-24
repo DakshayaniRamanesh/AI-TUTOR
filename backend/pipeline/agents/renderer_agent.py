@@ -112,15 +112,14 @@ class RendererAgent:
                         job.video_path = mp4_file
                     return job
 
-            print(f"[RendererAgent] Manim render CLI not available or failed: {result.stderr}. Creating placeholder MP4 file.")
+            job.status = JobStatus.ERROR
+            err_msg = getattr(result, 'stderr', 'Unknown render error')
+            job.error_message = f"Manim render failed: {err_msg[:300]}"
+            print(f"[RendererAgent] {job.error_message}")
+            return job
+            
         except Exception as e:
-            print(f"[RendererAgent] Execution exception: {e}. Fallback to mock video path.")
-
-        # Create a mock video file if manim CLI is not installed locally
-        placeholder_path = os.path.join(temp_dir, f"{job.job_id}.mp4")
-        with open(placeholder_path, "wb") as f:
-            # Write dummy bytes or 1-second silent MP4 header
-            f.write(b"FTYP_MOCK_MANIM_VIDEO_FILE_DATA")
-
-        job.video_path = placeholder_path
-        return job
+            print(f"[RendererAgent] Execution exception: {e}.")
+            job.status = JobStatus.ERROR
+            job.error_message = f"Renderer exception: {str(e)}"
+            return job
