@@ -44,6 +44,7 @@ class HeaderDragBar(QWidget):
         event.accept()
 
 class HandwritingNoteWidget(QWidget):
+    solve_requested = pyqtSignal(str) # note question/text to solve
     video_requested = pyqtSignal(str) # selected text
     delete_requested = pyqtSignal()
 
@@ -97,6 +98,11 @@ class HandwritingNoteWidget(QWidget):
         self.btn_ocr.setToolTip("Toggle OCR / Handwriting Recognition")
         self.btn_ocr.clicked.connect(self._on_ocr_clicked)
         
+        self.btn_ask = QPushButton("💡 Solve/Ask", self.header_bar)
+        self.btn_ask.setToolTip("Solve equation or ask AI Tutor about this note")
+        self.btn_ask.setStyleSheet("color: #007aff; font-weight: bold;")
+        self.btn_ask.clicked.connect(self._on_ask_clicked)
+
         self.btn_font = QPushButton("Handwritten", self.header_bar)
         self.btn_font.clicked.connect(self._toggle_font)
 
@@ -127,6 +133,7 @@ class HandwritingNoteWidget(QWidget):
         btn_del.clicked.connect(self.delete_requested.emit)
 
         header_layout.addWidget(self.btn_ocr)
+        header_layout.addWidget(self.btn_ask)
         header_layout.addWidget(self.btn_font)
         header_layout.addWidget(self.btn_min)
         header_layout.addWidget(btn_del)
@@ -170,8 +177,14 @@ class HandwritingNoteWidget(QWidget):
             self.btn_font.setText("Standard")
 
     def _on_ocr_clicked(self):
-        text = recognize_handwriting()
-        self.text_edit.append(f"\n[OCR]: {text}")
+        current_text = self.text_edit.toPlainText().strip()
+        text = recognize_handwriting(current_text)
+        self.text_edit.setPlainText(text)
+
+    def _on_ask_clicked(self):
+        text = self.text_edit.toPlainText().strip()
+        if text:
+            self.solve_requested.emit(text)
 
     def _on_selection_changed(self):
         cursor = self.text_edit.textCursor()

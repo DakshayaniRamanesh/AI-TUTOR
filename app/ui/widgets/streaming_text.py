@@ -14,7 +14,10 @@ def get_handwritten_font(point_size: int = 16, bold: bool = False) -> QFont:
     """
     Returns the bundled handwritten font if available, or a fallback script font.
     """
-    font_path = os.path.abspath("app/data/fonts/Caveat.ttf")
+    font_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "fonts", "Caveat.ttf"))
+    if not os.path.exists(font_path):
+        font_path = os.path.abspath("app/data/fonts/Caveat.ttf")
+        
     if os.path.exists(font_path):
         font_id = QFontDatabase.addApplicationFont(font_path)
         if font_id != -1:
@@ -26,7 +29,7 @@ def get_handwritten_font(point_size: int = 16, bold: bool = False) -> QFont:
                 
     # Fallback script font
     font = QFont("Comic Sans MS", point_size)
-    font.setStyleHint(QFont.StyleHint.Comic)
+    font.setStyleHint(QFont.StyleHint.Cursive)
     font.setBold(bold)
     return font
 

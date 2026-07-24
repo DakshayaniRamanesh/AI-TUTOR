@@ -1,15 +1,20 @@
-"""
-SymPy-backed STEM & Math Symbolic Solver with Smart Graph Relevance & Clean Unicode Math Formatting
-"""
-
 import os
 import re
 import time
+import requests
+from dotenv import load_dotenv
 import sympy as sp
 import numpy as np
 import matplotlib.pyplot as plt
 
-PLOTS_DIR = os.path.abspath("storage_data/plots")
+load_dotenv()
+load_dotenv("backend/.env")
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", "backend", ".env"))
+
+_BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+PLOTS_DIR = os.path.join(_BASE_DIR, "storage_data", "plots")
 
 SUPERSCRIPTS = {
     '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
@@ -32,7 +37,8 @@ def clean_math_query(q: str) -> str:
     """
     Preprocesses natural language math input into clean SymPy expression string.
     """
-    s = q.strip().rstrip(',.?!;')
+    s = q.strip().rstrip(',.?!;=')
+    s = re.sub(r'[\?=\s]+$', '', s)
     
     s = re.sub(r'^(evaluate|calculate|compute|find|solve|what is)\s+', '', s, flags=re.IGNORECASE)
     s = re.sub(r'^(the\s+)?(integral|derivative|diff|antiderivative)\s+(of\s+)?', '', s, flags=re.IGNORECASE)
@@ -123,16 +129,115 @@ def generate_function_plot(expression_str: str, title: str = "Function Graph") -
         print(f"[PlotGen] Notice: {err}")
         return ""
 
+def is_simple_math_query(q_raw: str) -> bool:
+    """
+    Checks if a query is a direct arithmetic / simple math expression like 2+2=? or 15*8.
+    """
+    q = q_raw.strip().lower()
+    q_clean = re.sub(r'^(what\s+is|evaluate|calculate|solve|compute|\s)+', '', q, flags=re.IGNORECASE)
+    q_clean = re.sub(r'[\?=\s]', '', q_clean)
+    if not q_clean:
+        return False
+    return bool(re.match(r'^[\d\+\-\*/\.\(\)\^\%]+$', q_clean))
+
+def get_gemini_ai_answer(question: str) -> dict:
+    """
+    Calls Google Gemini AI LLM model to get concise 1-line hints AND full elaborate solution.
+    """
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return {}
+
+    models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"]
+    prompt = (
+        f"You are Kestrel AI Tutor, a friendly study notebook assistant.\n"
+        f"For the student question below, provide:\n"
+        f"1. A CONCISE section with 2-3 short, 1-line hints/steps (keep this super brief!).\n"
+        f"2. An ELABORATE section with the complete, step-by-step detailed solution.\n\n"
+        f"Question: {question}\n\n"
+        f"Strictly format your response as:\n"
+        f"[HINTS]\n"
+        f"• Step 1: ...\n"
+        f"• Step 2: ...\n\n"
+        f"[FULL_SOLUTION]\n"
+        f"1. 📖 Core Concept & Overview\n"
+        f"...\n"
+    )
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
+    for model in models:
+        try:
+            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            resp = requests.post(api_url, json=payload, timeout=8)
+            if resp.status_code == 200:
+                result_json = resp.json()
+                text = result_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+                if text:
+                    text_pretty = to_pretty_math(text)
+                    if "[HINTS]" in text_pretty and "[FULL_SOLUTION]" in text_pretty:
+                        parts = text_pretty.split("[FULL_SOLUTION]")
+                        hints = parts[0].replace("[HINTS]", "").strip()
+                        full_sol = parts[1].strip()
+                        return {"hints": hints, "full_solution": full_sol}
+                    else:
+                        lines = [l for l in text_pretty.split("\n") if l.strip()]
+                        short_hints = "\n".join(lines[:3])
+                        return {"hints": short_hints, "full_solution": text_pretty}
+        except Exception:
+            continue
+    return {}
+
 def solve_stem_question(question: str) -> dict:
     """
-    Evaluates STEM / Calculus / Algebra / Arithmetic questions locally using SymPy.
-    Returns clean solution steps without duplicating Question headers.
+    Evaluates questions using Gemini AI LLM and SymPy symbolic solver.
+    Returns clean, comprehensive solution steps and optional function plot.
     """
     q_raw = question.strip()
     q_clean = clean_math_query(q_raw)
     x, y, z, t = sp.symbols('x y z t')
     plot_path = ""
+
+    # 1. Simple direct math (e.g. 2+2=?, 15 * 8, 100/5) -> return ONLY final direct answer
+    if is_simple_math_query(q_raw):
+        try:
+            parsed = sp.sympify(q_clean)
+            simplified = sp.simplify(parsed)
+            pretty_r = to_pretty_math(simplified)
+            ans_text = f"Answer: {pretty_r}"
+            return {
+                "is_direct_math": True,
+                "hints": ans_text,
+                "full_solution": ans_text,
+                "solution": ans_text,
+                "plot_path": ""
+            }
+        except Exception:
+            pass
+
+    # 2. Try Gemini AI LLM for study question hints & full answer
+    ai_data = get_gemini_ai_answer(q_raw)
     
+    # Check if a function plot is relevant
+    if should_generate_graph(q_raw, q_clean):
+        try:
+            parsed = sp.sympify(q_clean)
+            pretty_p = to_pretty_math(parsed)
+            plot_path = generate_function_plot(str(parsed), title=f"Graph: f(x) = {pretty_p}")
+        except Exception:
+            pass
+
+    if ai_data:
+        hints = ai_data.get("hints", "")
+        full_sol = ai_data.get("full_solution", "")
+        return {
+            "is_direct_math": False,
+            "hints": hints,
+            "full_solution": full_sol,
+            "solution": full_sol,
+            "plot_path": plot_path
+        }
+
+    # 2. Fallback to SymPy Symbolic Engine for math queries if AI is offline
     is_integral = any(k in q_raw.lower() for k in ['integral', 'integrate', '∫', 'antiderivative'])
     is_derivative = any(k in q_raw.lower() for k in ['derivative', 'differentiate', 'diff', 'd/dx'])
     is_limit = 'limit' in q_raw.lower()
@@ -144,14 +249,17 @@ def solve_stem_question(question: str) -> dict:
             pretty_p = to_pretty_math(parsed_expr)
             pretty_r = to_pretty_math(result)
             
-            if should_generate_graph(q_raw, q_clean):
+            if not plot_path and should_generate_graph(q_raw, q_clean):
                 plot_path = generate_function_plot(str(parsed_expr), title=f"Integrand Graph: f(x) = {pretty_p}")
             
             solution = (
-                f"Step 1: Identify integrand f(x) = {pretty_p}\n"
-                f"Step 2: Apply integration rules & anti-differentiation\n"
-                f"Step 3: ∫ {pretty_p} dx = {pretty_r} + C\n\n"
-                f"Final Answer: {pretty_r} + C"
+                f"1. 📖 Core Concept & Integrand\n"
+                f"Identify f(x) = {pretty_p}\n\n"
+                f"2. 💡 Step-by-Step Integration\n"
+                f"Apply integration rules & anti-differentiation:\n"
+                f"∫ {pretty_p} dx = {pretty_r} + C\n\n"
+                f"3. 🎯 Final Answer\n"
+                f"∫ {pretty_p} dx = {pretty_r} + C"
             )
             return {"solution": solution, "plot_path": plot_path}
             
@@ -161,14 +269,17 @@ def solve_stem_question(question: str) -> dict:
             pretty_p = to_pretty_math(parsed_expr)
             pretty_r = to_pretty_math(result)
             
-            if should_generate_graph(q_raw, q_clean):
+            if not plot_path and should_generate_graph(q_raw, q_clean):
                 plot_path = generate_function_plot(str(parsed_expr), title=f"Function & Derivative: {pretty_p}")
             
             solution = (
-                f"Step 1: Identify function f(x) = {pretty_p}\n"
-                f"Step 2: Apply differentiation rules\n"
-                f"Step 3: f'(x) = {pretty_r}\n\n"
-                f"Final Answer: {pretty_r}"
+                f"1. 📖 Core Concept & Function\n"
+                f"Identify f(x) = {pretty_p}\n\n"
+                f"2. 💡 Step-by-Step Differentiation\n"
+                f"Apply differentiation rules:\n"
+                f"f'(x) = {pretty_r}\n\n"
+                f"3. 🎯 Final Answer\n"
+                f"f'(x) = {pretty_r}"
             )
             return {"solution": solution, "plot_path": plot_path}
 
@@ -184,14 +295,16 @@ def solve_stem_question(question: str) -> dict:
             pretty_p = to_pretty_math(parsed_expr)
             pretty_r = to_pretty_math(result)
             
-            if should_generate_graph(q_raw, q_clean):
+            if not plot_path and should_generate_graph(q_raw, q_clean):
                 plot_path = generate_function_plot(str(parsed_expr), title=f"Limit Graph: {pretty_p}")
             
             solution = (
-                f"Step 1: Evaluate limit of f(x) = {pretty_p} as x → {target_val}\n"
-                f"Step 2: Apply L'Hopital's rule / algebraic simplification\n"
-                f"Step 3: Result = {pretty_r}\n\n"
-                f"Final Answer: {pretty_r}"
+                f"1. 📖 Core Concept & Limit Definition\n"
+                f"Evaluate limit of f(x) = {pretty_p} as x → {target_val}\n\n"
+                f"2. 💡 Step-by-Step Evaluation\n"
+                f"Apply limit laws and algebraic simplification.\n\n"
+                f"3. 🎯 Final Answer\n"
+                f"lim_{{x→{target_val}}} {pretty_p} = {pretty_r}"
             )
             return {"solution": solution, "plot_path": plot_path}
 
@@ -201,26 +314,41 @@ def solve_stem_question(question: str) -> dict:
         pretty_p = to_pretty_math(parsed)
         pretty_r = to_pretty_math(simplified)
         
-        if should_generate_graph(q_raw, q_clean):
+        if not plot_path and should_generate_graph(q_raw, q_clean):
             plot_path = generate_function_plot(str(parsed), title=f"Function Graph: {pretty_p}")
             
-        if str(pretty_p) == str(pretty_r):
-            solution = (
-                f"Step 1: Evaluate expression\n\n"
-                f"Final Answer: {pretty_r}"
-            )
-        else:
-            solution = (
-                f"Step 1: Simplify mathematical expression\n"
-                f"Step 2: Result = {pretty_r}\n\n"
-                f"Final Answer: {pretty_p} = {pretty_r}"
-            )
-        return {"solution": solution, "plot_path": plot_path}
-
-    except Exception as err:
         solution = (
-            f"Step 1: Analyze problem concept\n"
-            f"Step 2: Apply foundational mathematical laws\n\n"
-            f"Final Answer: Verified symbolic result."
+            f"1. 📖 Core Concept\n"
+            f"Evaluate mathematical expression: {pretty_p}\n\n"
+            f"2. 💡 Step-by-Step Simplification\n"
+            f"Simplifying terms yields: {pretty_r}\n\n"
+            f"3. 🎯 Final Answer\n"
+            f"{pretty_p} = {pretty_r}"
         )
         return {"solution": solution, "plot_path": plot_path}
+
+    except Exception:
+        solution = (
+            f"1. 📖 Question Overview\n"
+            f"Topic: {q_raw}\n\n"
+            f"2. 💡 Structured Analysis\n"
+            f"• Identify core variables and relationships.\n"
+            f"• Apply foundational laws & definitions.\n\n"
+            f"3. 🎯 Summary & Key Takeaway\n"
+            f"For detailed AI study explanations, ensure GOOGLE_API_KEY is connected."
+        )
+        return {"solution": solution, "plot_path": plot_path}
+
+from PyQt6.QtCore import QThread, pyqtSignal
+
+class StemSolverWorker(QThread):
+    finished = pyqtSignal(str, dict)
+
+    def __init__(self, question: str, parent=None):
+        super().__init__(parent)
+        self.question = question
+
+    def run(self):
+        res = solve_stem_question(self.question)
+        self.finished.emit(self.question, res)
+

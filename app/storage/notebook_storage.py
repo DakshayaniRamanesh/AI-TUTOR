@@ -7,8 +7,9 @@ import os
 import json
 import time
 
-BOARDS_DIR = os.path.abspath("storage_data/boards")
-INDEX_FILE = os.path.abspath("storage_data/notebooks_index.json")
+_BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+BOARDS_DIR = os.path.join(_BASE_DIR, "storage_data", "boards")
+INDEX_FILE = os.path.join(_BASE_DIR, "storage_data", "notebooks_index.json")
 
 class NotebookStorage:
     @staticmethod

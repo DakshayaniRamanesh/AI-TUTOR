@@ -4,7 +4,7 @@ Freeform Canvas Scene (Infinite SceneRect, Dotted & Ruled Paper Backgrounds, Fre
 
 from PyQt6.QtWidgets import QGraphicsScene, QGraphicsPathItem, QGraphicsProxyWidget
 from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QPainter
-from PyQt6.QtCore import Qt, QRectF, QPointF
+from PyQt6.QtCore import Qt, QRectF, QPointF, QTimer, pyqtSignal
 
 from .items.ink_stroke import InkStroke
 from .items.sticky_note import StickyNote
@@ -17,6 +17,8 @@ from .items.answer_bubble import AnswerBubble
 from .items.group_selection import GroupSelection
 
 class CanvasScene(QGraphicsScene):
+    ink_written_detected = pyqtSignal(str, QPointF)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Infinite canvas bounds
@@ -33,6 +35,12 @@ class CanvasScene(QGraphicsScene):
         self._current_path_item = None
         self._current_painter_path = None
         self._is_erasing = False
+
+        # Auto-convert handwriting timer (Apple Notes Math Notes style)
+        self._recent_ink_strokes = []
+        self._auto_convert_timer = QTimer(self)
+        self._auto_convert_timer.setSingleShot(True)
+        self._auto_convert_timer.timeout.connect(self._on_auto_convert_ink)
 
     def set_background_mode(self, mode: str):
         if mode in ["dotted", "ruled"]:
@@ -88,7 +96,7 @@ class CanvasScene(QGraphicsScene):
                     print(f"[CanvasScene] Notice serializing item: {err}")
         return items_data
 
-    def load_from_dict_list(self, items_data: list[dict], video_requested_callback=None):
+    def load_from_dict_list(self, items_data: list[dict], video_requested_callback=None, solve_requested_callback=None):
         """
         Restores canvas items from a list of dict payloads.
         """
@@ -106,8 +114,11 @@ class CanvasScene(QGraphicsScene):
                 item = StickyNote(text=data.get("text", ""), color_key=data.get("color_key", "yellow"))
             elif itype == "HandwritingNote":
                 item = HandwritingNote(text=data.get("text", ""))
-                if video_requested_callback and hasattr(item, "widget"):
-                    item.widget.video_requested.connect(video_requested_callback)
+                if hasattr(item, "widget"):
+                    if video_requested_callback:
+                        item.widget.video_requested.connect(video_requested_callback)
+                    if solve_requested_callback:
+                        item.widget.solve_requested.connect(solve_requested_callback)
             elif itype == "TableItem":
                 item = TableItem(headers=data.get("headers"), rows=data.get("rows"))
             elif itype == "CardItem":
@@ -172,8 +183,36 @@ class CanvasScene(QGraphicsScene):
             self._is_erasing = False
             event.accept()
         elif self._current_path_item:
+            if self.active_tool == "pen":
+                self._recent_ink_strokes.append(self._current_path_item)
+                self._auto_convert_timer.start(1200)
             self._current_path_item = None
             self._current_painter_path = None
             event.accept()
         else:
             super().mouseReleaseEvent(event)
+
+    def _on_auto_convert_ink(self):
+        if not self._recent_ink_strokes:
+            return
+
+        from ..backend.handwriting_ocr import recognize_handwriting
+
+        valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
+        if not valid_strokes:
+            self._recent_ink_strokes.clear()
+            return
+
+        min_x = min(s.sceneBoundingRect().x() for s in valid_strokes)
+        min_y = min(s.sceneBoundingRect().y() for s in valid_strokes)
+        pos = QPointF(min_x, min_y)
+
+        text = recognize_handwriting(stroke_count=len(valid_strokes))
+
+        for s in valid_strokes:
+            self.removeItem(s)
+
+        self._recent_ink_strokes.clear()
+
+        if text:
+            self.ink_written_detected.emit(text, pos)

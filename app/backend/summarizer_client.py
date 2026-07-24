@@ -9,7 +9,11 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+load_dotenv()
 load_dotenv("backend/.env")
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", "backend", ".env"))
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
@@ -69,7 +73,7 @@ def summarize_url(url: str, title: str = "") -> str:
 
     # 1. Try Gemini Models for deep AI explanation
     if GOOGLE_API_KEY and combined_text:
-        models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+        models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"]
         prompt = (
             f"You are Kestrel AI Tutor, an expert professor. Create an IN-DEPTH, TEXTBOOK-GRADE STUDY GUIDE "
             f"for a student's notebook based on this reference:\n\n"
@@ -157,3 +161,18 @@ def summarize_url(url: str, title: str = "") -> str:
     study_sections.append("3. Derive the step-by-step solution for key variables.")
 
     return "\n".join(study_sections)
+
+from PyQt6.QtCore import QThread, pyqtSignal
+
+class UrlSummarizerWorker(QThread):
+    finished = pyqtSignal(str, str, str)
+
+    def __init__(self, url: str, title: str = "", parent=None):
+        super().__init__(parent)
+        self.url = url
+        self.title = title
+
+    def run(self):
+        summary = summarize_url(self.url, title=self.title)
+        self.finished.emit(self.url, self.title, summary)
+

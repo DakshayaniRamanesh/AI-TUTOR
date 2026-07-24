@@ -6,7 +6,8 @@ import os
 import json
 import time
 
-DOWNLOADS_DIR = os.path.abspath("downloads")
+_BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DOWNLOADS_DIR = os.path.join(_BASE_DIR, "downloads")
 INDEX_FILE = os.path.join(DOWNLOADS_DIR, "downloads_index.json")
 
 class DownloadsManager:

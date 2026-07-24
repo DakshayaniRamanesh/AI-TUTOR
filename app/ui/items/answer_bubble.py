@@ -1,11 +1,11 @@
 """
 AnswerBubble Canvas Item — Direct Canvas Handwritten Ink Text (Dynamic Unclipped Geometry)
-Renders Question + Solution directly onto the canvas paper with Caveat handwritten font.
-Dynamically resizes QGraphicsProxyWidget geometry so zero text is ever clipped at top or bottom.
+Renders Question + Solution / Hints directly onto the canvas paper with Caveat handwritten font.
+Includes a toggle button to reveal full solution vs. concise hints.
 """
 
 from PyQt6.QtWidgets import QGraphicsProxyWidget, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QPushButton
-from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF
+from PyQt6.QtCore import Qt, pyqtSignal, QRectF
 from .base_item import BaseGraphicsItemMixin
 from ..widgets.streaming_text import TypewriterLabel, get_handwritten_font
 
@@ -47,26 +47,16 @@ class HeaderDragBar(QWidget):
 class AnswerBubbleWidget(QWidget):
     delete_requested = pyqtSignal()
 
-    def __init__(self, question: str = "", solution: str = "", proxy_getter=None, parent=None):
+    def __init__(self, question: str = "", solution: str = "", hints: str = "", is_direct_math: bool = False, proxy_getter=None, parent=None):
         super().__init__(parent)
         self.proxy_getter = proxy_getter
         self.question = question
-        self.solution = solution
+        self.hints = hints or solution
+        self.full_solution = solution or hints
+        self.is_direct_math = is_direct_math
+        self.showing_full = False
         self.setMinimumWidth(880)
-        
-        q_clean = question.replace("Question:", "").strip() if question else ""
-        sol_clean = solution.strip()
-        if sol_clean.startswith("Question:"):
-            parts = sol_clean.split("\n\n", 1)
-            if len(parts) > 1:
-                sol_clean = parts[1]
 
-        if q_clean:
-            self.full_text = f"Question: {q_clean}\n\nSolution:\n{sol_clean}"
-        else:
-            self.full_text = sol_clean
-
-        # 100% Transparent canvas integration — no box, no clipping boundary!
         self.setStyleSheet("""
             QWidget#CanvasHandwrittenText {
                 background: transparent;
@@ -84,6 +74,18 @@ class AnswerBubbleWidget(QWidget):
                 background-color: rgba(211, 47, 47, 0.12);
                 border-radius: 10px;
             }
+            QPushButton#BtnToggle {
+                background-color: #007aff;
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                padding: 5px 12px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton#BtnToggle:hover {
+                background-color: #0056b3;
+            }
         """)
 
         self.setObjectName("CanvasHandwrittenText")
@@ -99,7 +101,17 @@ class AnswerBubbleWidget(QWidget):
         lbl_icon = QLabel("✍️", self.header_bar)
         lbl_icon.setStyleSheet("font-size: 14px; background: transparent;")
         header.addWidget(lbl_icon)
+
+        # Toggle Button: "💡 Reveal Full Solution"
+        self.btn_toggle = QPushButton("💡 Reveal Full Solution", self.header_bar)
+        self.btn_toggle.setObjectName("BtnToggle")
+        self.btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle.clicked.connect(self._toggle_full_solution)
+        header.addWidget(self.btn_toggle)
         header.addStretch()
+
+        if self.is_direct_math or not self.full_solution:
+            self.btn_toggle.hide()
 
         # Delete button [✕]
         btn_del = QPushButton("✕", self.header_bar)
@@ -111,20 +123,49 @@ class AnswerBubbleWidget(QWidget):
 
         self.layout_main.addWidget(self.header_bar)
 
-        # Handwritten streaming text label (Caveat font 24pt, Dark Blue Ink)
-        self.stream_label = TypewriterLabel(self.full_text, speed_ms=15, parent=self)
+        # Handwritten streaming text label
+        self.stream_label = TypewriterLabel("", speed_ms=15, parent=self)
         self.stream_label.setFont(get_handwritten_font(24))
         self.stream_label.setStyleSheet("color: #0b2545; background: transparent; padding: 4px;")
         self.layout_main.addWidget(self.stream_label)
-        
-        # Start incremental typewriter reveal
-        self.stream_label.start_streaming()
+
+        self._render_current_view()
+
+    def _render_current_view(self):
+        q_clean = self.question.replace("Question:", "").strip() if self.question else ""
+        if self.is_direct_math:
+            text = f"Question: {q_clean}\n\n{self.hints}" if q_clean else self.hints
+            self.btn_toggle.hide()
+        elif self.showing_full:
+            text = f"Question: {q_clean}\n\nFull Solution:\n{self.full_solution}" if q_clean else self.full_solution
+            self.btn_toggle.setText("🙈 Hide Full Solution")
+            self.btn_toggle.show()
+        else:
+            text = f"Question: {q_clean}\n\n💡 Hints & Key Steps:\n{self.hints}" if q_clean else self.hints
+            self.btn_toggle.setText("💡 Reveal Full Solution")
+            self.btn_toggle.show()
+
+        self.stream_label.start_streaming(text)
+
+    def _toggle_full_solution(self):
+        self.showing_full = not self.showing_full
+        self._render_current_view()
+
+    def update_text(self, question: str, res_payload):
+        self.question = question
+        if isinstance(res_payload, dict):
+            self.hints = res_payload.get("hints", "")
+            self.full_solution = res_payload.get("full_solution", "") or res_payload.get("solution", "")
+            self.is_direct_math = res_payload.get("is_direct_math", False)
+        else:
+            self.hints = str(res_payload)
+            self.full_solution = str(res_payload)
+            self.is_direct_math = False
+
+        self.showing_full = False
+        self._render_current_view()
 
     def update_proxy_geometry(self):
-        """
-        Dynamically updates the QGraphicsProxyWidget bounding rectangle on every streaming tick
-        so zero text is ever cut off at the top or bottom boundary.
-        """
         self.adjustSize()
         if self.proxy_getter:
             proxy = self.proxy_getter()
@@ -138,14 +179,17 @@ class AnswerBubbleWidget(QWidget):
                 proxy.update()
 
 class AnswerBubble(QGraphicsProxyWidget, BaseGraphicsItemMixin):
-    def __init__(self, title: str = "Handwritten Solution", full_text: str = "", question: str = "", parent=None):
+    def __init__(self, title: str = "Handwritten Solution", full_text: str = "", question: str = "", hints: str = "", is_direct_math: bool = False, parent=None):
         super().__init__(parent)
         self.setup_base_properties()
         self.setZValue(8)
-        
-        self.bubble = AnswerBubbleWidget(question=question, solution=full_text, proxy_getter=lambda: self)
+
+        self.bubble = AnswerBubbleWidget(question=question, solution=full_text, hints=hints, is_direct_math=is_direct_math, proxy_getter=lambda: self)
         self.bubble.delete_requested.connect(self._delete_self)
         self.setWidget(self.bubble)
+
+    def update_solution(self, question: str, res_payload):
+        self.bubble.update_text(question, res_payload)
 
     def _delete_self(self):
         scene = self.scene()
@@ -161,6 +205,8 @@ class AnswerBubble(QGraphicsProxyWidget, BaseGraphicsItemMixin):
             "x": self.x(),
             "y": self.y(),
             "question": self.bubble.question,
-            "full_text": self.bubble.stream_label.full_text,
+            "full_text": self.bubble.full_solution,
+            "hints": self.bubble.hints,
+            "is_direct_math": self.bubble.is_direct_math,
             "z_value": self.zValue()
         }

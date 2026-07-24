@@ -1,16 +1,21 @@
 """
-Notebooks Management View Panel — Displays list of saved notebooks with load, create, and delete actions
+Notebooks Management View Panel — Displays list of saved notebooks with load, 3-dots share menu, rename, and delete actions
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QFrame, QMessageBox
+    QScrollArea, QFrame, QMessageBox, QMenu, QInputDialog
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QAction
 from ...storage.notebook_storage import NotebookStorage
+from ..dialogs.share_notebook_dialog import ShareNotebookDialog
 
 class NotebookRowWidget(QFrame):
     open_clicked = pyqtSignal(str)   # notebook_id
+    share_clicked = pyqtSignal(str, str) # notebook_id, notebook_name
+    rename_clicked = pyqtSignal(str, str) # notebook_id, notebook_name
+    git_clicked = pyqtSignal(str, str)   # notebook_id, notebook_name
     delete_clicked = pyqtSignal(str, str) # notebook_id, notebook_name
 
     def __init__(self, data: dict, parent=None):
@@ -51,17 +56,17 @@ class NotebookRowWidget(QFrame):
             QPushButton#BtnOpen:hover {
                 background-color: #0056b3;
             }
-            QPushButton#BtnDel {
+            QPushButton#BtnMore {
                 background-color: transparent;
-                color: #8e8e93;
-                border: none;
-                font-size: 14px;
-                padding: 4px;
-            }
-            QPushButton#BtnDel:hover {
-                color: #d32f2f;
-                background-color: #ffebee;
+                color: #1c1c1e;
+                border: 1px solid #d1d1d6;
+                font-weight: bold;
+                font-size: 16px;
+                padding: 2px 8px;
                 border-radius: 6px;
+            }
+            QPushButton#BtnMore:hover {
+                background-color: #e5e5ea;
             }
         """)
 
@@ -96,18 +101,61 @@ class NotebookRowWidget(QFrame):
         btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_open.clicked.connect(lambda: self.open_clicked.emit(self.notebook_id))
 
-        btn_del = QPushButton("🗑️", self)
-        btn_del.setObjectName("BtnDel")
-        btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_del.setToolTip("Delete Notebook")
-        btn_del.clicked.connect(lambda: self.delete_clicked.emit(self.notebook_id, self.notebook_name))
+        btn_more = QPushButton("⋮", self)
+        btn_more.setObjectName("BtnMore")
+        btn_more.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_more.setToolTip("Notebook Actions (Share, Rename, Git, Delete)")
+        btn_more.clicked.connect(self._show_context_menu)
 
         layout.addWidget(btn_open)
-        layout.addWidget(btn_del)
+        layout.addWidget(btn_more)
+
+    def _show_context_menu(self):
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #d1d1d6;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-size: 13px;
+                color: #1c1c1e;
+            }
+            QMenu::item:selected {
+                background-color: #007aff;
+                color: white;
+            }
+        """)
+
+        act_share = QAction("🔗 Share Notebook (Google Drive style)", menu)
+        act_share.triggered.connect(lambda: self.share_clicked.emit(self.notebook_id, self.notebook_name))
+        menu.addAction(act_share)
+
+        act_rename = QAction("✏️ Rename Notebook", menu)
+        act_rename.triggered.connect(lambda: self.rename_clicked.emit(self.notebook_id, self.notebook_name))
+        menu.addAction(act_rename)
+
+        act_git = QAction("🔀 Git Version History", menu)
+        act_git.triggered.connect(lambda: self.git_clicked.emit(self.notebook_id, self.notebook_name))
+        menu.addAction(act_git)
+
+        menu.addSeparator()
+
+        act_del = QAction("🗑️ Delete Notebook", menu)
+        act_del.triggered.connect(lambda: self.delete_clicked.emit(self.notebook_id, self.notebook_name))
+        menu.addAction(act_del)
+
+        btn = self.sender()
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
 class NotebooksPanel(QWidget):
     open_notebook_requested = pyqtSignal(str)   # notebook_id
     create_notebook_requested = pyqtSignal()
+    git_vcs_requested = pyqtSignal(str)          # notebook_id
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -176,7 +224,6 @@ class NotebooksPanel(QWidget):
         """
         Reloads index and populates rows in list view.
         """
-        # Clear existing items
         while self.list_layout.count():
             child = self.list_layout.takeAt(0)
             if child.widget():
@@ -200,10 +247,27 @@ class NotebooksPanel(QWidget):
                 for nb in notebooks:
                     row = NotebookRowWidget(nb, self)
                     row.open_clicked.connect(self.open_notebook_requested.emit)
+                    row.share_clicked.connect(self._open_share_dialog)
+                    row.rename_clicked.connect(self._rename_notebook)
+                    row.git_clicked.connect(lambda nb_id, name: self.git_vcs_requested.emit(nb_id))
                     row.delete_clicked.connect(self._confirm_delete)
                     self.list_layout.addWidget(row)
         except Exception as err:
             QMessageBox.warning(self, "Error Loading Notebooks", f"Could not load saved notebooks index:\n{err}")
+
+    def _open_share_dialog(self, notebook_id: str, name: str):
+        dialog = ShareNotebookDialog(notebook_id, name, self)
+        dialog.exec()
+
+    def _rename_notebook(self, notebook_id: str, current_name: str):
+        new_name, ok = QInputDialog.getText(self, "Rename Notebook", "Enter new notebook title:", text=current_name)
+        if ok and new_name.strip():
+            try:
+                payload = NotebookStorage.load_notebook(notebook_id)
+                NotebookStorage.save_notebook(notebook_id, new_name.strip(), payload.get("items", []))
+                self.refresh()
+            except Exception as err:
+                QMessageBox.warning(self, "Rename Failed", f"Could not rename notebook:\n{err}")
 
     def _confirm_delete(self, notebook_id: str, name: str):
         reply = QMessageBox.question(
