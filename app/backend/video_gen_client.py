@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 LOCAL_SERVER_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 MODAL_ENDPOINT_URL = os.getenv("MODAL_URL", "https://dakshayaniramanesh--manim-app-generate.modal.run")
 
-def request_video_generation(selected_text: str) -> str:
+def request_video_generation(selected_text: str, pdf_path: str = None) -> str:
     """
     Submits a video generation request to the Manim AI pipeline.
     """
@@ -23,9 +23,14 @@ def request_video_generation(selected_text: str) -> str:
     
     # 1. Try local server
     try:
+        files = None
+        if pdf_path and os.path.exists(pdf_path):
+            files = {"pdf": open(pdf_path, "rb")}
+            
         resp = requests.post(
             f"{LOCAL_SERVER_URL}/generate",
             data={"prompt": selected_text},
+            files=files,
             timeout=2
         )
         if resp.status_code == 200:
@@ -80,14 +85,17 @@ class ManimVideoPollWorker(QThread):
                     data = r.json()
                     status = data.get("status", "processing")
                     video_url = data.get("video_url")
+                    video_local_path = data.get("video_local_path")
                     progress = data.get("progress_percentage", min(95, attempts * 6))
                     stage = data.get("step", "Rendering Manim 2D Animation")
 
                     self.status_updated.emit(self.job_id, f"Manim: {stage}", int(progress))
 
-                    if status in ["completed", "done", "success"] and video_url:
-                        self.video_ready.emit(self.job_id, video_url)
-                        return
+                    if status in ["completed", "done", "success"]:
+                        final_url = video_local_path if (video_local_path and os.path.exists(video_local_path)) else video_url
+                        if final_url:
+                            self.video_ready.emit(self.job_id, final_url)
+                            return
                     elif status == "error":
                         err_msg = data.get("error_message", "Manim pipeline error")
                         self.video_failed.emit(self.job_id, err_msg)

@@ -11,6 +11,7 @@ from .items.video_float_item import VideoFloatItem
 from .items.answer_bubble import AnswerBubble
 from .items.handwriting_note import HandwritingNote
 from .items.card_item import CardItem
+from .items.image_item import ImageItem
 
 class CanvasView(QGraphicsView):
     zoom_changed = pyqtSignal(float)
@@ -40,6 +41,9 @@ class CanvasView(QGraphicsView):
         self.current_zoom = scale_factor
         self.scale(factor, factor)
         self.zoom_changed.emit(self.current_zoom)
+
+    def zoom_by(self, factor: float):
+        self.set_zoom(self.current_zoom * factor)
 
     def wheelEvent(self, event: QWheelEvent):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -113,9 +117,23 @@ class CanvasView(QGraphicsView):
         # Intercept Ctrl+V / Cmd+V paste
         if event.key() == Qt.Key.Key_V and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             clipboard = QApplication.clipboard()
+            mime_data = clipboard.mimeData()
+            
+            center_pos = self.mapToScene(self.viewport().rect().center())
+            
+            # 1. Handle pasting raw images (scans/screenshots)
+            if mime_data.hasImage():
+                pixmap = clipboard.pixmap()
+                if not pixmap.isNull():
+                    item = ImageItem(pixmap)
+                    item.setPos(center_pos)
+                    self.scene().addItem(item)
+                    event.accept()
+                    return
+
+            # 2. Handle pasting URLs
             text = clipboard.text()
             if text and is_valid_url(text):
-                center_pos = self.mapToScene(self.viewport().rect().center())
                 meta = fetch_url_metadata(text)
                 
                 if meta["is_video"]:

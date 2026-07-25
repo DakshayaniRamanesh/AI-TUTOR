@@ -6,11 +6,23 @@ from dotenv import load_dotenv
 # Load backend/.env environment variables
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
+try:
+    import imageio_ffmpeg
+    ffmpeg_dir = os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
+    os.environ["PATH"] += os.pathsep + ffmpeg_dir
+    print(f"[Setup] Injected FFmpeg into PATH from {ffmpeg_dir}")
+except ImportError:
+    pass
+
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from backend.pipeline.models import VideoJob, AnnotationEvent, PathData
+from backend.pipeline.models import VideoJob, AnnotationEvent, PathData, LatexJob
 from backend.pipeline.graph import VideoGenerationPipeline
+from backend.pipeline.latex_graph import LatexGenerationPipeline
 from backend.rag.qdrant_store import QdrantRAGStore
 from backend.pipeline.annotation_handler import AnnotationHandler
 
@@ -27,6 +39,9 @@ app.add_middleware(
 # In-memory store for local jobs
 jobs_store: dict[str, VideoJob] = {}
 pipeline = VideoGenerationPipeline()
+
+latex_jobs_store: dict[str, LatexJob] = {}
+latex_pipeline = LatexGenerationPipeline()
 
 def run_job_background(job: VideoJob):
     try:
@@ -87,6 +102,7 @@ async def status(job_id: str):
         "step": job.step,
         "progress_percentage": job.progress_percentage,
         "video_url": video_url or job.video_url,
+        "video_local_path": job.video_path,
         "error_message": job.error_message,
         "version": job.version,
         "story_script": job.story_script
@@ -122,7 +138,7 @@ async def annotate(payload: dict):
             )
         )
 
-    handler = AnnotationHandler(pipeline.rag_store)
+    handler = AnnotationHandler(QdrantRAGStore())
     updated_job = handler.process_annotations(job, parsed_annotations)
     jobs_store[job_id] = updated_job
 
@@ -138,7 +154,7 @@ async def annotate(payload: dict):
         "video_url": video_url
     }
 
-@app.get("/video/{filename}")
+@app.api_route("/video/{filename}", methods=["GET", "HEAD"])
 async def serve_video(filename: str):
     # Find matching file in temp or job directories
     for job in jobs_store.values():
@@ -146,6 +162,112 @@ async def serve_video(filename: str):
             if os.path.exists(job.video_path):
                 return FileResponse(job.video_path, media_type="video/mp4")
     return JSONResponse({"error": "Video file not found"}, status_code=404)
+
+
+def run_latex_job_background(job: LatexJob):
+    try:
+        final_job = latex_pipeline.run_pipeline(job)
+        latex_jobs_store[job.job_id] = final_job
+    except Exception as e:
+        job.status = "error"
+        job.error_message = str(e)
+        latex_jobs_store[job.job_id] = job
+
+@app.post("/generate_latex")
+async def generate_latex(
+    background_tasks: BackgroundTasks,
+    image_b64: str = Form(...),
+    template_type: str = Form("Homework")
+):
+    job_id = f"latex_{uuid.uuid4().hex[:8]}"
+    
+    job = LatexJob(
+        job_id=job_id,
+        image_b64=image_b64,
+        template_type=template_type
+    )
+    latex_jobs_store[job_id] = job
+
+    background_tasks.add_task(run_latex_job_background, job)
+
+    return {
+        "job_id": job_id,
+        "status": "processing",
+        "message": "LaTeX generation pipeline started."
+    }
+
+@app.get("/latex_status/{job_id}")
+async def latex_status(job_id: str):
+    if job_id not in latex_jobs_store:
+        return JSONResponse({"error": "Job not found"}, status_code=404)
+    
+    job = latex_jobs_store[job_id]
+    
+    pdf_url = None
+    if job.pdf_path and os.path.exists(job.pdf_path):
+        filename = os.path.basename(job.pdf_path)
+        pdf_url = f"http://localhost:8000/pdf/{filename}"
+
+    return {
+        "job_id": job.job_id,
+        "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+        "step": job.step,
+        "progress_percentage": job.progress_percentage,
+        "pdf_url": pdf_url or job.pdf_url,
+        "error_message": job.error_message
+    }
+
+@app.api_route("/pdf/{filename}", methods=["GET", "HEAD"])
+async def serve_pdf(filename: str):
+    for job in latex_jobs_store.values():
+        if job.pdf_path and os.path.basename(job.pdf_path) == filename:
+            if os.path.exists(job.pdf_path):
+                return FileResponse(job.pdf_path, media_type="application/pdf")
+    return JSONResponse({"error": "PDF file not found"}, status_code=404)
+
+@app.get("/api/diagnostics/groq")
+async def test_groq():
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return JSONResponse({"status": "error", "message": "Missing GROQ_API_KEY"}, status_code=400)
+    try:
+        from groq import Groq
+        client = Groq(api_key=api_key)
+        resp = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": "Ping"}],
+            max_tokens=5
+        )
+        return {"status": "ok", "message": "Groq connected"}
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+@app.get("/api/diagnostics/gemini")
+async def test_gemini():
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return JSONResponse({"status": "error", "message": "Missing GOOGLE_API_KEY"}, status_code=400)
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-3.5-flash-lite')
+        resp = model.generate_content("Ping")
+        return {"status": "ok", "message": "Gemini connected"}
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+@app.get("/api/diagnostics/tectonic")
+async def test_tectonic():
+    import subprocess
+    try:
+        result = subprocess.run(["tectonic", "--version"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            return {"status": "ok", "message": "Tectonic found"}
+        return JSONResponse({"status": "error", "message": "Tectonic executed but failed"}, status_code=500)
+    except FileNotFoundError:
+        return JSONResponse({"status": "error", "message": "Tectonic binary not found"}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 if __name__ == "__main__":
     import uvicorn

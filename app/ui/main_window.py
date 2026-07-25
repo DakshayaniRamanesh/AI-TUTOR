@@ -1,17 +1,17 @@
 """
 Main Application Window (Apple Freeform Shell Layout)
-Frameless macOS Window Design with Traffic Light Controls (Close, Minimize, Maximize),
-Dynamic Rounded Corners (14px Windowed, 0px Maximized), Title Bar Dragging, and 8-Direction Resizing.
+Frameless macOS Window Design with Traffic Light Controls, Sidebar (~260px), Top Toolbar, Infinite Canvas, Zoom HUD, Floating Tool Palette, AskBar, Notebooks Panel & PDF Split-Screen Study Mode
 """
 
+import os
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QListWidget,
     QListWidgetItem, QPushButton, QLineEdit, QLabel, QFrame,
     QSplitter, QStackedWidget, QFileDialog, QInputDialog, QMessageBox,
-    QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect, QMenu, QComboBox
 )
-from PyQt6.QtCore import Qt, QSize, QEvent, QPoint
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtCore import Qt, QSize, QEvent, QPoint, QBuffer, QIODevice
+from PyQt6.QtGui import QFont, QColor, QAction, QPixmap
 import qtawesome as qta
 
 from .canvas_scene import CanvasScene
@@ -28,16 +28,24 @@ from .items.graph_card import GraphCard
 
 from .widgets.ask_bar import AskBar
 from .widgets.reference_panel import ReferencePanel
+from .widgets.pdf_viewer_widget import PdfViewerWidget
+from .widgets.folder_tree_widget import FolderTreeWidget
 from .views.notebooks_panel import NotebooksPanel
 from .views.git_notes_panel import GitNotesPanel
 from .views.shared_panel import SharedPanel
 from .views.obsidian_graph_panel import ObsidianGraphPanel
+from .views.placeholder_panel import PlaceholderPanel
+from .views.settings_dialog import SettingsDialog
+from .views.progress_dialog import ProgressDialog
+
 
 from ..backend.stem_solver import solve_stem_question
+from ..backend.pdf_rag_manager import PdfRAGManager
 from ..backend.video_gen_client import request_video_generation
 from ..storage.board_model import BoardModel
 from ..storage.notebook_storage import NotebookStorage
 from ..storage.downloads_manager import DownloadsManager
+from ..backend.latex_client import request_latex_generation, LatexPollWorker
 
 
 class MacTitleBar(QWidget):
@@ -190,6 +198,8 @@ class MainWindow(QMainWindow):
 
         self.current_board = BoardModel("Notebook Board 1")
         self.downloads_mgr = DownloadsManager()
+        self.pdf_rag_mgr = PdfRAGManager()
+
         self.reference_panel = ReferencePanel()
         self.reference_panel.insert_data_requested.connect(self._on_insert_reference_table)
         self._solver_workers = []
@@ -242,21 +252,35 @@ class MainWindow(QMainWindow):
         self.toolbar = self._create_top_toolbar()
         cc_layout.addWidget(self.toolbar)
 
-        # Main View Stack (Index 0: Canvas View, Index 1: Notebooks View)
+        # Main View Stack (Index 0: Canvas / Split View, Index 1: Notebooks View)
         self.main_stack = QStackedWidget(self.canvas_container)
 
-        # Canvas View Wrapper
+        # Canvas & PDF Split-Screen Wrapper
         canvas_wrapper = QWidget(self.main_stack)
         cw_layout = QVBoxLayout(canvas_wrapper)
         cw_layout.setContentsMargins(0, 0, 0, 0)
         cw_layout.setSpacing(0)
+
+        # PDF Splitter (Left: PDF Viewer, Right: Canvas View)
+        self.pdf_canvas_splitter = QSplitter(Qt.Orientation.Horizontal, canvas_wrapper)
+        self.pdf_canvas_splitter.setHandleWidth(2)
+
+        # PDF Viewer Widget
+        self.pdf_viewer_widget = PdfViewerWidget(self.pdf_canvas_splitter)
+        self.pdf_viewer_widget.close_requested.connect(self._close_pdf_split_screen)
+        self.pdf_viewer_widget.reply_clicked.connect(self._on_pdf_reply_clicked)
+        self.pdf_viewer_widget.latex_video_requested.connect(self._on_latex_video_requested)
+        self.pdf_viewer_widget.hide() # Hidden by default until PDF is opened
+        self.pdf_canvas_splitter.addWidget(self.pdf_viewer_widget)
 
         # Scene and View
         self.scene = CanvasScene(self)
         self.scene.ink_written_detected.connect(self._on_ink_written_detected)
         self.view = CanvasView(self.scene, self)
         self.view.zoom_changed.connect(self._on_zoom_changed)
-        cw_layout.addWidget(self.view)
+        self.pdf_canvas_splitter.addWidget(self.view)
+
+        cw_layout.addWidget(self.pdf_canvas_splitter)
 
         # Bottom Floating HUD Overlay (AskBar + Zoom HUD + Floating Tools)
         self.hud_overlay = self._create_hud_overlay()
@@ -269,7 +293,12 @@ class MainWindow(QMainWindow):
         self.notebooks_panel.open_notebook_requested.connect(self._on_load_notebook_requested)
         self.notebooks_panel.create_notebook_requested.connect(self._on_new_notebook_requested)
         self.notebooks_panel.git_vcs_requested.connect(self._on_notebook_git_requested)
+        self.notebooks_panel.folder_navigated.connect(self._on_panel_folder_navigated)
         self.main_stack.addWidget(self.notebooks_panel) # Index 1
+        
+        # Placeholder Panel
+        self.placeholder_panel = PlaceholderPanel(self.main_stack)
+        self.main_stack.addWidget(self.placeholder_panel) # Index 2
 
         # Git Notes VCS View Panel
         self.git_notes_panel = GitNotesPanel(self.main_stack)
@@ -424,6 +453,7 @@ class MainWindow(QMainWindow):
 
         layout = QVBoxLayout(sb)
         layout.setContentsMargins(4, 8, 4, 8)
+        layout.setSpacing(0)
 
         lbl_sec = QLabel("NAVIGATION", sb)
         lbl_sec.setObjectName("SidebarTitle")
@@ -447,7 +477,17 @@ class MainWindow(QMainWindow):
         self.sidebar_list.currentRowChanged.connect(self._on_sidebar_changed)
         layout.addWidget(self.sidebar_list)
 
-        btn_ref = QPushButton("▤ Reference Database", sb)
+        # Folder Tree Widget (visible only when Notebooks is selected)
+        self.folder_tree = FolderTreeWidget(sb)
+        self.folder_tree.folder_selected.connect(self._on_sidebar_folder_selected)
+        self.folder_tree.tree_changed.connect(self._on_folder_tree_changed)
+        self.folder_tree.setVisible(False)
+        layout.addWidget(self.folder_tree)
+
+        layout.addStretch()
+
+        # Reference Panel Button in Sidebar
+        btn_ref = QPushButton("📚 Reference Database", sb)
         btn_ref.setStyleSheet("""
             QPushButton {
                 background-color: #ffffff;
@@ -526,6 +566,10 @@ class MainWindow(QMainWindow):
         pill_layout.setContentsMargins(4, 2, 4, 2)
         pill_layout.setSpacing(2)
 
+        btn_pdf = QPushButton(qta.icon('fa5s.file-pdf', color='#ff3b30'), "PDF Mode", pill)
+        btn_pdf.setStyleSheet("color: #ff3b30; font-weight: bold;")
+        btn_pdf.clicked.connect(self._open_pdf_dialog)
+
         btn_save = QPushButton(qta.icon('fa5s.save', color='#007aff'), "Save", pill)
         btn_save.setStyleSheet("color: #007aff; font-weight: bold;")
         btn_save.clicked.connect(self._on_toolbar_save)
@@ -545,7 +589,17 @@ class MainWindow(QMainWindow):
         btn_group = QPushButton(qta.icon('fa5s.layer-group', color='#7b1fa2'), "Group", pill)
         btn_group.clicked.connect(self._add_group)
 
-        self.btn_grid_mode = QPushButton("🗎 Ruled Paper", pill)
+        # Drawing Tools
+        btn_cursor = QPushButton(qta.icon('fa5s.mouse-pointer', color='#1c1c1e'), "Select", pill)
+        btn_cursor.clicked.connect(lambda: self._set_tool("select"))
+
+        btn_pen = QPushButton(qta.icon('fa5s.pen-nib', color='#007aff'), "Pen", pill)
+        btn_pen.clicked.connect(lambda: self._set_tool("pen"))
+
+        btn_eraser = QPushButton(qta.icon('fa5s.eraser', color='#ff3b30'), "Eraser", pill)
+        btn_eraser.clicked.connect(lambda: self._set_tool("eraser"))
+
+        self.btn_grid_mode = QPushButton("📄 Ruled Paper", pill)
         self.btn_grid_mode.setStyleSheet("color: #007aff; font-weight: bold;")
         self.btn_grid_mode.clicked.connect(self._toggle_grid_mode)
 
@@ -554,17 +608,63 @@ class MainWindow(QMainWindow):
         self.btn_mode_toggle.setToolTip("Switch AI Mode:\n🏫 Classroom Mode: Straight, direct answer only (No waiting/elaboration)\n📖 Study Mode: Elaborate step-by-step solution")
         self.btn_mode_toggle.clicked.connect(self._toggle_tutor_mode)
 
+        self.latex_combo = QComboBox(pill)
+        self.latex_combo.addItems(["Homework", "Assignment", "Research Paper", "Lecture Slides"])
+        self.latex_combo.setStyleSheet("""
+            QComboBox {
+                border: none;
+                background: transparent;
+                font-size: 12px;
+                font-weight: 600;
+                color: #1c1c1e;
+                padding-left: 10px;
+            }
+            QComboBox::drop-down { border: none; }
+        """)
+        
+        btn_latex = QPushButton(qta.icon('fa5s.file-code', color='#9c27b0'), "Convert to LaTeX", pill)
+        btn_latex.setStyleSheet("color: #9c27b0; font-weight: bold;")
+        btn_latex.clicked.connect(self._convert_to_latex)
+
+        pill_layout.addWidget(btn_pdf)
         pill_layout.addWidget(btn_save)
         pill_layout.addWidget(btn_paste)
         pill_layout.addWidget(btn_sticky)
         pill_layout.addWidget(btn_note)
         pill_layout.addWidget(btn_table)
         pill_layout.addWidget(btn_group)
+        
+        # Add drawing tools separator
+        sep0 = QFrame(pill)
+        sep0.setFrameShape(QFrame.Shape.VLine)
+        sep0.setFrameShadow(QFrame.Shadow.Sunken)
+        sep0.setStyleSheet("color: #d1d1d6;")
+        pill_layout.addWidget(sep0)
+        
+        pill_layout.addWidget(btn_cursor)
+        pill_layout.addWidget(btn_pen)
+        pill_layout.addWidget(btn_eraser)
+        
         pill_layout.addWidget(self.btn_grid_mode)
         pill_layout.addWidget(self.btn_mode_toggle)
 
+        # Add a separator
+        sep = QFrame(pill)
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setStyleSheet("color: #d1d1d6;")
+        pill_layout.addWidget(sep)
+        
+        pill_layout.addWidget(self.latex_combo)
+        pill_layout.addWidget(btn_latex)
+
         layout.addWidget(pill)
         layout.addStretch()
+        
+        btn_settings = QPushButton(qta.icon('fa5s.cog', color='#8e8e93'), "", tb)
+        btn_settings.setToolTip("Settings & Diagnostics")
+        btn_settings.clicked.connect(self._open_settings)
+        layout.addWidget(btn_settings)
 
         return tb
 
@@ -632,8 +732,11 @@ class MainWindow(QMainWindow):
         self.ask_bar = AskBar(hud)
         self.ask_bar.question_submitted.connect(self._on_stem_question_asked)
         self.ask_bar.mode_changed.connect(self._update_mode_button_text)
+        self.ask_bar.question_with_context_submitted.connect(self._on_question_with_context_asked)
+        self.ask_bar.pdf_requested.connect(self._open_pdf_dialog)
         layout.addWidget(self.ask_bar)
 
+        # Right: Floating Drawing Tools (Select, Pen, Highlighter with Colors, Eraser)
         tools_hud = QWidget(hud)
         tools_hud.setStyleSheet("""
             QWidget {
@@ -660,29 +763,156 @@ class MainWindow(QMainWindow):
         btn_pen = QPushButton(qta.icon('fa5s.pen-nib', color='#1c1c1e'), "", tools_hud)
         btn_pen.clicked.connect(lambda: self._set_tool("pen"))
 
-        btn_highlighter = QPushButton(qta.icon('fa5s.highlighter', color='#ff9500'), "", tools_hud)
-        btn_highlighter.clicked.connect(lambda: self._set_tool("highlighter"))
+        # Highlighter Button with Color Menu
+        self.btn_highlighter = QPushButton(qta.icon('fa5s.highlighter', color='#ff9500'), "", tools_hud)
+        self.btn_highlighter.setToolTip("Highlighter (Click for Colors)")
+        self.btn_highlighter.clicked.connect(self._on_highlighter_clicked)
 
         btn_eraser = QPushButton(qta.icon('fa5s.eraser', color='#ff3b30'), "", tools_hud)
         btn_eraser.clicked.connect(lambda: self._set_tool("eraser"))
 
         th_layout.addWidget(btn_cursor)
         th_layout.addWidget(btn_pen)
-        th_layout.addWidget(btn_highlighter)
+        th_layout.addWidget(self.btn_highlighter)
         th_layout.addWidget(btn_eraser)
 
         layout.addWidget(tools_hud)
 
         return hud
 
+    def _on_highlighter_clicked(self):
+        """
+        Activates highlighter tool and pops up a color selection menu (Yellow, Green, Blue, Pink).
+        """
+        self._set_tool("highlighter")
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #d1d1d6;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: 600;
+            }
+            QMenu::item:selected {
+                background-color: #f2f2f7;
+            }
+        """)
+
+        act_yellow = QAction("🟡 Yellow (#ffe066)", self)
+        act_yellow.triggered.connect(lambda: self.scene.set_highlighter_color("#ffe066"))
+
+        act_green = QAction("🟢 Green (#a8e6cf)", self)
+        act_green.triggered.connect(lambda: self.scene.set_highlighter_color("#a8e6cf"))
+
+        act_blue = QAction("🔵 Blue (#90caf9)", self)
+        act_blue.triggered.connect(lambda: self.scene.set_highlighter_color("#90caf9"))
+
+        act_pink = QAction("🌸 Pink (#ffb7b2)", self)
+        act_pink.triggered.connect(lambda: self.scene.set_highlighter_color("#ffb7b2"))
+
+        menu.addAction(act_yellow)
+        menu.addAction(act_green)
+        menu.addAction(act_blue)
+        menu.addAction(act_pink)
+
+        pos = self.btn_highlighter.mapToGlobal(self.btn_highlighter.rect().topLeft())
+        menu.exec(pos)
+
     def _set_tool(self, tool_name: str):
         self.scene.active_tool = tool_name
+
+    def _open_pdf_dialog(self):
+        """
+        Opens QFileDialog to select a PDF file and loads it into Split-Screen RAG mode.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open PDF for Study Mode", "", "PDF Files (*.pdf);;All Files (*)"
+        )
+        if file_path:
+            self._load_pdf_into_split_screen(file_path)
+
+    def _load_pdf_into_split_screen(self, file_path: str):
+        try:
+            success_rag = self.pdf_rag_mgr.load_pdf(file_path)
+            success_view = self.pdf_viewer_widget.load_pdf(file_path)
+
+            if success_rag and success_view:
+                self.pdf_viewer_widget.show()
+                self.pdf_canvas_splitter.setSizes([520, 520])
+                
+                fname = os.path.basename(file_path)
+                self.ask_bar.set_pdf_mode(True, filename=fname)
+
+                # Generate initial Grounded Document Summary directly onto canvas paper
+                summary = self.pdf_rag_mgr.generate_grounded_summary()
+                center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+                bubble = AnswerBubble(
+                    title=f"PDF Summary: {fname[:20]}",
+                    full_text=summary,
+                    question=f"Summarize document: {fname}"
+                )
+                bubble.setPos(center_pos)
+                self.scene.addItem(bubble)
+            else:
+                QMessageBox.warning(self, "PDF Error", "Could not load the selected PDF document.")
+        except Exception as err:
+            QMessageBox.warning(self, "PDF Exception", f"Error opening PDF:\n{err}")
+
+    def _close_pdf_split_screen(self):
+        self.pdf_viewer_widget.hide()
+        self.ask_bar.set_pdf_mode(False)
+
+    def _on_pdf_reply_clicked(self, selected_text: str, page_num: int, surrounding_context: str):
+        """
+        Triggered when user taps 'Reply ↰' floating pill button on highlighted PDF passage.
+        Links selection snippet & surrounding paragraph context to the AskBar and focuses input field.
+        """
+        self.ask_bar.set_selection_context(selected_text, page_num, surrounding_context)
+
+    def _on_question_with_context_asked(self, user_question: str, selected_text: str, page_num: int, surrounding_context: str):
+        """
+        Triggered when user submits a doubt or question in the AskBar with a PDF text selection context attached.
+        Generates grounded RAG solution & answer bubble onto the canvas paper.
+        """
+        if not self.pdf_rag_mgr.is_loaded():
+            return
+
+        ai_response = self.pdf_rag_mgr.generate_grounded_answer(
+            query=user_question,
+            selected_text=selected_text,
+            page_num=page_num,
+            surrounding_context=surrounding_context
+        )
+
+        passage_preview = selected_text[:120].replace('\n', ' ')
+        full_text = (
+            f"📖 Highlighted Passage [Page {page_num}]:\n\"{passage_preview}...\"\n\n"
+            f"💡 Answer & Solution:\n{ai_response}"
+        )
+
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        bubble = AnswerBubble(
+            title=f"Doubt: {user_question[:25]}",
+            full_text=full_text,
+            question=user_question
+        )
+        bubble.setPos(center_pos)
+        self.scene.addItem(bubble)
 
     def _toggle_sidebar(self):
         if self.sidebar.isVisible():
             self.sidebar.hide()
         else:
             self.sidebar.show()
+
+    def _open_settings(self):
+        dialog = SettingsDialog(self)
+        dialog.exec()
 
     def _toggle_reference_panel(self):
         if self.reference_panel.isVisible():
@@ -704,8 +934,12 @@ class MainWindow(QMainWindow):
     def _on_title_changed(self):
         self.current_board.title = self.title_edit.text()
 
-    def _on_sidebar_changed(self, row: int):
-        if row == 1: # "🗂 Notebooks"
+        if row == 0:
+            self.folder_tree.setVisible(False)
+            self.main_stack.setCurrentIndex(0)
+        elif row == 1: # "🗂 Notebooks"
+            self._refresh_folder_tree()
+            self.folder_tree.setVisible(True)
             self.notebooks_panel.refresh()
             self.main_stack.setCurrentIndex(1)
         elif row == 2: # "⎇ Git Notes VCS"
@@ -718,7 +952,32 @@ class MainWindow(QMainWindow):
             self.shared_panel.refresh_all()
             self.main_stack.setCurrentIndex(3)
         else:
-            self.main_stack.setCurrentIndex(0)
+            self.folder_tree.setVisible(False)
+            item_text = self.sidebar_list.item(row).text()
+            import re
+            clean_title = re.sub(r'^[^\w\s]+', '', item_text).split('(')[0].strip()
+            self.placeholder_panel.set_title(clean_title)
+            self.main_stack.setCurrentIndex(2)
+
+    def _refresh_folder_tree(self):
+        from ..storage.notebook_storage import NotebookStorage
+        folders = NotebookStorage.get_folder_tree()
+        selected_id = self.notebooks_panel._current_folder_id
+        self.folder_tree.refresh(folders, selected_id=selected_id)
+
+    def _on_sidebar_folder_selected(self, folder_id: str):
+        """User clicked a folder in the sidebar tree — navigate notebooks panel."""
+        self.notebooks_panel.navigate_to_folder(folder_id or None)
+
+    def _on_folder_tree_changed(self):
+        """Folder tree had a structural change (create/rename/delete) — refresh both."""
+        self._refresh_folder_tree()
+        self.notebooks_panel.refresh()
+
+    def _on_panel_folder_navigated(self, folder_id):
+        """Panel navigated via breadcrumb or folder card — sync sidebar tree highlight."""
+        self._refresh_folder_tree()
+        self.folder_tree.select_folder(folder_id or "")
 
     def _on_toolbar_save(self):
         current_name = self.current_board.title or "Untitled Notebook"
@@ -759,21 +1018,8 @@ class MainWindow(QMainWindow):
         self.main_stack.setCurrentIndex(2)
 
     def _on_new_notebook_requested(self):
-        name, ok = QInputDialog.getText(self, "New Notebook", "Enter Notebook Name:", text="Untitled Notebook")
-        if ok and name.strip():
-            try:
-                meta = NotebookStorage.create_notebook(name.strip())
-                self.current_board.board_id = meta["id"]
-                self.current_board.title = meta["name"]
-                self.title_edit.setText(meta["name"])
-                
-                self.scene.clear_all()
-                
-                self.main_stack.setCurrentIndex(0)
-                self.sidebar_list.setCurrentRow(0)
-                self.notebooks_panel.refresh()
-            except Exception as err:
-                QMessageBox.warning(self, "Create Failed", f"Could not create notebook:\n{err}")
+        """Legacy create_notebook_requested signal (now the panel handles new notebooks inline)."""
+        self.sidebar_list.setCurrentRow(1)  # Switch to Notebooks panel
 
     def _on_toolbar_paste(self):
         self.scene.active_tool = "select"
@@ -864,7 +1110,28 @@ class MainWindow(QMainWindow):
             bubble.setPos(pos)
             self.scene.addItem(bubble)
 
+    def _on_latex_video_requested(self, pdf_path: str):
+        job_id = request_video_generation(selected_text="Explain this document in an animated lesson.", pdf_path=pdf_path)
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        v_item = VideoFloatItem(job_id=job_id, title="Manim: LaTeX Document Lesson", video_url_or_path="")
+        v_item.setPos(center_pos.x() + 300, center_pos.y())
+        self.scene.addItem(v_item)
+        
+        self.pdf_viewer_widget.video_generation_started()
+        v_item.player_widget.worker.status_updated.connect(self._on_latex_video_progress)
+
+    def _on_latex_video_progress(self, job_id, stage, progress):
+        self.pdf_viewer_widget.update_video_progress(stage, progress)
+
     def _on_stem_question_asked(self, question: str, target_pos=None, mode: str = None):
+        # 1. Grounded RAG if PDF Study Mode is active
+        if hasattr(self, 'pdf_rag_mgr') and self.pdf_rag_mgr.is_loaded() and hasattr(self, 'pdf_viewer_widget') and self.pdf_viewer_widget.isVisible():
+            ai_response = self.pdf_rag_mgr.generate_grounded_answer(question)
+            center_pos = target_pos or self.view.mapToScene(self.view.viewport().rect().center())
+            bubble = AnswerBubble(title="PDF Grounded Answer", full_text=ai_response, question=question)
+            bubble.setPos(center_pos)
+            self.scene.addItem(bubble)
+            return
         if target_pos:
             place_pos = target_pos
         elif hasattr(self.view, 'last_mouse_scene_pos') and not self.view.last_mouse_scene_pos.isNull():
@@ -905,6 +1172,107 @@ class MainWindow(QMainWindow):
         worker.finished.connect(_on_finished)
         self._solver_workers.append(worker)
         worker.start()
+
+    def _convert_to_latex(self):
+        items = self.scene.selectedItems()
+        if not items:
+            items = self.scene.items()
+            if not items:
+                QMessageBox.warning(self, "No Content", "There is nothing on the canvas to convert.")
+                return
+        
+        if self.scene.selectedItems():
+            rect = self.scene.selectedItems()[0].sceneBoundingRect()
+            for item in self.scene.selectedItems()[1:]:
+                rect = rect.united(item.sceneBoundingRect())
+        else:
+            rect = self.scene.itemsBoundingRect()
+
+        if rect.isEmpty():
+            return
+            
+        rect.adjust(-20, -20, 20, 20)
+        
+        # Max scale down if image too large to avoid huge memory/API payload
+        size = rect.size().toSize()
+        scale_factor = 1.0
+        if size.width() > 2000 or size.height() > 2000:
+            scale_factor = 2000.0 / max(size.width(), size.height())
+            size = (rect.size() * scale_factor).toSize()
+
+        pixmap = QPixmap(size)
+        pixmap.fill(Qt.GlobalColor.white)
+        
+        import PyQt6.QtGui as QtGui
+        import PyQt6.QtCore as QtCore
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        
+        # Draw the scene area to the pixmap
+        target_rect = QtCore.QRectF(pixmap.rect())
+        self.scene.render(painter, target=target_rect, source=rect)
+        painter.end()
+
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        pixmap.save(buffer, "PNG")
+        image_b64 = buffer.data().toBase64().data().decode()
+        
+        template_type = self.latex_combo.currentText()
+        
+        try:
+            job_id = request_latex_generation(image_b64, template_type)
+        except Exception as e:
+            QMessageBox.warning(self, "API Connection Error", f"Could not connect to the backend server.\nPlease ensure you are running the backend local server (`python backend/local_server.py`).\n\nError: {e}")
+            return
+        
+        self.progress_dialog = ProgressDialog(self, title=f"Generating {template_type}...")
+        self.progress_dialog.show()
+        
+        self.latex_worker = LatexPollWorker(job_id, self)
+        self.latex_worker.status_updated.connect(self._on_latex_status_updated)
+        self.latex_worker.pdf_ready.connect(self._on_latex_pdf_ready)
+        self.latex_worker.pdf_failed.connect(self._on_latex_failed)
+        self.latex_worker.start()
+        
+        self.ask_bar.input_field.setPlaceholderText(f"Converting to {template_type}...")
+
+    def _on_latex_status_updated(self, job_id, stage, progress):
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.update_progress(stage, progress)
+        self.ask_bar.input_field.setPlaceholderText(f"{stage} ({progress}%)")
+        
+    def _on_latex_pdf_ready(self, job_id, pdf_url, pdf_b64):
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.finish_success()
+        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
+        import tempfile
+        import base64
+        
+        fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+        if pdf_b64:
+            with open(temp_path, "wb") as f:
+                f.write(base64.b64decode(pdf_b64))
+        else:
+            import requests
+            try:
+                r = requests.get(pdf_url)
+                with open(temp_path, "wb") as f:
+                    f.write(r.content)
+            except Exception as e:
+                QMessageBox.warning(self, "Download Error", f"Failed to download generated PDF:\n{e}")
+                return
+                
+        self.pdf_viewer_widget.load_latex_pdf(temp_path)
+        self.pdf_viewer_widget.show()
+        if self.pdf_canvas_splitter.sizes()[0] == 0:
+            self.pdf_canvas_splitter.setSizes([520, 520])
+
+    def _on_latex_failed(self, job_id, error_msg):
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.finish_error(error_msg)
+        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
+        QMessageBox.warning(self, "LaTeX Error", f"LaTeX generation failed:\n{error_msg}")
 
     def _populate_demo_canvas(self):
         pass
