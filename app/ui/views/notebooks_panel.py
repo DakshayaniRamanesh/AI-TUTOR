@@ -76,7 +76,7 @@ class NotebookRowWidget(QFrame):
         layout.setSpacing(12)
 
         # Icon + Text
-        lbl_icon = QLabel("📓", self)
+        lbl_icon = QLabel("🗂", self)
         lbl_icon.setStyleSheet("font-size: 22px; background: transparent;")
 
         text_box = QVBoxLayout()
@@ -131,21 +131,21 @@ class NotebookRowWidget(QFrame):
             }
         """)
 
-        act_share = QAction("🔗 Share Notebook (Google Drive style)", menu)
+        act_share = QAction("☌ Share Notebook (Google Drive style)", menu)
         act_share.triggered.connect(lambda: self.share_clicked.emit(self.notebook_id, self.notebook_name))
         menu.addAction(act_share)
 
-        act_rename = QAction("✏️ Rename Notebook", menu)
+        act_rename = QAction("✎ Rename Notebook", menu)
         act_rename.triggered.connect(lambda: self.rename_clicked.emit(self.notebook_id, self.notebook_name))
         menu.addAction(act_rename)
 
-        act_git = QAction("🔀 Git Version History", menu)
+        act_git = QAction("⎇ Git Version History", menu)
         act_git.triggered.connect(lambda: self.git_clicked.emit(self.notebook_id, self.notebook_name))
         menu.addAction(act_git)
 
         menu.addSeparator()
 
-        act_del = QAction("🗑️ Delete Notebook", menu)
+        act_del = QAction("✕ Delete Notebook", menu)
         act_del.triggered.connect(lambda: self.delete_clicked.emit(self.notebook_id, self.notebook_name))
         menu.addAction(act_del)
 
@@ -189,10 +189,10 @@ class NotebooksPanel(QWidget):
 
         # Header Bar
         header = QHBoxLayout()
-        lbl_header = QLabel("📓 Saved Notebooks", self)
+        lbl_header = QLabel("🗂 Saved Notebooks", self)
         lbl_header.setObjectName("PanelHeaderTitle")
 
-        btn_new = QPushButton("➕ New Notebook", self)
+        btn_new = QPushButton("+ New Notebook", self)
         btn_new.setObjectName("BtnNewNotebook")
         btn_new.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_new.clicked.connect(self.create_notebook_requested.emit)
@@ -235,7 +235,7 @@ class NotebooksPanel(QWidget):
                 empty_box = QVBoxLayout()
                 empty_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 
-                lbl_empty = QLabel("📓 No saved notebooks yet.\nClick 'New Notebook' or click '💾 Save' on the top toolbar.", self)
+                lbl_empty = QLabel("🗂 No saved notebooks yet.\nClick 'New Notebook' or click 'Save' on the top toolbar.", self)
                 lbl_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 lbl_empty.setStyleSheet("font-size: 14px; color: #8e8e93; padding: 40px;")
                 empty_box.addWidget(lbl_empty)

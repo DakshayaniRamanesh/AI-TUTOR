@@ -48,7 +48,7 @@ class FloatingSelectionToolbar(QWidget):
         btn_bold = QPushButton("Bold", container)
         btn_bold.clicked.connect(self.bold_requested.emit)
         
-        btn_video = QPushButton("🎬 Generate Video", container)
+        btn_video = QPushButton("▷ Generate Video", container)
         btn_video.setStyleSheet("color: #34c759; font-weight: bold;")
         btn_video.clicked.connect(self.generate_video_requested.emit)
         

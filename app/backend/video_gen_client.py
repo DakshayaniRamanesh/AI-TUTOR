@@ -97,7 +97,7 @@ class ManimVideoPollWorker(QThread):
 
             # Update progress feedback for user
             stage_name = "StoryAgent: Storyboard script" if attempts < 4 else ("CodeGenAgent: 2D Manim Code" if attempts < 10 else "RendererAgent: Rendering MP4 Video")
-            self.status_updated.emit(self.job_id, f"🎬 {stage_name} ({attempts*2}s)...", min(92, attempts * 4))
+            self.status_updated.emit(self.job_id, f"▷ {stage_name} ({attempts*2}s)...", min(92, attempts * 4))
 
         # 2. Complete pipeline simulation fallback
         self.status_updated.emit(self.job_id, "Rendering Manim Video Complete!", 100)

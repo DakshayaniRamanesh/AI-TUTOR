@@ -144,7 +144,7 @@ class GitNotesPanel(QWidget):
         layout.addWidget(self.tree_vcs, 1)
 
         # New Note Button
-        btn_new_note = QPushButton("📝 New Note (.md)", sb)
+        btn_new_note = QPushButton("✎ New Note (.md)", sb)
         btn_new_note.clicked.connect(self._on_new_note_clicked)
         layout.addWidget(btn_new_note)
 
@@ -164,10 +164,10 @@ class GitNotesPanel(QWidget):
         nb_layout.setContentsMargins(12, 0, 12, 0)
         nb_layout.setSpacing(6)
 
-        self.btn_tab_editor = QPushButton("📝 Editor & Live Preview", nav_bar)
-        self.btn_tab_diff = QPushButton("🔀 Visual Line Diff", nav_bar)
-        self.btn_tab_graph = QPushButton("🌿 Git DAG Graph", nav_bar)
-        self.btn_tab_history = QPushButton("🕒 Commit History", nav_bar)
+        self.btn_tab_editor = QPushButton("✎ Editor & Live Preview", nav_bar)
+        self.btn_tab_diff = QPushButton("⇄ Visual Line Diff", nav_bar)
+        self.btn_tab_graph = QPushButton("⎇ Git DAG Graph", nav_bar)
+        self.btn_tab_history = QPushButton("⏱ Commit History", nav_bar)
 
         for btn in [self.btn_tab_editor, self.btn_tab_diff, self.btn_tab_graph, self.btn_tab_history]:
             btn.setCheckable(True)
@@ -444,7 +444,7 @@ class GitNotesPanel(QWidget):
         current = self.git_mgr.get_current_branch()
 
         for b in branches:
-            self.cb_branches.addItem(f"🌿 {b}", b)
+            self.cb_branches.addItem(f"⎇ {b}", b)
 
         idx = self.cb_branches.findData(current)
         if idx >= 0:
@@ -456,19 +456,19 @@ class GitNotesPanel(QWidget):
         status = self.git_mgr.get_files_status()
 
         # 1. Staged Changes
-        staged_group = QTreeWidgetItem(self.tree_vcs, [f"📥 Staged Changes ({len(status['staged'])})"])
+        staged_group = QTreeWidgetItem(self.tree_vcs, [f"⤓ Staged Changes ({len(status['staged'])})"])
         staged_group.setExpanded(True)
         for f in status['staged']:
-            icon = "🎨" if f['filename'].endswith(".json") else "📄"
+            icon = "❖" if f['filename'].endswith(".json") else "🗎"
             item = QTreeWidgetItem(staged_group, [f"  {icon} {f['filename']}"])
             item.setData(0, Qt.ItemDataRole.UserRole, ("staged", f['filename']))
             item.setForeground(0, QBrush(QColor("#28a745")))
 
         # 2. Unstaged Changes
-        unstaged_group = QTreeWidgetItem(self.tree_vcs, [f"📝 Unstaged Changes ({len(status['unstaged'])})"])
+        unstaged_group = QTreeWidgetItem(self.tree_vcs, [f"✎ Unstaged Changes ({len(status['unstaged'])})"])
         unstaged_group.setExpanded(True)
         for f in status['unstaged']:
-            icon = "🎨" if f['filename'].endswith(".json") else "📄"
+            icon = "❖" if f['filename'].endswith(".json") else "🗎"
             item = QTreeWidgetItem(unstaged_group, [f"  [{f['status']}] {icon} {f['filename']}"])
             item.setData(0, Qt.ItemDataRole.UserRole, ("unstaged", f['filename']))
             item.setForeground(0, QBrush(QColor("#d97706" if f['status'] == "M" else "#6e6e73")))
@@ -477,16 +477,16 @@ class GitNotesPanel(QWidget):
         md_files = [f for f in status['all_files'] if f.endswith(".md")]
         board_files = [f for f in status['all_files'] if f.endswith(".json")]
 
-        md_group = QTreeWidgetItem(self.tree_vcs, [f"📝 Markdown Notes ({len(md_files)})"])
+        md_group = QTreeWidgetItem(self.tree_vcs, [f"✎ Markdown Notes ({len(md_files)})"])
         md_group.setExpanded(True)
         for fname in md_files:
-            item = QTreeWidgetItem(md_group, [f"  📄 {fname}"])
+            item = QTreeWidgetItem(md_group, [f"  🗎 {fname}"])
             item.setData(0, Qt.ItemDataRole.UserRole, ("file", fname))
 
-        board_group = QTreeWidgetItem(self.tree_vcs, [f"🎨 Freeform Canvas Boards ({len(board_files)})"])
+        board_group = QTreeWidgetItem(self.tree_vcs, [f"❖ Freeform Canvas Boards ({len(board_files)})"])
         board_group.setExpanded(True)
         for fname in board_files:
-            item = QTreeWidgetItem(board_group, [f"  🎨 {fname}"])
+            item = QTreeWidgetItem(board_group, [f"  ❖ {fname}"])
             item.setData(0, Qt.ItemDataRole.UserRole, ("file", fname))
 
         # Update status labels

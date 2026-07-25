@@ -82,7 +82,7 @@ class VideoPlayerWidget(QWidget):
 
         # Header bar
         self.header = QHBoxLayout()
-        self.lbl_title = QLabel(f"🎬 {title}", self)
+        self.lbl_title = QLabel(f"▷ {title}", self)
         self.lbl_title.setStyleSheet("font-size: 12px; color: #34c759;")
 
         self.btn_min = QPushButton("–", self)
@@ -104,7 +104,7 @@ class VideoPlayerWidget(QWidget):
         lp_layout.setContentsMargins(12, 12, 12, 12)
         lp_layout.setSpacing(8)
 
-        self.lbl_status = QLabel("🎬 Generating Manim 2D Animation...", self.loading_page)
+        self.lbl_status = QLabel("▷ Generating Manim 2D Animation...", self.loading_page)
         self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_status.setStyleSheet("color: #34c759; font-size: 12px;")
 
@@ -145,7 +145,7 @@ class VideoPlayerWidget(QWidget):
         self.scrub_slider = QSlider(Qt.Orientation.Horizontal, self.player_page)
         self.scrub_slider.sliderMoved.connect(self.player.setPosition)
         
-        self.btn_download = QPushButton("💾 Download", self.player_page)
+        self.btn_download = QPushButton("⤓ Download", self.player_page)
         self.btn_download.setStyleSheet("background-color: #007aff; font-weight: bold;")
         self.btn_download.clicked.connect(self._on_download)
 
@@ -176,7 +176,7 @@ class VideoPlayerWidget(QWidget):
         self.worker.start()
 
     def _on_status_update(self, job_id, stage, progress):
-        self.lbl_status.setText(f"🎬 {stage}")
+        self.lbl_status.setText(f"▷ {stage}")
         self.progress_bar.setValue(progress)
 
     def _on_video_ready(self, job_id, video_url):
@@ -186,7 +186,7 @@ class VideoPlayerWidget(QWidget):
         self.stack.setCurrentIndex(1)
 
     def _on_video_failed(self, job_id, err_msg):
-        self.lbl_status.setText(f"⚠️ {err_msg}")
+        self.lbl_status.setText(f"⚠ {err_msg}")
         self.progress_bar.setValue(0)
 
     def _load_video_source(self, path_or_url: str):

@@ -83,7 +83,7 @@ class TableWidgetContainer(QWidget):
         tb_layout.setContentsMargins(0, 0, 0, 0)
         tb_layout.setSpacing(4)
 
-        lbl_drag = QLabel("📊 Table", self.header_bar)
+        lbl_drag = QLabel("▤ Table", self.header_bar)
         lbl_drag.setStyleSheet("font-size: 12px; font-weight: bold; color: #388e3c; background: transparent;")
         tb_layout.addWidget(lbl_drag)
 

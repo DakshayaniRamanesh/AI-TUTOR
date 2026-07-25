@@ -81,11 +81,11 @@ def summarize_url(url: str, title: str = "") -> str:
             f"URL: {url}\n"
             f"Extracted Content:\n{combined_text[:3500]}\n\n"
             f"Format as an extensive, comprehensive study guide with:\n"
-            f"1. 📖 Comprehensive Overview & Fundamental Definitions\n"
-            f"2. 📐 Essential Formulas, Equations & Identities\n"
-            f"3. 💡 Worked Example Problems & Step-by-Step Solutions\n"
-            f"4. 🧠 Key Study Concepts, Rules & Exam Tips\n"
-            f"5. 📝 Practice Exercises for Self-Testing\n\n"
+            f"1. ▤ Comprehensive Overview & Fundamental Definitions\n"
+            f"2. △ Essential Formulas, Equations & Identities\n"
+            f"3. ✦ Worked Example Problems & Step-by-Step Solutions\n"
+            f"4. ❖ Key Study Concepts, Rules & Exam Tips\n"
+            f"5. ✎ Practice Exercises for Self-Testing\n\n"
             f"Make it thorough, detailed, and rich with information for studying!"
         )
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -106,7 +106,7 @@ def summarize_url(url: str, title: str = "") -> str:
     study_sections.append(f"Study Guide: {display_title}")
     study_sections.append(f"Source URL: {url}\n")
 
-    study_sections.append("📖 1. Overview & Core Definitions:")
+    study_sections.append("▤ 1. Overview & Core Definitions:")
     if paragraphs:
         for p in paragraphs[:5]:
             study_sections.append(f"• {p}")
@@ -114,11 +114,11 @@ def summarize_url(url: str, title: str = "") -> str:
         study_sections.append(f"Comprehensive reference guide extracted from {url}.")
 
     if headings:
-        study_sections.append("\n📌 Key Sub-Topics & Modules:")
+        study_sections.append("\n◈ Key Sub-Topics & Modules:")
         for h in headings[:8]:
             study_sections.append(f"  └─ {h}")
 
-    study_sections.append("\n📐 2. Essential Formulas, Rules & Identities:")
+    study_sections.append("\n△ 2. Essential Formulas, Rules & Identities:")
     if "algebra" in url.lower() or "algebra" in display_title.lower():
         study_sections.append("• Quadratic Formula: x = (-b ± √(b² - 4ac)) / (2a)")
         study_sections.append("• Binomial Expansion: (a + b)² = a² + 2ab + b²")
@@ -137,7 +137,7 @@ def summarize_url(url: str, title: str = "") -> str:
         study_sections.append("• General Principle 2: Apply foundational theorems & definitions.")
         study_sections.append("• General Principle 3: Verify dimensional accuracy and boundaries.")
 
-    study_sections.append("\n💡 3. Worked Example & Step-by-Step Solution:")
+    study_sections.append("\n✦ 3. Worked Example & Step-by-Step Solution:")
     if "algebra" in url.lower() or "algebra" in display_title.lower():
         study_sections.append("Problem: Solve 2x² + 5x - 3 = 0")
         study_sections.append("Step 1: Identify coefficients a = 2, b = 5, c = -3")
@@ -151,11 +151,11 @@ def summarize_url(url: str, title: str = "") -> str:
         study_sections.append("Final Answer: Verified symbolic solution.")
 
     if len(paragraphs) > 5:
-        study_sections.append("\n🧠 4. Detailed Module Analysis & Concepts:")
+        study_sections.append("\n❖ 4. Detailed Module Analysis & Concepts:")
         for p in paragraphs[5:15]:
             study_sections.append(f"• {p}")
 
-    study_sections.append("\n📝 5. Practice & Self-Test Questions:")
+    study_sections.append("\n✎ 5. Practice & Self-Test Questions:")
     study_sections.append("1. Define the primary relationship between the core concepts above.")
     study_sections.append("2. Apply the foundational formulas to evaluate boundary cases.")
     study_sections.append("3. Derive the step-by-step solution for key variables.")

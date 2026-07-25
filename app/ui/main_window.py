@@ -31,6 +31,7 @@ from .widgets.reference_panel import ReferencePanel
 from .views.notebooks_panel import NotebooksPanel
 from .views.git_notes_panel import GitNotesPanel
 from .views.shared_panel import SharedPanel
+from .views.obsidian_graph_panel import ObsidianGraphPanel
 
 from ..backend.stem_solver import solve_stem_question
 from ..backend.video_gen_client import request_video_generation
@@ -278,6 +279,11 @@ class MainWindow(QMainWindow):
         self.shared_panel = SharedPanel(self.main_stack)
         self.main_stack.addWidget(self.shared_panel) # Index 3
 
+        # Obsidian Knowledge Graph View Panel
+        self.obsidian_graph_panel = ObsidianGraphPanel(self.main_stack)
+        self.obsidian_graph_panel.open_notebook_requested.connect(self._on_load_notebook_requested)
+        self.main_stack.addWidget(self.obsidian_graph_panel) # Index 4
+
         cc_layout.addWidget(self.main_stack)
         self.splitter.addWidget(self.canvas_container)
 
@@ -425,13 +431,13 @@ class MainWindow(QMainWindow):
 
         self.sidebar_list = QListWidget(sb)
         items = [
-            "📋 All Boards",
-            "📓 Notebooks",
-            "🔀 Git Notes VCS",
-            "🕒 Recents",
-            "👥 Shared",
-            "⭐ Favourites",
-            f"💾 Downloads ({len(self.downloads_mgr.get_all())})"
+            "🗎 All Boards",
+            "🗂 Notebooks",
+            "⎇ Git Notes VCS",
+            "❖ Knowledge Graph",
+            "☌ Shared",
+            "★ Favourites",
+            f"⤓ Downloads ({len(self.downloads_mgr.get_all())})"
         ]
         for name in items:
             item = QListWidgetItem(name)
@@ -441,7 +447,7 @@ class MainWindow(QMainWindow):
         self.sidebar_list.currentRowChanged.connect(self._on_sidebar_changed)
         layout.addWidget(self.sidebar_list)
 
-        btn_ref = QPushButton("📚 Reference Database", sb)
+        btn_ref = QPushButton("▤ Reference Database", sb)
         btn_ref.setStyleSheet("""
             QPushButton {
                 background-color: #ffffff;
@@ -539,9 +545,14 @@ class MainWindow(QMainWindow):
         btn_group = QPushButton(qta.icon('fa5s.layer-group', color='#7b1fa2'), "Group", pill)
         btn_group.clicked.connect(self._add_group)
 
-        self.btn_grid_mode = QPushButton("📄 Ruled Paper", pill)
+        self.btn_grid_mode = QPushButton("🗎 Ruled Paper", pill)
         self.btn_grid_mode.setStyleSheet("color: #007aff; font-weight: bold;")
         self.btn_grid_mode.clicked.connect(self._toggle_grid_mode)
+
+        self.btn_mode_toggle = QPushButton("📖 Study Mode", pill)
+        self.btn_mode_toggle.setStyleSheet("color: #34c759; font-weight: bold;")
+        self.btn_mode_toggle.setToolTip("Switch AI Mode:\n🏫 Classroom Mode: Straight, direct answer only (No waiting/elaboration)\n📖 Study Mode: Elaborate step-by-step solution")
+        self.btn_mode_toggle.clicked.connect(self._toggle_tutor_mode)
 
         pill_layout.addWidget(btn_save)
         pill_layout.addWidget(btn_paste)
@@ -550,11 +561,28 @@ class MainWindow(QMainWindow):
         pill_layout.addWidget(btn_table)
         pill_layout.addWidget(btn_group)
         pill_layout.addWidget(self.btn_grid_mode)
+        pill_layout.addWidget(self.btn_mode_toggle)
 
         layout.addWidget(pill)
         layout.addStretch()
 
         return tb
+
+    def _toggle_tutor_mode(self):
+        curr = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
+        new_mode = "classroom" if curr == "study" else "study"
+        if hasattr(self, 'ask_bar'):
+            self.ask_bar.set_mode(new_mode)
+        self._update_mode_button_text(new_mode)
+
+    def _update_mode_button_text(self, mode: str):
+        if hasattr(self, 'btn_mode_toggle'):
+            if mode == "classroom":
+                self.btn_mode_toggle.setText("🏫 Classroom Mode")
+                self.btn_mode_toggle.setStyleSheet("color: #ff9500; font-weight: bold;")
+            else:
+                self.btn_mode_toggle.setText("📖 Study Mode")
+                self.btn_mode_toggle.setStyleSheet("color: #34c759; font-weight: bold;")
 
     def _create_hud_overlay(self) -> QWidget:
         hud = QWidget(self)
@@ -603,6 +631,7 @@ class MainWindow(QMainWindow):
 
         self.ask_bar = AskBar(hud)
         self.ask_bar.question_submitted.connect(self._on_stem_question_asked)
+        self.ask_bar.mode_changed.connect(self._update_mode_button_text)
         layout.addWidget(self.ask_bar)
 
         tools_hud = QWidget(hud)
@@ -667,7 +696,7 @@ class MainWindow(QMainWindow):
             self.btn_grid_mode.setText("░ Dotted Grid")
         else:
             self.scene.set_background_mode("ruled")
-            self.btn_grid_mode.setText("📄 Ruled Paper")
+            self.btn_grid_mode.setText("🗎 Ruled Paper")
 
     def _on_zoom_changed(self, zoom_factor: float):
         self.lbl_zoom.setText(f"{int(zoom_factor * 100)}%")
@@ -676,13 +705,16 @@ class MainWindow(QMainWindow):
         self.current_board.title = self.title_edit.text()
 
     def _on_sidebar_changed(self, row: int):
-        if row == 1: # "📓 Notebooks"
+        if row == 1: # "🗂 Notebooks"
             self.notebooks_panel.refresh()
             self.main_stack.setCurrentIndex(1)
-        elif row == 2: # "🔀 Git Notes VCS"
+        elif row == 2: # "⎇ Git Notes VCS"
             self.git_notes_panel.refresh_all()
             self.main_stack.setCurrentIndex(2)
-        elif row == 4: # "👥 Shared"
+        elif row == 3: # "❖ Knowledge Graph"
+            self.obsidian_graph_panel.load_graph()
+            self.main_stack.setCurrentIndex(4)
+        elif row == 4: # "☌ Shared"
             self.shared_panel.refresh_all()
             self.main_stack.setCurrentIndex(3)
         else:
@@ -722,7 +754,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Load Failed", f"Could not load notebook:\n{err}")
 
     def _on_notebook_git_requested(self, notebook_id: str):
-        self.sidebar_list.setCurrentRow(2) # "🔀 Git Notes VCS"
+        self.sidebar_list.setCurrentRow(2) # "⎇ Git Notes VCS"
         self.git_notes_panel.open_notebook_vcs(notebook_id)
         self.main_stack.setCurrentIndex(2)
 
@@ -832,19 +864,31 @@ class MainWindow(QMainWindow):
             bubble.setPos(pos)
             self.scene.addItem(bubble)
 
-    def _on_stem_question_asked(self, question: str, target_pos=None):
+    def _on_stem_question_asked(self, question: str, target_pos=None, mode: str = None):
         if target_pos:
             place_pos = target_pos
+        elif hasattr(self.view, 'last_mouse_scene_pos') and not self.view.last_mouse_scene_pos.isNull():
+            place_pos = self.view.last_mouse_scene_pos
         else:
             place_pos = self.view.mapToScene(self.view.viewport().rect().center())
 
-        loading_msg = "Kestrel AI Tutor is generating step-by-step solution..."
-        bubble = AnswerBubble(title="Handwritten Solution", full_text=loading_msg, question=question)
+        active_mode = mode or (self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study")
+
+        if active_mode == "classroom":
+            loading_msg = "Classroom Mode: Fetching straight answer..."
+            title_text = "Classroom Answer"
+            is_direct = True
+        else:
+            loading_msg = "Study Mode: Generating step-by-step solution..."
+            title_text = "Handwritten Solution"
+            is_direct = False
+
+        bubble = AnswerBubble(title=title_text, full_text=loading_msg, question=question, is_direct_math=is_direct)
         bubble.setPos(place_pos)
         self.scene.addItem(bubble)
 
         from ..backend.stem_solver import StemSolverWorker
-        worker = StemSolverWorker(question, self)
+        worker = StemSolverWorker(question, mode=active_mode, parent=self)
 
         def _on_finished(q: str, res: dict):
             bubble.update_solution(q, res)

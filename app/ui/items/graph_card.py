@@ -69,7 +69,7 @@ class GraphWidget(QWidget):
         header = QHBoxLayout(self.header_bar)
         header.setContentsMargins(0, 0, 0, 0)
 
-        lbl_title = QLabel(f"📈 {title}", self.header_bar)
+        lbl_title = QLabel(f"◈ {title}", self.header_bar)
         lbl_title.setObjectName("GraphTitle")
         header.addWidget(lbl_title)
         header.addStretch()
@@ -130,7 +130,7 @@ class GraphCard(QGraphicsProxyWidget, BaseGraphicsItemMixin):
             "type": "GraphCard",
             "x": self.x(),
             "y": self.y(),
-            "title": self.card.findChild(QLabel, "GraphTitle").text().replace("📈 ", ""),
+            "title": self.card.findChild(QLabel, "GraphTitle").text().replace("◈ ", ""),
             "image_path": self.card.image_path,
             "z_value": self.zValue()
         }

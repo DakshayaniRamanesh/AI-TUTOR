@@ -180,3 +180,8 @@ class ReferencePanel(QWidget):
             "headers": ["Deg", "Rad", "sin", "cos", "tan"],
             "rows": rows
         })
+
+    def show_panel(self, parent_widget=None):
+        self.show()
+        self.raise_()
+        self.activateWindow()

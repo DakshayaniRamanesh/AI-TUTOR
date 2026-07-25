@@ -40,7 +40,7 @@ class GroupContainerWidget(QWidget):
 
         # Header
         header_layout = QHBoxLayout()
-        self.lbl_title = QLabel(f"📦 {title}", self)
+        self.lbl_title = QLabel(f"▢ {title}", self)
         self.lbl_title.setObjectName("GroupHeader")
         
         self.btn_toggle = QPushButton("Collapse", self)
@@ -78,7 +78,7 @@ class GroupSelection(QGraphicsProxyWidget, BaseGraphicsItemMixin):
             "type": "GroupSelection",
             "x": self.x(),
             "y": self.y(),
-            "title": self.group_widget.lbl_title.text().replace("📦 ", ""),
+            "title": self.group_widget.lbl_title.text().replace("▢ ", ""),
             "is_collapsed": self.group_widget.is_collapsed,
             "z_value": self.zValue()
         }

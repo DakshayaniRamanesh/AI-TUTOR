@@ -31,6 +31,7 @@ class CanvasView(QGraphicsView):
 
         self._is_panning = False
         self._pan_start = QPointF()
+        self.last_mouse_scene_pos = QPointF(100, 100)
         self.current_zoom = 1.0
 
     def set_zoom(self, scale_factor: float):
@@ -52,6 +53,7 @@ class CanvasView(QGraphicsView):
             super().wheelEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent):
+        self.last_mouse_scene_pos = self.mapToScene(event.position().toPoint())
         if event.button() == Qt.MouseButton.MiddleButton or (event.button() == Qt.MouseButton.LeftButton and QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier):
             self._is_panning = True
             self._pan_start = event.position()
@@ -61,6 +63,7 @@ class CanvasView(QGraphicsView):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        self.last_mouse_scene_pos = self.mapToScene(event.position().toPoint())
         if self._is_panning:
             delta = event.position() - self._pan_start
             self._pan_start = event.position()
@@ -77,6 +80,23 @@ class CanvasView(QGraphicsView):
             event.accept()
         else:
             super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            scene_pos = self.mapToScene(event.position().toPoint())
+            items = self.scene().items(scene_pos)
+            if not items:
+                note = HandwritingNote(text="Start typing note here...")
+                note.setPos(scene_pos)
+                main_win = self.window()
+                if hasattr(main_win, "_on_generate_video_requested"):
+                    note.widget.video_requested.connect(main_win._on_generate_video_requested)
+                if hasattr(main_win, "_on_stem_question_asked"):
+                    note.widget.solve_requested.connect(main_win._on_stem_question_asked)
+                self.scene().addItem(note)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
         # Keyboard Deletion of Selected Canvas Items

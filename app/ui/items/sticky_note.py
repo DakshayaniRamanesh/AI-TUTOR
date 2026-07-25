@@ -72,7 +72,7 @@ class StickyNoteWidget(QWidget):
         bar_layout.setSpacing(4)
 
         # Drag handle icon
-        lbl_drag = QLabel("📌 Note", self.header_bar)
+        lbl_drag = QLabel("✎ Note", self.header_bar)
         lbl_drag.setStyleSheet("font-size: 12px; font-weight: bold; color: #333333; background: transparent;")
         bar_layout.addWidget(lbl_drag)
 

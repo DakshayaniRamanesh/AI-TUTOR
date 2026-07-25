@@ -41,7 +41,7 @@ class EditorOnlyWindow(QMainWindow):
         b_layout = QHBoxLayout(banner)
         b_layout.setContentsMargins(16, 0, 16, 0)
 
-        type_icon = "🎨 Freeform Board" if self.is_board else "✏️ Note"
+        type_icon = "❖ Freeform Board" if self.is_board else "✎ Note"
         lbl_info = QLabel(f"<b>Editor-Only Shared Session:</b> {type_icon} <i>{self.filename}</i> &nbsp;|&nbsp; Role: <b>{self.role.title()}</b>", banner)
         lbl_info.setStyleSheet("font-size: 13px; color: white;")
         b_layout.addWidget(lbl_info)
@@ -172,4 +172,5 @@ class EditorOnlyWindow(QMainWindow):
 
         self.browser_preview.setHtml(f"<html><body style='font-family:sans-serif; color:#1c1c1e; line-height:1.6;'>{chr(10).join(out)}</body></html>")
         words = len(re.findall(r'\w+', text))
-        self.lbl_word_count.setText(f"{words} words")
+        if hasattr(self, 'lbl_word_count'):
+            self.lbl_word_count.setText(f"{words} words")

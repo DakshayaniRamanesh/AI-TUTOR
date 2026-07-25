@@ -140,29 +140,44 @@ def is_simple_math_query(q_raw: str) -> bool:
         return False
     return bool(re.match(r'^[\d\+\-\*/\.\(\)\^\%]+$', q_clean))
 
-def get_gemini_ai_answer(question: str) -> dict:
+def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
     """
-    Calls Google Gemini AI LLM model to get concise 1-line hints AND full elaborate solution.
+    Calls Google Gemini AI LLM model to get answer based on active mode (Classroom vs Study).
+    - Classroom Mode: Direct straight answer only, no elaboration or step-by-step breakdown.
+    - Study Mode: Concise hints AND elaborate step-by-step solution.
     """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         return {}
 
     models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"]
-    prompt = (
-        f"You are Kestrel AI Tutor, a friendly study notebook assistant.\n"
-        f"For the student question below, provide:\n"
-        f"1. A CONCISE section with 2-3 short, 1-line hints/steps (keep this super brief!).\n"
-        f"2. An ELABORATE section with the complete, step-by-step detailed solution.\n\n"
-        f"Question: {question}\n\n"
-        f"Strictly format your response as:\n"
-        f"[HINTS]\n"
-        f"• Step 1: ...\n"
-        f"• Step 2: ...\n\n"
-        f"[FULL_SOLUTION]\n"
-        f"1. 📖 Core Concept & Overview\n"
-        f"...\n"
-    )
+    
+    if mode == "classroom":
+        prompt = (
+            f"You are Kestrel AI Tutor operating in CLASSROOM MODE.\n"
+            f"For the student question below, provide ONLY the direct, straightforward final answer.\n"
+            f"DO NOT elaborate, DO NOT explain, DO NOT provide step-by-step solutions or background text.\n"
+            f"Give ONLY the straight direct answer concisely in 1 sentence or direct value.\n\n"
+            f"Question: {question}\n\n"
+            f"Format strictly as:\n"
+            f"Answer: <straight direct answer>"
+        )
+    else:
+        prompt = (
+            f"You are Kestrel AI Tutor, a friendly study notebook assistant operating in STUDY MODE.\n"
+            f"For the student question below, provide:\n"
+            f"1. A CONCISE section with 2-3 short, 1-line hints/steps (keep this super brief!).\n"
+            f"2. An ELABORATE section with the complete, step-by-step detailed solution.\n\n"
+            f"Question: {question}\n\n"
+            f"Strictly format your response as:\n"
+            f"[HINTS]\n"
+            f"• Step 1: ...\n"
+            f"• Step 2: ...\n\n"
+            f"[FULL_SOLUTION]\n"
+            f"1. ▤ Core Concept & Overview\n"
+            f"...\n"
+        )
+        
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     for model in models:
@@ -174,6 +189,8 @@ def get_gemini_ai_answer(question: str) -> dict:
                 text = result_json["candidates"][0]["content"]["parts"][0]["text"].strip()
                 if text:
                     text_pretty = to_pretty_math(text)
+                    if mode == "classroom":
+                        return {"hints": text_pretty, "full_solution": text_pretty, "is_direct_math": True}
                     if "[HINTS]" in text_pretty and "[FULL_SOLUTION]" in text_pretty:
                         parts = text_pretty.split("[FULL_SOLUTION]")
                         hints = parts[0].replace("[HINTS]", "").strip()
@@ -187,15 +204,22 @@ def get_gemini_ai_answer(question: str) -> dict:
             continue
     return {}
 
-def solve_stem_question(question: str) -> dict:
+def solve_stem_question(question: str, mode: str = "study") -> dict:
     """
     Evaluates questions using Gemini AI LLM and SymPy symbolic solver.
-    Returns clean, comprehensive solution steps and optional function plot.
+    Modes:
+    - "classroom": Straight-to-the-point direct answer only (no elaboration/waiting).
+    - "study": Complete step-by-step solution with hints and core concepts.
     """
     q_raw = question.strip()
     q_clean = clean_math_query(q_raw)
     x, y, z, t = sp.symbols('x y z t')
     plot_path = ""
+
+    # Check question tags for calculus operations
+    is_integral = any(k in q_raw.lower() for k in ['integral', 'integrate', '∫'])
+    is_derivative = any(k in q_raw.lower() for k in ['derivative', 'differentiate', 'diff', 'd/dx'])
+    is_limit = any(k in q_raw.lower() for k in ['limit', 'lim'])
 
     # 1. Simple direct math (e.g. 2+2=?, 15 * 8, 100/5) -> return ONLY final direct answer
     if is_simple_math_query(q_raw):
@@ -214,8 +238,8 @@ def solve_stem_question(question: str) -> dict:
         except Exception:
             pass
 
-    # 2. Try Gemini AI LLM for study question hints & full answer
-    ai_data = get_gemini_ai_answer(q_raw)
+    # 2. Try Gemini AI LLM for AI answer according to mode
+    ai_data = get_gemini_ai_answer(q_raw, mode=mode)
     
     # Check if a function plot is relevant
     if should_generate_graph(q_raw, q_clean):
@@ -229,6 +253,17 @@ def solve_stem_question(question: str) -> dict:
     if ai_data:
         hints = ai_data.get("hints", "")
         full_sol = ai_data.get("full_solution", "")
+        if mode == "classroom":
+            ans = full_sol or hints
+            if not ans.startswith("Answer:") and not ans.startswith("Ans:"):
+                ans = f"Answer: {ans}"
+            return {
+                "is_direct_math": True,
+                "hints": ans,
+                "full_solution": ans,
+                "solution": ans,
+                "plot_path": plot_path
+            }
         return {
             "is_direct_math": False,
             "hints": hints,
@@ -237,10 +272,8 @@ def solve_stem_question(question: str) -> dict:
             "plot_path": plot_path
         }
 
-    # 2. Fallback to SymPy Symbolic Engine for math queries if AI is offline
-    is_integral = any(k in q_raw.lower() for k in ['integral', 'integrate', '∫', 'antiderivative'])
-    is_derivative = any(k in q_raw.lower() for k in ['derivative', 'differentiate', 'diff', 'd/dx'])
-    is_limit = 'limit' in q_raw.lower()
+    # Check if user explicitly asked to elaborate/explain/show steps
+    wants_elaborate = (mode == "study") or any(k in q_raw.lower() for k in ['elaborate', 'explain', 'steps', 'step by step', 'detail', 'how to', 'why'])
 
     try:
         if is_integral:
@@ -252,13 +285,17 @@ def solve_stem_question(question: str) -> dict:
             if not plot_path and should_generate_graph(q_raw, q_clean):
                 plot_path = generate_function_plot(str(parsed_expr), title=f"Integrand Graph: f(x) = {pretty_p}")
             
+            if not wants_elaborate or mode == "classroom":
+                ans_text = f"Answer: ∫ {pretty_p} dx = {pretty_r} + C"
+                return {"is_direct_math": True, "hints": ans_text, "full_solution": ans_text, "solution": ans_text, "plot_path": plot_path}
+
             solution = (
-                f"1. 📖 Core Concept & Integrand\n"
+                f"1. ▤ Core Concept & Integrand\n"
                 f"Identify f(x) = {pretty_p}\n\n"
-                f"2. 💡 Step-by-Step Integration\n"
+                f"2. ✦ Step-by-Step Integration\n"
                 f"Apply integration rules & anti-differentiation:\n"
                 f"∫ {pretty_p} dx = {pretty_r} + C\n\n"
-                f"3. 🎯 Final Answer\n"
+                f"3. ◈ Final Answer\n"
                 f"∫ {pretty_p} dx = {pretty_r} + C"
             )
             return {"solution": solution, "plot_path": plot_path}
@@ -272,13 +309,17 @@ def solve_stem_question(question: str) -> dict:
             if not plot_path and should_generate_graph(q_raw, q_clean):
                 plot_path = generate_function_plot(str(parsed_expr), title=f"Function & Derivative: {pretty_p}")
             
+            if not wants_elaborate or mode == "classroom":
+                ans_text = f"Answer: d/dx({pretty_p}) = {pretty_r}"
+                return {"is_direct_math": True, "hints": ans_text, "full_solution": ans_text, "solution": ans_text, "plot_path": plot_path}
+
             solution = (
-                f"1. 📖 Core Concept & Function\n"
+                f"1. ▤ Core Concept & Function\n"
                 f"Identify f(x) = {pretty_p}\n\n"
-                f"2. 💡 Step-by-Step Differentiation\n"
+                f"2. ✦ Step-by-Step Differentiation\n"
                 f"Apply differentiation rules:\n"
                 f"f'(x) = {pretty_r}\n\n"
-                f"3. 🎯 Final Answer\n"
+                f"3. ◈ Final Answer\n"
                 f"f'(x) = {pretty_r}"
             )
             return {"solution": solution, "plot_path": plot_path}
@@ -298,12 +339,16 @@ def solve_stem_question(question: str) -> dict:
             if not plot_path and should_generate_graph(q_raw, q_clean):
                 plot_path = generate_function_plot(str(parsed_expr), title=f"Limit Graph: {pretty_p}")
             
+            if mode == "classroom":
+                ans_text = f"Answer: lim_{{x→{target_val}}} {pretty_p} = {pretty_r}"
+                return {"is_direct_math": True, "hints": ans_text, "full_solution": ans_text, "solution": ans_text, "plot_path": plot_path}
+
             solution = (
-                f"1. 📖 Core Concept & Limit Definition\n"
+                f"1. ▤ Core Concept & Limit Definition\n"
                 f"Evaluate limit of f(x) = {pretty_p} as x → {target_val}\n\n"
-                f"2. 💡 Step-by-Step Evaluation\n"
+                f"2. ✦ Step-by-Step Evaluation\n"
                 f"Apply limit laws and algebraic simplification.\n\n"
-                f"3. 🎯 Final Answer\n"
+                f"3. ◈ Final Answer\n"
                 f"lim_{{x→{target_val}}} {pretty_p} = {pretty_r}"
             )
             return {"solution": solution, "plot_path": plot_path}
@@ -317,24 +362,32 @@ def solve_stem_question(question: str) -> dict:
         if not plot_path and should_generate_graph(q_raw, q_clean):
             plot_path = generate_function_plot(str(parsed), title=f"Function Graph: {pretty_p}")
             
+        if not wants_elaborate or mode == "classroom":
+            ans_text = f"Answer: {pretty_p} = {pretty_r}"
+            return {"is_direct_math": True, "hints": ans_text, "full_solution": ans_text, "solution": ans_text, "plot_path": plot_path}
+
         solution = (
-            f"1. 📖 Core Concept\n"
+            f"1. ▤ Core Concept\n"
             f"Evaluate mathematical expression: {pretty_p}\n\n"
-            f"2. 💡 Step-by-Step Simplification\n"
+            f"2. ✦ Step-by-Step Simplification\n"
             f"Simplifying terms yields: {pretty_r}\n\n"
-            f"3. 🎯 Final Answer\n"
+            f"3. ◈ Final Answer\n"
             f"{pretty_p} = {pretty_r}"
         )
         return {"solution": solution, "plot_path": plot_path}
 
     except Exception:
+        if mode == "classroom":
+            ans_text = f"Answer: {q_raw}"
+            return {"is_direct_math": True, "hints": ans_text, "full_solution": ans_text, "solution": ans_text, "plot_path": plot_path}
+
         solution = (
-            f"1. 📖 Question Overview\n"
+            f"1. ▤ Question Overview\n"
             f"Topic: {q_raw}\n\n"
-            f"2. 💡 Structured Analysis\n"
+            f"2. ✦ Structured Analysis\n"
             f"• Identify core variables and relationships.\n"
             f"• Apply foundational laws & definitions.\n\n"
-            f"3. 🎯 Summary & Key Takeaway\n"
+            f"3. ◈ Summary & Key Takeaway\n"
             f"For detailed AI study explanations, ensure GOOGLE_API_KEY is connected."
         )
         return {"solution": solution, "plot_path": plot_path}
@@ -344,11 +397,12 @@ from PyQt6.QtCore import QThread, pyqtSignal
 class StemSolverWorker(QThread):
     finished = pyqtSignal(str, dict)
 
-    def __init__(self, question: str, parent=None):
+    def __init__(self, question: str, mode: str = "study", parent=None):
         super().__init__(parent)
         self.question = question
+        self.mode = mode
 
     def run(self):
-        res = solve_stem_question(self.question)
+        res = solve_stem_question(self.question, mode=self.mode)
         self.finished.emit(self.question, res)
 

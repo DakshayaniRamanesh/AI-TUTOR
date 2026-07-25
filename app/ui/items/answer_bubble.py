@@ -98,12 +98,12 @@ class AnswerBubbleWidget(QWidget):
         header = QHBoxLayout(self.header_bar)
         header.setContentsMargins(0, 0, 0, 0)
 
-        lbl_icon = QLabel("✍️", self.header_bar)
+        lbl_icon = QLabel("✎", self.header_bar)
         lbl_icon.setStyleSheet("font-size: 14px; background: transparent;")
         header.addWidget(lbl_icon)
 
-        # Toggle Button: "💡 Reveal Full Solution"
-        self.btn_toggle = QPushButton("💡 Reveal Full Solution", self.header_bar)
+        # Toggle Button: "✦ Reveal Full Solution"
+        self.btn_toggle = QPushButton("✦ Reveal Full Solution", self.header_bar)
         self.btn_toggle.setObjectName("BtnToggle")
         self.btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_toggle.clicked.connect(self._toggle_full_solution)
@@ -137,12 +137,12 @@ class AnswerBubbleWidget(QWidget):
             text = f"Question: {q_clean}\n\n{self.hints}" if q_clean else self.hints
             self.btn_toggle.hide()
         elif self.showing_full:
-            text = f"Question: {q_clean}\n\nFull Solution:\n{self.full_solution}" if q_clean else self.full_solution
-            self.btn_toggle.setText("🙈 Hide Full Solution")
+            text = f"Question: {q_clean}\n\n{self.full_solution}" if q_clean else self.full_solution
+            self.btn_toggle.setText("✦ Hide Full Solution")
             self.btn_toggle.show()
         else:
-            text = f"Question: {q_clean}\n\n💡 Hints & Key Steps:\n{self.hints}" if q_clean else self.hints
-            self.btn_toggle.setText("💡 Reveal Full Solution")
+            text = f"Question: {q_clean}\n\n{self.hints}" if q_clean else self.hints
+            self.btn_toggle.setText("✦ Reveal Full Solution")
             self.btn_toggle.show()
 
         self.stream_label.start_streaming(text)
