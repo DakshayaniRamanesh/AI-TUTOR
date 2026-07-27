@@ -473,7 +473,10 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(name)
             self.sidebar_list.addItem(item)
 
+        # Block signals so _on_sidebar_changed is not fired before main_stack is built
+        self.sidebar_list.blockSignals(True)
         self.sidebar_list.setCurrentRow(0)
+        self.sidebar_list.blockSignals(False)
         self.sidebar_list.currentRowChanged.connect(self._on_sidebar_changed)
         layout.addWidget(self.sidebar_list)
 
@@ -566,10 +569,7 @@ class MainWindow(QMainWindow):
         pill_layout.setContentsMargins(4, 2, 4, 2)
         pill_layout.setSpacing(2)
 
-        btn_pdf = QPushButton(qta.icon('fa5s.file-pdf', color='#ff3b30'), "PDF Mode", pill)
-        btn_pdf.setStyleSheet("color: #ff3b30; font-weight: bold;")
-        btn_pdf.clicked.connect(self._open_pdf_dialog)
-
+        # ── Insert / Create actions only (drawing tools live in the bottom HUD) ──
         btn_save = QPushButton(qta.icon('fa5s.save', color='#007aff'), "Save", pill)
         btn_save.setStyleSheet("color: #007aff; font-weight: bold;")
         btn_save.clicked.connect(self._on_toolbar_save)
@@ -589,24 +589,19 @@ class MainWindow(QMainWindow):
         btn_group = QPushButton(qta.icon('fa5s.layer-group', color='#7b1fa2'), "Group", pill)
         btn_group.clicked.connect(self._add_group)
 
-        # Drawing Tools
-        btn_cursor = QPushButton(qta.icon('fa5s.mouse-pointer', color='#1c1c1e'), "Select", pill)
-        btn_cursor.clicked.connect(lambda: self._set_tool("select"))
-
-        btn_pen = QPushButton(qta.icon('fa5s.pen-nib', color='#007aff'), "Pen", pill)
-        btn_pen.clicked.connect(lambda: self._set_tool("pen"))
-
-        btn_eraser = QPushButton(qta.icon('fa5s.eraser', color='#ff3b30'), "Eraser", pill)
-        btn_eraser.clicked.connect(lambda: self._set_tool("eraser"))
-
         self.btn_grid_mode = QPushButton("📄 Ruled Paper", pill)
         self.btn_grid_mode.setStyleSheet("color: #007aff; font-weight: bold;")
         self.btn_grid_mode.clicked.connect(self._toggle_grid_mode)
 
         self.btn_mode_toggle = QPushButton("📖 Study Mode", pill)
         self.btn_mode_toggle.setStyleSheet("color: #34c759; font-weight: bold;")
-        self.btn_mode_toggle.setToolTip("Switch AI Mode:\n🏫 Classroom Mode: Straight, direct answer only (No waiting/elaboration)\n📖 Study Mode: Elaborate step-by-step solution")
+        self.btn_mode_toggle.setToolTip("Switch AI Mode:\n🏫 Classroom Mode: Straight, direct answer only\n📖 Study Mode: Elaborate step-by-step solution")
         self.btn_mode_toggle.clicked.connect(self._toggle_tutor_mode)
+
+        sep = QFrame(pill)
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setStyleSheet("color: #d1d1d6;")
 
         self.latex_combo = QComboBox(pill)
         self.latex_combo.addItems(["Homework", "Assignment", "Research Paper", "Lecture Slides"])
@@ -621,40 +616,20 @@ class MainWindow(QMainWindow):
             }
             QComboBox::drop-down { border: none; }
         """)
-        
-        btn_latex = QPushButton(qta.icon('fa5s.file-code', color='#9c27b0'), "Convert to LaTeX", pill)
+
+        btn_latex = QPushButton(qta.icon('fa5s.file-code', color='#9c27b0'), "→ LaTeX", pill)
         btn_latex.setStyleSheet("color: #9c27b0; font-weight: bold;")
         btn_latex.clicked.connect(self._convert_to_latex)
 
-        pill_layout.addWidget(btn_pdf)
         pill_layout.addWidget(btn_save)
         pill_layout.addWidget(btn_paste)
         pill_layout.addWidget(btn_sticky)
         pill_layout.addWidget(btn_note)
         pill_layout.addWidget(btn_table)
         pill_layout.addWidget(btn_group)
-        
-        # Add drawing tools separator
-        sep0 = QFrame(pill)
-        sep0.setFrameShape(QFrame.Shape.VLine)
-        sep0.setFrameShadow(QFrame.Shadow.Sunken)
-        sep0.setStyleSheet("color: #d1d1d6;")
-        pill_layout.addWidget(sep0)
-        
-        pill_layout.addWidget(btn_cursor)
-        pill_layout.addWidget(btn_pen)
-        pill_layout.addWidget(btn_eraser)
-        
         pill_layout.addWidget(self.btn_grid_mode)
         pill_layout.addWidget(self.btn_mode_toggle)
-
-        # Add a separator
-        sep = QFrame(pill)
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        sep.setStyleSheet("color: #d1d1d6;")
         pill_layout.addWidget(sep)
-        
         pill_layout.addWidget(self.latex_combo)
         pill_layout.addWidget(btn_latex)
 
@@ -934,21 +909,22 @@ class MainWindow(QMainWindow):
     def _on_title_changed(self):
         self.current_board.title = self.title_edit.text()
 
+    def _on_sidebar_changed(self, row: int):
         if row == 0:
             self.folder_tree.setVisible(False)
             self.main_stack.setCurrentIndex(0)
-        elif row == 1: # "🗂 Notebooks"
+        elif row == 1:  # "🗂 Notebooks"
             self._refresh_folder_tree()
             self.folder_tree.setVisible(True)
             self.notebooks_panel.refresh()
             self.main_stack.setCurrentIndex(1)
-        elif row == 2: # "⎇ Git Notes VCS"
+        elif row == 2:  # "⎇ Git Notes VCS"
             self.git_notes_panel.refresh_all()
             self.main_stack.setCurrentIndex(2)
-        elif row == 3: # "❖ Knowledge Graph"
+        elif row == 3:  # "❖ Knowledge Graph"
             self.obsidian_graph_panel.load_graph()
             self.main_stack.setCurrentIndex(4)
-        elif row == 4: # "☌ Shared"
+        elif row == 4:  # "☌ Shared"
             self.shared_panel.refresh_all()
             self.main_stack.setCurrentIndex(3)
         else:
