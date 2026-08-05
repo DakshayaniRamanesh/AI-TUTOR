@@ -11,7 +11,7 @@ Benefits:
   - Cuts LaTeX compilation time by ~40% on non-math-heavy content
 
 Usage:
-    from backend.pipeline.scene_templates import SceneTemplateLibrary
+    from backend.video_generation.scene_templates import SceneTemplateLibrary
     lib = SceneTemplateLibrary()
     code = lib.get_template("concept_explainer", topic="Convolution", formula=r"(f*g)(t)")
 """

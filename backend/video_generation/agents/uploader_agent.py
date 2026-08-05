@@ -1,6 +1,6 @@
 import os
 import boto3
-from backend.pipeline.models import VideoJob, JobStatus
+from backend.video_generation.models import VideoJob, JobStatus
 
 class UploaderAgent:
     def __init__(self):

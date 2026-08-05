@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QPointF
 from .base_item import BaseGraphicsItemMixin
 from ..widgets.streaming_text import get_handwritten_font
 from ..widgets.floating_toolbar import FloatingSelectionToolbar
-from ...backend.handwriting_ocr import recognize_handwriting
+from ...backend.ocr.handwriting_ocr import recognize_handwriting
 
 class HeaderDragBar(QWidget):
     """
@@ -50,6 +50,7 @@ class HandwritingNoteWidget(QWidget):
 
     def __init__(self, text: str = "Type or write note here...", proxy_getter=None, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.is_minimized = False
         self.full_height = 220
         self.resize(340, self.full_height)

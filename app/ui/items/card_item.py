@@ -10,6 +10,7 @@ from .base_item import BaseGraphicsItemMixin
 class CardWidget(QWidget):
     def __init__(self, title: str = "Card Title", subtitle: str = "Card Subtitle / Description", image_url: str = "", source_url: str = "", parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.resize(280, 160)
         self.setStyleSheet("""
             QWidget {

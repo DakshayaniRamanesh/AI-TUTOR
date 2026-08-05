@@ -217,7 +217,7 @@ class CanvasScene(QGraphicsScene):
         elif self._current_path_item:
             if self.active_tool == "pen":
                 self._recent_ink_strokes.append(self._current_path_item)
-                self._auto_convert_timer.start(1200)
+                # self._auto_convert_timer.start(1200) # Removed automatic OCR trigger
             self._current_path_item = None
             self._current_painter_path = None
             self._stroke_start_pos = None
@@ -229,7 +229,7 @@ class CanvasScene(QGraphicsScene):
         if not self._recent_ink_strokes:
             return
 
-        from ..backend.handwriting_ocr import recognize_handwriting
+        from ..backend.ocr.handwriting_ocr import recognize_handwriting
 
         valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
         if not valid_strokes:

@@ -18,8 +18,8 @@ import base64
 import requests
 from typing import List, Optional, Tuple
 
-from backend.pipeline.models import VideoJob, AnnotationEvent, JobStatus
-from backend.rag.qdrant_store import QdrantRAGStore
+from backend.video_generation.models import VideoJob, AnnotationEvent, JobStatus
+from backend.workspace.qdrant_store import QdrantRAGStore
 
 
 class ResearchAgent:
@@ -63,8 +63,8 @@ class AnnotationHandler:
         self.research_agent = ResearchAgent()
 
     def process_annotations(self, job: VideoJob, annotations: List[AnnotationEvent]) -> VideoJob:
-        from backend.pipeline.agents.codegen_agent import CodeGenAgent
-        from backend.pipeline.agents.renderer_agent import RendererAgent
+        from backend.video_generation.agents.codegen_agent import CodeGenAgent
+        from backend.video_generation.agents.renderer_agent import RendererAgent
         from backend.ci.pipeline import CIPipelineHarness
 
         if not annotations:

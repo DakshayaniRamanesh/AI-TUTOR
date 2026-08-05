@@ -39,13 +39,13 @@ from .views.settings_dialog import SettingsDialog
 from .views.progress_dialog import ProgressDialog
 
 
-from ..backend.stem_solver import solve_stem_question
-from ..backend.pdf_rag_manager import PdfRAGManager
-from ..backend.video_gen_client import request_video_generation
+from ..backend.math_engine.stem_solver import solve_stem_question
+from ..backend.workspace.pdf_rag_manager import PdfRAGManager
+from ..backend.video_generation.video_gen_client import request_video_generation
 from ..storage.board_model import BoardModel
 from ..storage.notebook_storage import NotebookStorage
 from ..storage.downloads_manager import DownloadsManager
-from ..backend.latex_client import request_latex_generation, LatexPollWorker
+from ..backend.math_engine.latex_client import request_latex_generation, LatexPollWorker
 
 
 class MacTitleBar(QWidget):
@@ -316,7 +316,7 @@ class MainWindow(QMainWindow):
         cc_layout.addWidget(self.main_stack)
         self.splitter.addWidget(self.canvas_container)
 
-        self.splitter.setSizes([260, 1020])
+        self.splitter.setSizes([56, 1224])
         card_layout.addWidget(self.splitter)
         self.outer_layout.addWidget(self.central_card)
 
@@ -329,7 +329,7 @@ class MainWindow(QMainWindow):
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             }
             QSplitter::handle {
-                background-color: #d1d1d6;
+                background-color: #1e293b;
             }
         """)
 
@@ -421,223 +421,240 @@ class MainWindow(QMainWindow):
 
     def _create_sidebar(self) -> QWidget:
         sb = QWidget(self)
+        sb.setFixedWidth(56)
         sb.setStyleSheet("""
             QWidget {
-                background-color: #f8f8fa;
-                border-right: 1px solid #d1d1d6;
+                background-color: #0f172a;
             }
-            QListWidget {
-                border: none;
+            QPushButton {
                 background: transparent;
-                font-size: 13px;
+                border: none;
+                border-radius: 10px;
+                padding: 8px;
             }
-            QListWidget::item {
-                padding: 10px 14px;
-                border-radius: 8px;
-                margin: 2px 6px;
-                color: #1c1c1e;
-            }
-            QListWidget::item:selected {
-                background-color: #007aff;
-                color: white;
-                font-weight: 600;
-            }
-            QLabel#SidebarTitle {
-                font-size: 11px;
-                font-weight: bold;
-                color: #8e8e93;
-                padding-left: 12px;
-                padding-top: 10px;
+            QPushButton:hover {
+                background-color: rgba(255,255,255,0.08);
             }
         """)
 
         layout = QVBoxLayout(sb)
-        layout.setContentsMargins(4, 8, 4, 8)
-        layout.setSpacing(0)
+        layout.setContentsMargins(6, 14, 6, 14)
+        layout.setSpacing(4)
 
-        lbl_sec = QLabel("NAVIGATION", sb)
-        lbl_sec.setObjectName("SidebarTitle")
-        layout.addWidget(lbl_sec)
-
-        self.sidebar_list = QListWidget(sb)
-        items = [
-            "🗎 All Boards",
-            "🗂 Notebooks",
-            "⎇ Git Notes VCS",
-            "❖ Knowledge Graph",
-            "☌ Shared",
-            "★ Favourites",
-            f"⤓ Downloads ({len(self.downloads_mgr.get_all())})"
+        # Nav icon buttons — each stores its target main_stack index
+        nav_items = [
+            (qta.icon('fa5s.th-large',    color='#94a3b8'), "Boards",         0),
+            (qta.icon('fa5s.book',         color='#94a3b8'), "Notebooks",      1),
+            (qta.icon('fa5s.code-branch',  color='#94a3b8'), "Git VCS",        3),
+            (qta.icon('fa5s.project-diagram', color='#94a3b8'), "Knowledge Graph", 4),
+            (qta.icon('fa5s.star',         color='#94a3b8'), "Favourites",     2),
+            (qta.icon('fa5s.download',     color='#94a3b8'), f"Downloads",     2),
         ]
-        for name in items:
-            item = QListWidgetItem(name)
-            self.sidebar_list.addItem(item)
 
-        # Block signals so _on_sidebar_changed is not fired before main_stack is built
-        self.sidebar_list.blockSignals(True)
-        self.sidebar_list.setCurrentRow(0)
-        self.sidebar_list.blockSignals(False)
-        self.sidebar_list.currentRowChanged.connect(self._on_sidebar_changed)
-        layout.addWidget(self.sidebar_list)
+        self.sidebar_list = QListWidget()   # keep for _on_sidebar_changed compatibility
+        self.sidebar_list.hide()
+        self._sidebar_nav_buttons = []
 
-        # Folder Tree Widget (visible only when Notebooks is selected)
-        self.folder_tree = FolderTreeWidget(sb)
+        for icon, tooltip, stack_idx in nav_items:
+            btn = QPushButton(icon, "", sb)
+            btn.setFixedSize(40, 40)
+            btn.setIconSize(QSize(18, 18))
+            btn.setToolTip(tooltip)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            # store index for click handler
+            btn._stack_idx = stack_idx
+            btn._nav_tooltip = tooltip
+            btn.clicked.connect(lambda checked, b=btn: self._on_sidebar_nav_clicked(b))
+            layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+            self._sidebar_nav_buttons.append(btn)
+
+        # Folder Tree (hidden, kept for compatibility)
+        self.folder_tree = FolderTreeWidget(self)
         self.folder_tree.folder_selected.connect(self._on_sidebar_folder_selected)
         self.folder_tree.tree_changed.connect(self._on_folder_tree_changed)
         self.folder_tree.setVisible(False)
-        layout.addWidget(self.folder_tree)
 
         layout.addStretch()
 
-        # Reference Panel Button in Sidebar
-        btn_ref = QPushButton("📚 Reference Database", sb)
-        btn_ref.setStyleSheet("""
-            QPushButton {
-                background-color: #ffffff;
-                border: 1px solid #d1d1d6;
-                border-radius: 8px;
-                padding: 8px;
-                font-weight: 600;
-                color: #007aff;
-            }
-            QPushButton:hover {
-                background-color: #e5e5ea;
-            }
-        """)
+        # Reference Database icon at the bottom
+        btn_ref = QPushButton(qta.icon('fa5s.database', color='#94a3b8'), "", sb)
+        btn_ref.setFixedSize(40, 40)
+        btn_ref.setIconSize(QSize(18, 18))
+        btn_ref.setToolTip("Reference Database")
+        btn_ref.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_ref.clicked.connect(self._toggle_reference_panel)
-        layout.addWidget(btn_ref)
+        layout.addWidget(btn_ref, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        # Highlight the first button as active
+        self._set_sidebar_active_button(self._sidebar_nav_buttons[0])
 
         return sb
 
+    def _make_toolbar_btn(self, icon, label: str, parent, color='#475569', tooltip: str = ""):
+        """Creates a clean, monochrome icon-only toolbar button."""
+        btn = QPushButton(qta.icon(icon, color=color), label, parent)
+        btn.setIconSize(QSize(15, 15))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        if tooltip:
+            btn.setToolTip(tooltip)
+        return btn
+
+    def _make_toolbar_separator(self, parent) -> QFrame:
+        sep = QFrame(parent)
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFixedHeight(18)
+        sep.setStyleSheet("color: #e2e8f0; margin: 0 2px;")
+        return sep
+
     def _create_top_toolbar(self) -> QWidget:
         tb = QWidget(self)
-        tb.setFixedHeight(48)
+        tb.setFixedHeight(46)
+        tb.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         tb.setStyleSheet("""
             QWidget {
                 background-color: #ffffff;
-                border-bottom: 1px solid #d1d1d6;
+                border-bottom: 1px solid #e2e8f0;
             }
             QPushButton {
                 background: transparent;
                 border: none;
-                border-radius: 6px;
-                padding: 6px;
+                border-radius: 7px;
+                padding: 5px 9px;
+                font-size: 12px;
+                font-weight: 500;
+                color: #334155;
             }
             QPushButton:hover {
-                background-color: #f2f2f7;
+                background-color: #f1f5f9;
+                color: #0f172a;
+            }
+            QPushButton:pressed {
+                background-color: #e2e8f0;
             }
             QLineEdit {
-                font-size: 14px;
-                font-weight: bold;
+                font-size: 13px;
+                font-weight: 600;
                 border: none;
-                color: #1c1c1e;
+                background: transparent;
+                color: #0f172a;
             }
+            QComboBox {
+                border: none;
+                background: transparent;
+                font-size: 12px;
+                font-weight: 500;
+                color: #334155;
+                padding-left: 4px;
+            }
+            QComboBox::drop-down { border: none; width: 14px; }
         """)
 
         layout = QHBoxLayout(tb)
-        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(4)
 
-        btn_sb_toggle = QPushButton(qta.icon('fa5s.bars', color='#1c1c1e'), "", tb)
-        btn_sb_toggle.clicked.connect(self._toggle_sidebar)
-        layout.addWidget(btn_sb_toggle)
-
-        btn_back = QPushButton(qta.icon('fa5s.chevron-left', color='#007aff'), "", tb)
+        # Back + Title
+        btn_back = self._make_toolbar_btn('fa5s.chevron-left', "", tb, '#3b82f6', "Back to Boards")
         btn_back.clicked.connect(lambda: self.main_stack.setCurrentIndex(0))
         layout.addWidget(btn_back)
 
         self.title_edit = QLineEdit(self.current_board.title, tb)
-        self.title_edit.setFixedWidth(200)
+        self.title_edit.setFixedWidth(180)
         self.title_edit.editingFinished.connect(self._on_title_changed)
         layout.addWidget(self.title_edit)
 
         layout.addStretch()
 
-        pill = QWidget(tb)
-        pill.setStyleSheet("""
-            QWidget {
-                background-color: #f2f2f7;
-                border-radius: 10px;
-            }
-            QPushButton {
-                padding: 6px 10px;
-                font-weight: 600;
-                font-size: 12px;
-                color: #1c1c1e;
-            }
-        """)
-        pill_layout = QHBoxLayout(pill)
-        pill_layout.setContentsMargins(4, 2, 4, 2)
-        pill_layout.setSpacing(2)
+        # ── GROUP 1: File actions ──
+        group1 = QWidget(tb)
+        group1.setStyleSheet("background-color: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;")
+        g1_layout = QHBoxLayout(group1)
+        g1_layout.setContentsMargins(4, 2, 4, 2)
+        g1_layout.setSpacing(0)
 
-        # ── Insert / Create actions only (drawing tools live in the bottom HUD) ──
-        btn_save = QPushButton(qta.icon('fa5s.save', color='#007aff'), "Save", pill)
-        btn_save.setStyleSheet("color: #007aff; font-weight: bold;")
+        btn_save = self._make_toolbar_btn('fa5s.save', " Save", group1, '#475569', "Save Board (Ctrl+S)")
         btn_save.clicked.connect(self._on_toolbar_save)
-
-        btn_paste = QPushButton(qta.icon('fa5s.paste', color='#007aff'), "Paste", pill)
+        btn_paste = self._make_toolbar_btn('fa5s.paste', " Paste", group1, '#475569', "Paste from Clipboard")
         btn_paste.clicked.connect(self._on_toolbar_paste)
 
-        btn_sticky = QPushButton(qta.icon('fa5s.sticky-note', color='#f57f17'), "Sticky", pill)
+        g1_layout.addWidget(btn_save)
+        g1_layout.addWidget(btn_paste)
+        layout.addWidget(group1)
+        layout.addSpacing(6)
+
+        # ── GROUP 2: Insert actions ──
+        group2 = QWidget(tb)
+        group2.setStyleSheet("background-color: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;")
+        g2_layout = QHBoxLayout(group2)
+        g2_layout.setContentsMargins(4, 2, 4, 2)
+        g2_layout.setSpacing(0)
+
+        btn_sticky = self._make_toolbar_btn('fa5s.sticky-note', " Sticky", group2, '#475569', "Add Sticky Note")
         btn_sticky.clicked.connect(self._add_sticky_note)
-
-        btn_note = QPushButton(qta.icon('fa5s.pen', color='#007aff'), "Note", pill)
+        btn_note = self._make_toolbar_btn('fa5s.pen', " Note", group2, '#475569', "Add Handwriting Note")
         btn_note.clicked.connect(self._add_handwriting_note)
-
-        btn_table = QPushButton(qta.icon('fa5s.table', color='#388e3c'), "Table", pill)
+        btn_table = self._make_toolbar_btn('fa5s.table', " Table", group2, '#475569', "Add Table")
         btn_table.clicked.connect(self._add_table)
-
-        btn_group = QPushButton(qta.icon('fa5s.layer-group', color='#7b1fa2'), "Group", pill)
+        btn_group = self._make_toolbar_btn('fa5s.layer-group', " Group", group2, '#475569', "Group Items")
         btn_group.clicked.connect(self._add_group)
 
-        self.btn_grid_mode = QPushButton("📄 Ruled Paper", pill)
-        self.btn_grid_mode.setStyleSheet("color: #007aff; font-weight: bold;")
+        g2_layout.addWidget(btn_sticky)
+        g2_layout.addWidget(btn_note)
+        g2_layout.addWidget(btn_table)
+        g2_layout.addWidget(btn_group)
+        layout.addWidget(group2)
+        layout.addSpacing(6)
+
+        # ── GROUP 3: Toggles ──
+        group3 = QWidget(tb)
+        group3.setStyleSheet("background-color: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;")
+        g3_layout = QHBoxLayout(group3)
+        g3_layout.setContentsMargins(4, 2, 4, 2)
+        g3_layout.setSpacing(0)
+
+        self.btn_grid_mode = QPushButton(qta.icon('fa5s.grip-lines', color='#475569'), " Ruled", group3)
+        self.btn_grid_mode.setIconSize(QSize(13, 13))
+        self.btn_grid_mode.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_grid_mode.setToolTip("Toggle Ruled Paper")
         self.btn_grid_mode.clicked.connect(self._toggle_grid_mode)
 
-        self.btn_mode_toggle = QPushButton("📖 Study Mode", pill)
-        self.btn_mode_toggle.setStyleSheet("color: #34c759; font-weight: bold;")
-        self.btn_mode_toggle.setToolTip("Switch AI Mode:\n🏫 Classroom Mode: Straight, direct answer only\n📖 Study Mode: Elaborate step-by-step solution")
+        self.btn_mode_toggle = QPushButton(qta.icon('fa5s.graduation-cap', color='#10b981'), " Study", group3)
+        self.btn_mode_toggle.setIconSize(QSize(13, 13))
+        self.btn_mode_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_mode_toggle.setStyleSheet("color: #10b981; font-weight: 600;")
+        self.btn_mode_toggle.setToolTip("Switch AI Mode: Study (step-by-step) / Classroom (direct answer)")
         self.btn_mode_toggle.clicked.connect(self._toggle_tutor_mode)
 
-        sep = QFrame(pill)
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        sep.setStyleSheet("color: #d1d1d6;")
+        g3_layout.addWidget(self.btn_grid_mode)
+        g3_layout.addWidget(self.btn_mode_toggle)
+        layout.addWidget(group3)
+        layout.addSpacing(6)
 
-        self.latex_combo = QComboBox(pill)
+        # ── GROUP 4: LaTeX export ──
+        group4 = QWidget(tb)
+        group4.setStyleSheet("background-color: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;")
+        g4_layout = QHBoxLayout(group4)
+        g4_layout.setContentsMargins(6, 2, 6, 2)
+        g4_layout.setSpacing(4)
+
+        self.latex_combo = QComboBox(group4)
         self.latex_combo.addItems(["Homework", "Assignment", "Research Paper", "Lecture Slides"])
-        self.latex_combo.setStyleSheet("""
-            QComboBox {
-                border: none;
-                background: transparent;
-                font-size: 12px;
-                font-weight: 600;
-                color: #1c1c1e;
-                padding-left: 10px;
-            }
-            QComboBox::drop-down { border: none; }
-        """)
+        self.latex_combo.setFixedWidth(110)
 
-        btn_latex = QPushButton(qta.icon('fa5s.file-code', color='#9c27b0'), "→ LaTeX", pill)
-        btn_latex.setStyleSheet("color: #9c27b0; font-weight: bold;")
+        btn_latex = QPushButton(qta.icon('fa5s.file-export', color='#7c3aed'), " LaTeX", group4)
+        btn_latex.setIconSize(QSize(13, 13))
+        btn_latex.setStyleSheet("color: #7c3aed; font-weight: 600;")
+        btn_latex.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_latex.setToolTip("Convert handwritten notes to LaTeX PDF")
         btn_latex.clicked.connect(self._convert_to_latex)
 
-        pill_layout.addWidget(btn_save)
-        pill_layout.addWidget(btn_paste)
-        pill_layout.addWidget(btn_sticky)
-        pill_layout.addWidget(btn_note)
-        pill_layout.addWidget(btn_table)
-        pill_layout.addWidget(btn_group)
-        pill_layout.addWidget(self.btn_grid_mode)
-        pill_layout.addWidget(self.btn_mode_toggle)
-        pill_layout.addWidget(sep)
-        pill_layout.addWidget(self.latex_combo)
-        pill_layout.addWidget(btn_latex)
+        g4_layout.addWidget(self.latex_combo)
+        g4_layout.addWidget(btn_latex)
+        layout.addWidget(group4)
+        layout.addSpacing(8)
 
-        layout.addWidget(pill)
-        layout.addStretch()
-        
-        btn_settings = QPushButton(qta.icon('fa5s.cog', color='#8e8e93'), "", tb)
-        btn_settings.setToolTip("Settings & Diagnostics")
+        # Settings
+        btn_settings = self._make_toolbar_btn('fa5s.cog', "", tb, '#94a3b8', "Settings")
         btn_settings.clicked.connect(self._open_settings)
         layout.addWidget(btn_settings)
 
@@ -653,106 +670,130 @@ class MainWindow(QMainWindow):
     def _update_mode_button_text(self, mode: str):
         if hasattr(self, 'btn_mode_toggle'):
             if mode == "classroom":
-                self.btn_mode_toggle.setText("🏫 Classroom Mode")
-                self.btn_mode_toggle.setStyleSheet("color: #ff9500; font-weight: bold;")
+                self.btn_mode_toggle.setText(" Classroom")
+                self.btn_mode_toggle.setStyleSheet("color: #f59e0b; font-weight: 600;")
+                self.btn_mode_toggle.setIcon(qta.icon('fa5s.chalkboard-teacher', color='#f59e0b'))
             else:
-                self.btn_mode_toggle.setText("📖 Study Mode")
-                self.btn_mode_toggle.setStyleSheet("color: #34c759; font-weight: bold;")
+                self.btn_mode_toggle.setText(" Study")
+                self.btn_mode_toggle.setStyleSheet("color: #10b981; font-weight: 600;")
+                self.btn_mode_toggle.setIcon(qta.icon('fa5s.graduation-cap', color='#10b981'))
 
     def _create_hud_overlay(self) -> QWidget:
         hud = QWidget(self)
-        hud.setFixedHeight(60)
+        hud.setFixedHeight(64)
         hud.setStyleSheet("background: transparent;")
-        layout = QHBoxLayout(hud)
-        layout.setContentsMargins(16, 0, 16, 10)
 
-        zoom_hud = QWidget(hud)
-        zoom_hud.setStyleSheet("""
+        # Single floating pill that holds everything
+        outer = QHBoxLayout(hud)
+        outer.setContentsMargins(24, 0, 24, 10)
+
+        pill = QWidget(hud)
+        pill.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        pill.setStyleSheet("""
             QWidget {
-                background-color: rgba(255, 255, 255, 0.9);
-                border: 1px solid #d1d1d6;
-                border-radius: 16px;
+                background-color: rgba(255,255,255,0.96);
+                border: 1px solid #e2e8f0;
+                border-radius: 20px;
             }
             QPushButton {
                 border: none;
                 background: transparent;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 4px 8px;
+                border-radius: 8px;
+                padding: 5px 8px;
+                font-size: 12px;
+                font-weight: 500;
+                color: #334155;
             }
+            QPushButton:hover { background-color: #f1f5f9; }
             QLabel {
                 font-size: 12px;
                 font-weight: 600;
-                color: #1c1c1e;
+                color: #334155;
+                min-width: 36px;
             }
         """)
-        zh_layout = QHBoxLayout(zoom_hud)
-        zh_layout.setContentsMargins(6, 4, 6, 4)
-        zh_layout.setSpacing(4)
 
-        btn_zoom_out = QPushButton("–", zoom_hud)
+        pill_shadow = QGraphicsDropShadowEffect(pill)
+        pill_shadow.setBlurRadius(24)
+        pill_shadow.setColor(QColor(15, 23, 42, 40))
+        pill_shadow.setOffset(0, 4)
+        pill.setGraphicsEffect(pill_shadow)
+
+        pl = QHBoxLayout(pill)
+        pl.setContentsMargins(10, 4, 10, 4)
+        pl.setSpacing(2)
+
+        # Zoom controls
+        btn_zoom_out = QPushButton("–", pill)
+        btn_zoom_out.setFixedWidth(26)
         btn_zoom_out.clicked.connect(lambda: self.view.zoom_by(0.8))
-
-        self.lbl_zoom = QLabel("100%", zoom_hud)
-
-        btn_zoom_in = QPushButton("+", zoom_hud)
+        self.lbl_zoom = QLabel("100%", pill)
+        self.lbl_zoom.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_zoom_in = QPushButton("+", pill)
+        btn_zoom_in.setFixedWidth(26)
         btn_zoom_in.clicked.connect(lambda: self.view.zoom_by(1.2))
 
-        zh_layout.addWidget(btn_zoom_out)
-        zh_layout.addWidget(self.lbl_zoom)
-        zh_layout.addWidget(btn_zoom_in)
+        pl.addWidget(btn_zoom_out)
+        pl.addWidget(self.lbl_zoom)
+        pl.addWidget(btn_zoom_in)
 
-        layout.addWidget(zoom_hud)
+        # Separator
+        sep1 = QFrame(pill)
+        sep1.setFrameShape(QFrame.Shape.VLine)
+        sep1.setFixedHeight(18)
+        sep1.setStyleSheet("color: #e2e8f0;")
+        pl.addSpacing(4)
+        pl.addWidget(sep1)
+        pl.addSpacing(4)
 
-        self.ask_bar = AskBar(hud)
+        # AskBar
+        self.ask_bar = AskBar(pill)
         self.ask_bar.question_submitted.connect(self._on_stem_question_asked)
         self.ask_bar.mode_changed.connect(self._update_mode_button_text)
         self.ask_bar.question_with_context_submitted.connect(self._on_question_with_context_asked)
         self.ask_bar.pdf_requested.connect(self._open_pdf_dialog)
-        layout.addWidget(self.ask_bar)
+        pl.addWidget(self.ask_bar, stretch=1)
 
-        # Right: Floating Drawing Tools (Select, Pen, Highlighter with Colors, Eraser)
-        tools_hud = QWidget(hud)
-        tools_hud.setStyleSheet("""
-            QWidget {
-                background-color: rgba(255, 255, 255, 0.9);
-                border: 1px solid #d1d1d6;
-                border-radius: 16px;
-            }
-            QPushButton {
-                border: none;
-                border-radius: 12px;
-                padding: 6px;
-            }
-            QPushButton:hover {
-                background-color: #e5e5ea;
-            }
-        """)
-        th_layout = QHBoxLayout(tools_hud)
-        th_layout.setContentsMargins(6, 4, 6, 4)
-        th_layout.setSpacing(4)
+        # Separator
+        sep2 = QFrame(pill)
+        sep2.setFrameShape(QFrame.Shape.VLine)
+        sep2.setFixedHeight(18)
+        sep2.setStyleSheet("color: #e2e8f0;")
+        pl.addSpacing(4)
+        pl.addWidget(sep2)
+        pl.addSpacing(4)
 
-        btn_cursor = QPushButton(qta.icon('fa5s.mouse-pointer', color='#007aff'), "", tools_hud)
+        # Drawing tools
+        btn_cursor = QPushButton(qta.icon('fa5s.mouse-pointer', color='#475569'), "", pill)
+        btn_cursor.setIconSize(QSize(14, 14))
+        btn_cursor.setFixedSize(32, 32)
+        btn_cursor.setToolTip("Select")
         btn_cursor.clicked.connect(lambda: self._set_tool("select"))
 
-        btn_pen = QPushButton(qta.icon('fa5s.pen-nib', color='#1c1c1e'), "", tools_hud)
+        btn_pen = QPushButton(qta.icon('fa5s.pen-nib', color='#475569'), "", pill)
+        btn_pen.setIconSize(QSize(14, 14))
+        btn_pen.setFixedSize(32, 32)
+        btn_pen.setToolTip("Pen")
         btn_pen.clicked.connect(lambda: self._set_tool("pen"))
 
-        # Highlighter Button with Color Menu
-        self.btn_highlighter = QPushButton(qta.icon('fa5s.highlighter', color='#ff9500'), "", tools_hud)
-        self.btn_highlighter.setToolTip("Highlighter (Click for Colors)")
+        self.btn_highlighter = QPushButton(qta.icon('fa5s.highlighter', color='#f59e0b'), "", pill)
+        self.btn_highlighter.setIconSize(QSize(14, 14))
+        self.btn_highlighter.setFixedSize(32, 32)
+        self.btn_highlighter.setToolTip("Highlighter")
         self.btn_highlighter.clicked.connect(self._on_highlighter_clicked)
 
-        btn_eraser = QPushButton(qta.icon('fa5s.eraser', color='#ff3b30'), "", tools_hud)
+        btn_eraser = QPushButton(qta.icon('fa5s.eraser', color='#475569'), "", pill)
+        btn_eraser.setIconSize(QSize(14, 14))
+        btn_eraser.setFixedSize(32, 32)
+        btn_eraser.setToolTip("Eraser")
         btn_eraser.clicked.connect(lambda: self._set_tool("eraser"))
 
-        th_layout.addWidget(btn_cursor)
-        th_layout.addWidget(btn_pen)
-        th_layout.addWidget(self.btn_highlighter)
-        th_layout.addWidget(btn_eraser)
+        pl.addWidget(btn_cursor)
+        pl.addWidget(btn_pen)
+        pl.addWidget(self.btn_highlighter)
+        pl.addWidget(btn_eraser)
 
-        layout.addWidget(tools_hud)
-
+        outer.addWidget(pill)
         return hud
 
     def _on_highlighter_clicked(self):
@@ -929,10 +970,46 @@ class MainWindow(QMainWindow):
             self.main_stack.setCurrentIndex(3)
         else:
             self.folder_tree.setVisible(False)
-            item_text = self.sidebar_list.item(row).text()
+            item_text = self.sidebar_list.item(row).text() if self.sidebar_list.count() > row else ""
             import re
-            clean_title = re.sub(r'^[^\w\s]+', '', item_text).split('(')[0].strip()
+            clean_title = re.sub(r'^[^\w\s]+', '', item_text).split('(')[0].strip() if item_text else "Section"
             self.placeholder_panel.set_title(clean_title)
+            self.main_stack.setCurrentIndex(2)
+
+    def _set_sidebar_active_button(self, active_btn):
+        """Highlights the active nav button in the icon rail with a blue glow."""
+        for btn in getattr(self, '_sidebar_nav_buttons', []):
+            btn.setStyleSheet("")
+        active_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(59, 130, 246, 0.15);
+                border-radius: 10px;
+                border: 1px solid rgba(59, 130, 246, 0.3);
+            }
+        """)
+
+    def _on_sidebar_nav_clicked(self, btn):
+        """Handles icon rail sidebar navigation clicks."""
+        self._set_sidebar_active_button(btn)
+        tooltip = getattr(btn, '_nav_tooltip', '')
+        if tooltip == "Boards":
+            self.folder_tree.setVisible(False)
+            self.main_stack.setCurrentIndex(0)
+        elif tooltip == "Notebooks":
+            self._refresh_folder_tree()
+            self.notebooks_panel.refresh()
+            self.main_stack.setCurrentIndex(1)
+        elif tooltip == "Git VCS":
+            self.git_notes_panel.refresh_all()
+            self.main_stack.setCurrentIndex(2)
+        elif tooltip == "Knowledge Graph":
+            self.obsidian_graph_panel.load_graph()
+            self.main_stack.setCurrentIndex(4)
+        elif tooltip == "Favourites":
+            self.placeholder_panel.set_title("Favourites")
+            self.main_stack.setCurrentIndex(2)
+        else:
+            self.placeholder_panel.set_title(tooltip)
             self.main_stack.setCurrentIndex(2)
 
     def _refresh_folder_tree(self):
@@ -1000,8 +1077,8 @@ class MainWindow(QMainWindow):
     def _on_toolbar_paste(self):
         self.scene.active_tool = "select"
         from PyQt6.QtWidgets import QApplication
-        from ..backend.link_utils import is_valid_url, fetch_url_metadata
-        from ..backend.summarizer_client import UrlSummarizerWorker
+        from ..backend.workspace.link_utils import is_valid_url, fetch_url_metadata
+        from ..backend.workspace.summarizer_client import UrlSummarizerWorker
 
         clipboard = QApplication.clipboard()
         text = clipboard.text().strip()
@@ -1130,7 +1207,7 @@ class MainWindow(QMainWindow):
         bubble.setPos(place_pos)
         self.scene.addItem(bubble)
 
-        from ..backend.stem_solver import StemSolverWorker
+        from ..backend.math_engine.stem_solver import StemSolverWorker
         worker = StemSolverWorker(question, mode=active_mode, parent=self)
 
         def _on_finished(q: str, res: dict):

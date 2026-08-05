@@ -2,7 +2,7 @@ import os
 import subprocess
 import tempfile
 import sys
-from backend.pipeline.models import VideoJob, JobStatus
+from backend.video_generation.models import VideoJob, JobStatus
 
 # Detect if running on a GPU-capable environment (Modal A10G)
 # If nvidia-smi is present, we can use h264_nvenc for 3-5x faster encoding.

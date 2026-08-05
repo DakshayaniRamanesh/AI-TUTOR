@@ -20,11 +20,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from backend.pipeline.models import VideoJob, AnnotationEvent, PathData, LatexJob
-from backend.pipeline.graph import VideoGenerationPipeline
-from backend.pipeline.latex_graph import LatexGenerationPipeline
-from backend.rag.qdrant_store import QdrantRAGStore
-from backend.pipeline.annotation_handler import AnnotationHandler
+from backend.video_generation.models import VideoJob, AnnotationEvent, PathData, LatexJob
+from backend.video_generation.graph import VideoGenerationPipeline
+from backend.math_engine.latex_graph import LatexGenerationPipeline
+from backend.workspace.qdrant_store import QdrantRAGStore
+from backend.video_qa.annotation_handler import AnnotationHandler
 
 app = FastAPI(title="Manim AI Local Pipeline Server")
 

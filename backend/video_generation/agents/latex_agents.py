@@ -2,7 +2,7 @@ import os
 import subprocess
 import tempfile
 from typing import Optional
-from backend.pipeline.models import LatexJob, JobStatus
+from backend.video_generation.models import LatexJob, JobStatus
 
 # Try to use groq, which should be installed
 try:
@@ -152,7 +152,7 @@ class TemplateApplyAgent:
         }
         
         filename = template_map.get(job.template_type, "assignment.tex")
-        template_path = os.path.join(os.path.dirname(__file__), "..", "..", "templates", filename)
+        template_path = os.path.join(os.path.dirname(__file__), "..", "templates", filename)
         template_path = os.path.abspath(template_path)
 
         try:

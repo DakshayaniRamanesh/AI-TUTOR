@@ -12,8 +12,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor
 import qtawesome as qta
 
-from ...backend.collaboration_manager import CollaborationManager
-from ...backend.git_notes_manager import GitNotesManager
+from ...backend.version_control.collaboration_manager import CollaborationManager
+from ...backend.version_control.git_notes_manager import GitNotesManager
 
 class ShareNotebookDialog(QDialog):
     def __init__(self, notebook_id: str, notebook_name: str, parent=None):

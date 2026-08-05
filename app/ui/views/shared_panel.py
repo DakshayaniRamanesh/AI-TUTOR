@@ -14,8 +14,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 
-from ...backend.collaboration_manager import CollaborationManager
-from ...backend.git_notes_manager import GitNotesManager
+from ...backend.version_control.collaboration_manager import CollaborationManager
+from ...backend.version_control.git_notes_manager import GitNotesManager
 from .editor_only_window import EditorOnlyWindow
 
 class SharedPanel(QWidget):

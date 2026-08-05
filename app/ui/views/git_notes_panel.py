@@ -18,7 +18,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QColor, QBrush, QPen, QIcon
 import qtawesome as qta
 
-from ...backend.git_notes_manager import GitNotesManager
+from ...backend.version_control.git_notes_manager import GitNotesManager
 
 class GitNotesPanel(QWidget):
     def __init__(self, parent=None):

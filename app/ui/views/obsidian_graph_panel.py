@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF, QPointF
 from PyQt6.QtGui import QColor, QPen, QBrush, QFont, QPainter, QRadialGradient
 
-from ...backend.tag_graph_parser import TagGraphParser
+from ...backend.knowledge_graph.tag_graph_parser import TagGraphParser
 
 class GraphNodeItem(QGraphicsEllipseItem):
     def __init__(self, node_data: dict, radius: float = 12.0, parent=None):

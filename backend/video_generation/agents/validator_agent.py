@@ -1,4 +1,4 @@
-from backend.pipeline.models import VideoJob
+from backend.video_generation.models import VideoJob
 
 class ValidatorAgent:
     def run(self, job: VideoJob) -> VideoJob:

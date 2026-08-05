@@ -55,6 +55,7 @@ class StickyNoteWidget(QWidget):
 
     def __init__(self, text: str = "Sticky Note", color_key: str = "yellow", proxy_getter=None, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.color_key = color_key
         self.is_minimized = False
         self.full_height = 240

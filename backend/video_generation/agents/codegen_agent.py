@@ -1,7 +1,7 @@
 import os
 import json
-from backend.pipeline.models import VideoJob
-from backend.pipeline.scene_templates import SceneTemplateLibrary
+from backend.video_generation.models import VideoJob
+from backend.video_generation.scene_templates import SceneTemplateLibrary
 
 
 class CodeGenAgent:

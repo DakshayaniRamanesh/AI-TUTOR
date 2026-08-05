@@ -9,6 +9,7 @@ from .base_item import BaseGraphicsItemMixin
 class MapPinWidget(QWidget):
     def __init__(self, title: str = "Raymond James Stadium", address: str = "4201 N Dale Mabry Hwy, Tampa, FL", parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.resize(260, 150)
         self.setStyleSheet("""
             QWidget {

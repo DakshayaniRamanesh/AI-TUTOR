@@ -1,6 +1,6 @@
 import os
-from backend.pipeline.models import VideoJob
-from backend.rag.qdrant_store import QdrantRAGStore
+from backend.video_generation.models import VideoJob
+from backend.workspace.qdrant_store import QdrantRAGStore
 
 
 class StoryAgent:

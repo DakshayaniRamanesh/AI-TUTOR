@@ -49,6 +49,7 @@ class AnswerBubbleWidget(QWidget):
 
     def __init__(self, question: str = "", solution: str = "", hints: str = "", is_direct_math: bool = False, proxy_getter=None, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.proxy_getter = proxy_getter
         self.question = question
         self.hints = hints or solution

@@ -56,9 +56,9 @@ secrets = [modal.Secret.from_dotenv()]
 @app.function(image=manim_image, gpu="A10G", timeout=600, secrets=secrets)
 def _process_generation_job(job_dict: Dict[str, Any], pdf_bytes: bytes) -> Dict[str, Any]:
     """Heavy GPU worker: runs the full LangGraph pipeline."""
-    from backend.pipeline.models import VideoJob
-    from backend.pipeline.graph import VideoGenerationPipeline
-    from backend.rag.qdrant_store import QdrantRAGStore
+    from backend.video_generation.models import VideoJob
+    from backend.video_generation.graph import VideoGenerationPipeline
+    from backend.workspace.qdrant_store import QdrantRAGStore
 
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     temp_pdf.write(pdf_bytes)
@@ -113,9 +113,9 @@ def _process_generation_job(job_dict: Dict[str, Any], pdf_bytes: bytes) -> Dict[
 @app.function(image=manim_image, gpu="A10G", timeout=300, secrets=secrets)
 def _process_annotation_job(job_id: str, annotations_raw: list) -> Dict[str, Any]:
     """GPU worker: handles canvas annotation pipeline."""
-    from backend.pipeline.models import VideoJob, AnnotationEvent, PathData
-    from backend.rag.qdrant_store import QdrantRAGStore
-    from backend.pipeline.annotation_handler import AnnotationHandler
+    from backend.video_generation.models import VideoJob, AnnotationEvent, PathData
+    from backend.workspace.qdrant_store import QdrantRAGStore
+    from backend.video_qa.annotation_handler import AnnotationHandler
 
     existing = jobs_db.get(job_id, {})
     job = VideoJob(
@@ -162,8 +162,8 @@ def _process_annotation_job(job_id: str, annotations_raw: list) -> Dict[str, Any
 @app.function(image=manim_image, timeout=600, secrets=secrets)
 def _process_latex_job(job_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Worker for latex generation pipeline."""
-    from backend.pipeline.models import LatexJob
-    from backend.pipeline.latex_graph import LatexGenerationPipeline
+    from backend.video_generation.models import LatexJob
+    from backend.math_engine.latex_graph import LatexGenerationPipeline
 
     job = LatexJob(
         job_id=job_dict["job_id"],
@@ -229,7 +229,7 @@ async def generate(request: Request) -> dict:
 
     # ── Cache check before GPU pipeline ───────────────────────────────────────
     try:
-        from backend.rag.qdrant_store import QdrantRAGStore
+        from backend.workspace.qdrant_store import QdrantRAGStore
         rag = QdrantRAGStore()
         # Decode PDF text for hashing (first 2000 chars only, no full parse needed)
         pdf_text_for_hash = pdf_bytes[:4000].decode("utf-8", errors="ignore") if pdf_bytes else ""

@@ -5,8 +5,8 @@ Freeform Canvas View (Pan, Pinch/Scroll Zoom 0.1x-5.0x, Smart Paste, Keyboard De
 from PyQt6.QtWidgets import QGraphicsView, QApplication
 from PyQt6.QtGui import QPainter, QWheelEvent, QKeyEvent, QMouseEvent
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF
-from ..backend.link_utils import is_valid_url, is_video_url, fetch_url_metadata
-from ..backend.summarizer_client import summarize_url
+from ..backend.workspace.link_utils import is_valid_url, is_video_url, fetch_url_metadata
+from ..backend.workspace.summarizer_client import summarize_url
 from .items.video_float_item import VideoFloatItem
 from .items.answer_bubble import AnswerBubble
 from .items.handwriting_note import HandwritingNote

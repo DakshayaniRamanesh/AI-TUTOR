@@ -20,14 +20,14 @@ try:
 except ImportError:
     LANGGRAPH_AVAILABLE = False
 
-from backend.pipeline.models import VideoJob, JobStatus
-from backend.rag.qdrant_store import QdrantRAGStore
-from backend.pipeline.agents.document_embedder import DocumentEmbedderAgent
-from backend.pipeline.agents.story_agent import StoryAgent
-from backend.pipeline.agents.validator_agent import ValidatorAgent
-from backend.pipeline.agents.codegen_agent import CodeGenAgent
-from backend.pipeline.agents.renderer_agent import RendererAgent
-from backend.pipeline.agents.uploader_agent import UploaderAgent
+from backend.video_generation.models import VideoJob, JobStatus
+from backend.workspace.qdrant_store import QdrantRAGStore
+from backend.video_generation.agents.document_embedder import DocumentEmbedderAgent
+from backend.video_generation.agents.story_agent import StoryAgent
+from backend.video_generation.agents.validator_agent import ValidatorAgent
+from backend.video_generation.agents.codegen_agent import CodeGenAgent
+from backend.video_generation.agents.renderer_agent import RendererAgent
+from backend.video_generation.agents.uploader_agent import UploaderAgent
 from backend.ci.pipeline import CIPipelineHarness
 
 

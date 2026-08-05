@@ -48,6 +48,7 @@ class TableWidgetContainer(QWidget):
 
     def __init__(self, headers=None, rows=None, proxy_getter=None, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.resize(440, 240)
         self.setStyleSheet("""
             QWidget#TableContainer {

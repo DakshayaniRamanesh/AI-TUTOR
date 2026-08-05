@@ -1,7 +1,7 @@
 import os
 from pypdf import PdfReader
-from backend.pipeline.models import VideoJob, JobStatus
-from backend.rag.qdrant_store import QdrantRAGStore
+from backend.video_generation.models import VideoJob, JobStatus
+from backend.workspace.qdrant_store import QdrantRAGStore
 
 
 class DocumentEmbedderAgent:

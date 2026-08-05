@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from .base_item import BaseGraphicsItemMixin
-from ...backend.video_gen_client import ManimVideoPollWorker, request_video_generation
+from ...backend.video_generation.video_gen_client import ManimVideoPollWorker, request_video_generation
 from ...storage.downloads_manager import DownloadsManager
 
 class VideoPlayerWidget(QWidget):
@@ -19,6 +19,7 @@ class VideoPlayerWidget(QWidget):
 
     def __init__(self, job_id: str = "", title: str = "Manim Video", video_url_or_path: str = "", parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.job_id = job_id
         self.title = title
         self.video_path = video_url_or_path

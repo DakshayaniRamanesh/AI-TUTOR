@@ -183,7 +183,7 @@ def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
     for model in models:
         try:
             api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            resp = requests.post(api_url, json=payload, timeout=8)
+            resp = requests.post(api_url, json=payload, timeout=2.5)
             if resp.status_code == 200:
                 result_json = resp.json()
                 text = result_json["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -298,7 +298,7 @@ def solve_stem_question(question: str, mode: str = "study") -> dict:
                 f"3. ◈ Final Answer\n"
                 f"∫ {pretty_p} dx = {pretty_r} + C"
             )
-            return {"solution": solution, "plot_path": plot_path}
+            return {"hints": solution, "solution": solution, "plot_path": plot_path}
             
         elif is_derivative:
             parsed_expr = sp.sympify(q_clean)
@@ -322,7 +322,7 @@ def solve_stem_question(question: str, mode: str = "study") -> dict:
                 f"3. ◈ Final Answer\n"
                 f"f'(x) = {pretty_r}"
             )
-            return {"solution": solution, "plot_path": plot_path}
+            return {"hints": solution, "solution": solution, "plot_path": plot_path}
 
         elif is_limit:
             target_val = 0
@@ -351,7 +351,7 @@ def solve_stem_question(question: str, mode: str = "study") -> dict:
                 f"3. ◈ Final Answer\n"
                 f"lim_{{x→{target_val}}} {pretty_p} = {pretty_r}"
             )
-            return {"solution": solution, "plot_path": plot_path}
+            return {"hints": solution, "solution": solution, "plot_path": plot_path}
 
         # General SymPy evaluation fallback (Arithmetic, Algebra, Constants)
         parsed = sp.sympify(q_clean)
@@ -374,7 +374,7 @@ def solve_stem_question(question: str, mode: str = "study") -> dict:
             f"3. ◈ Final Answer\n"
             f"{pretty_p} = {pretty_r}"
         )
-        return {"solution": solution, "plot_path": plot_path}
+        return {"hints": solution, "solution": solution, "plot_path": plot_path}
 
     except Exception:
         if mode == "classroom":
@@ -390,7 +390,7 @@ def solve_stem_question(question: str, mode: str = "study") -> dict:
             f"3. ◈ Summary & Key Takeaway\n"
             f"For detailed AI study explanations, ensure GOOGLE_API_KEY is connected."
         )
-        return {"solution": solution, "plot_path": plot_path}
+        return {"hints": solution, "solution": solution, "plot_path": plot_path}
 
 from PyQt6.QtCore import QThread, pyqtSignal
 

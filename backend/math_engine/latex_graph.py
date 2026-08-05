@@ -11,8 +11,8 @@ try:
 except ImportError:
     LANGGRAPH_AVAILABLE = False
 
-from backend.pipeline.models import LatexJob, JobStatus
-from backend.pipeline.agents.latex_agents import (
+from backend.video_generation.models import LatexJob, JobStatus
+from backend.video_generation.agents.latex_agents import (
     LatexTranscribeAgent,
     LatexStructureAgent,
     TemplateApplyAgent,

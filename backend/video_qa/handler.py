@@ -1,11 +1,11 @@
 import os
 import requests
 from typing import List
-from backend.pipeline.models import VideoJob, AnnotationEvent
-from backend.rag.qdrant_store import QdrantRAGStore
-from backend.pipeline.agents.codegen_agent import CodeGenAgent
-from backend.pipeline.agents.renderer_agent import RendererAgent
-from backend.annotation.stitcher import VideoStitcher
+from backend.video_generation.models import VideoJob, AnnotationEvent
+from backend.workspace.qdrant_store import QdrantRAGStore
+from backend.video_generation.agents.codegen_agent import CodeGenAgent
+from backend.video_generation.agents.renderer_agent import RendererAgent
+from backend.video_qa.stitcher import VideoStitcher
 
 class ResearchAgent:
     """Tavily web search tool fallback for out-of-document queries."""

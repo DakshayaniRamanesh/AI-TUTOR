@@ -8,7 +8,7 @@ import os
 from PyQt6.QtWidgets import QLabel
 from PyQt6.QtCore import QTimer, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QFontDatabase
-from ...backend.latex_formatter import format_math_to_html
+from ...backend.math_engine.latex_formatter import format_math_to_html
 
 HANDWRITTEN_FONT_FAMILY = "Caveat"
 

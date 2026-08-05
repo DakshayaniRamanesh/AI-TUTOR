@@ -44,6 +44,7 @@ class GraphWidget(QWidget):
 
     def __init__(self, title: str = "Math Plot", image_path: str = "", proxy_getter=None, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.image_path = image_path
         self.resize(460, 310)
         self.setStyleSheet("""

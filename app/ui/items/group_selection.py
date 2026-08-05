@@ -9,6 +9,7 @@ from .base_item import BaseGraphicsItemMixin
 class GroupContainerWidget(QWidget):
     def __init__(self, title: str = "Grouped Items", parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.resize(320, 240)
         self.is_collapsed = False
         
