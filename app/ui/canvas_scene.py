@@ -16,6 +16,7 @@ from .items.video_float_item import VideoFloatItem
 from .items.answer_bubble import AnswerBubble
 from .items.group_selection import GroupSelection
 from .items.image_item import ImageItem
+from .stroke_processor import StrokeProcessor
 
 class CanvasScene(QGraphicsScene):
     ink_written_detected = pyqtSignal(str, QPointF)
@@ -34,6 +35,7 @@ class CanvasScene(QGraphicsScene):
         self.pen_width = 3.0
         self.highlighter_color = "#ffe066" # Yellow, Green, Blue, Pink
         
+        self.stroke_processor = StrokeProcessor(enable_smart_shapes=True, enable_smoothing=True)
         self._current_path_item = None
         self._current_painter_path = None
         self._stroke_start_pos = None
@@ -166,6 +168,62 @@ class CanvasScene(QGraphicsScene):
                     item.setZValue(data["z_value"])
                 self.addItem(item)
 
+    def handle_tablet_event(self, event, scene_pos: QPointF) -> bool:
+        """Handles QTabletEvent stylus inputs (pressure & tilt)."""
+        import time
+        if self.active_tool not in ["pen", "highlighter"]:
+            return False
+
+        pressure = event.pressure() if hasattr(event, "pressure") else 1.0
+        timestamp = event.timestamp() if hasattr(event, "timestamp") else time.time()
+
+        event_type = event.type()
+        if event_type == event.Type.TabletPress:
+            self._stroke_start_pos = scene_pos
+            self.stroke_processor.start_stroke(scene_pos, pressure=pressure, timestamp=timestamp)
+            self._current_painter_path = QPainterPath()
+            self._current_painter_path.moveTo(scene_pos)
+            
+            tool_name = self.active_tool
+            color = self.highlighter_color if tool_name == "highlighter" else self.pen_color
+            self._current_path_item = InkStroke(
+                path=self._current_painter_path,
+                tool_mode=tool_name,
+                color=color,
+                width=self.pen_width
+            )
+            self.addItem(self._current_path_item)
+            return True
+
+        elif event_type == event.Type.TabletMove and self._current_path_item:
+            self.stroke_processor.add_point(scene_pos, pressure=pressure, timestamp=timestamp)
+            self._current_painter_path.lineTo(scene_pos)
+            self._current_path_item.setPath(self._current_painter_path)
+            return True
+
+        elif event_type == event.Type.TabletRelease and self._current_path_item:
+            self.stroke_processor.add_point(scene_pos, pressure=pressure, timestamp=timestamp)
+            tool_name = self.active_tool
+            color = self.highlighter_color if tool_name == "highlighter" else self.pen_color
+            
+            final_item = self.stroke_processor.process_stroke(
+                color=color,
+                width=self.pen_width,
+                tool_mode=tool_name
+            )
+            if final_item:
+                self.removeItem(self._current_path_item)
+                self.addItem(final_item)
+                if self.active_tool == "pen":
+                    self._recent_ink_strokes.append(final_item)
+
+            self._current_path_item = None
+            self._current_painter_path = None
+            self._stroke_start_pos = None
+            return True
+
+        return False
+
     def mousePressEvent(self, event):
         if self.active_tool == "eraser" and event.button() == Qt.MouseButton.LeftButton:
             self._is_erasing = True
@@ -173,9 +231,12 @@ class CanvasScene(QGraphicsScene):
             self.erase_items_at(event.scenePos())
             event.accept()
         elif self.active_tool in ["pen", "highlighter"] and event.button() == Qt.MouseButton.LeftButton:
-            self._stroke_start_pos = event.scenePos()
+            pos = event.scenePos()
+            self._stroke_start_pos = pos
+            self.stroke_processor.start_stroke(pos, pressure=1.0)
+            
             self._current_painter_path = QPainterPath()
-            self._current_painter_path.moveTo(self._stroke_start_pos)
+            self._current_painter_path.moveTo(pos)
             
             tool_name = self.active_tool
             color = self.highlighter_color if tool_name == "highlighter" else self.pen_color
@@ -196,15 +257,17 @@ class CanvasScene(QGraphicsScene):
             self.erase_items_at(event.scenePos())
             event.accept()
         elif self._current_path_item and self._current_painter_path:
+            pos = event.scenePos()
+            self.stroke_processor.add_point(pos, pressure=1.0)
             if self.active_tool == "highlighter" and self._stroke_start_pos:
                 # Straight-line snapping for clean horizontal highlighting across text lines
-                snapped_pos = QPointF(event.scenePos().x(), self._stroke_start_pos.y())
+                snapped_pos = QPointF(pos.x(), self._stroke_start_pos.y())
                 new_path = QPainterPath()
                 new_path.moveTo(self._stroke_start_pos)
                 new_path.lineTo(snapped_pos)
                 self._current_path_item.setPath(new_path)
             else:
-                self._current_painter_path.lineTo(event.scenePos())
+                self._current_painter_path.lineTo(pos)
                 self._current_path_item.setPath(self._current_painter_path)
             event.accept()
         else:
@@ -215,9 +278,24 @@ class CanvasScene(QGraphicsScene):
             self._is_erasing = False
             event.accept()
         elif self._current_path_item:
-            if self.active_tool == "pen":
-                self._recent_ink_strokes.append(self._current_path_item)
-                # self._auto_convert_timer.start(1200) # Removed automatic OCR trigger
+            pos = event.scenePos()
+            self.stroke_processor.add_point(pos, pressure=1.0)
+            
+            tool_name = self.active_tool
+            color = self.highlighter_color if tool_name == "highlighter" else self.pen_color
+            
+            final_item = self.stroke_processor.process_stroke(
+                color=color,
+                width=self.pen_width,
+                tool_mode=tool_name
+            )
+            
+            if final_item:
+                self.removeItem(self._current_path_item)
+                self.addItem(final_item)
+                if self.active_tool == "pen":
+                    self._recent_ink_strokes.append(final_item)
+
             self._current_path_item = None
             self._current_painter_path = None
             self._stroke_start_pos = None

@@ -56,6 +56,20 @@ class CanvasView(QGraphicsView):
         else:
             super().wheelEvent(event)
 
+    def tabletEvent(self, event):
+        """
+        Forwards QTabletEvent (stylus/graphics tablet with pressure & tilt)
+        to CanvasScene for vector stroke processing.
+        """
+        scene = self.scene()
+        if scene and hasattr(scene, "handle_tablet_event"):
+            pos = self.mapToScene(event.position().toPoint())
+            handled = scene.handle_tablet_event(event, pos)
+            if handled:
+                event.accept()
+                return
+        super().tabletEvent(event)
+
     def mousePressEvent(self, event: QMouseEvent):
         self.last_mouse_scene_pos = self.mapToScene(event.position().toPoint())
         if event.button() == Qt.MouseButton.MiddleButton or (event.button() == Qt.MouseButton.LeftButton and QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier):
