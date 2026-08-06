@@ -99,6 +99,28 @@ class LatexStructureAgent:
                 raw_text=job.raw_transcription or ""
             )
 
+            if getattr(job, "mode", "study") == "study":
+                prompt += (
+                    "\n\n**CRITICAL INSTRUCTION: STUDY MODE**\n"
+                    "The user is in STUDY MODE. Treat this as a comprehensive study guide. "
+                    "Expand heavily on the concepts mentioned, provide detailed step-by-step breakdowns, "
+                    "and create a 'proper note' format for the user to learn from. Add rich, clear explanations."
+                )
+            else:
+                action = getattr(job, "classroom_action", "Solve Question")
+                if action == "Solve Question":
+                    prompt += (
+                        "\n\n**CRITICAL INSTRUCTION: CLASSROOM MODE - SOLVE**\n"
+                        "The user wants you to solve the math problem or answer the question present in the text. "
+                        "Provide a DIRECT ANSWER and show relevant steps, but keep the explanation minimal and straight-to-the-point without over-explaining."
+                    )
+                else:
+                    prompt += (
+                        "\n\n**CRITICAL INSTRUCTION: CLASSROOM MODE - TRANSCRIBE**\n"
+                        "The user wants you to strictly format the text and math exactly as written to create a LaTeX document. "
+                        "DO NOT answer any questions and DO NOT hallucinate explanations. Just transcribe."
+                    )
+
             # If retrying after a build error, pass the error to the LLM to fix
             if job.has_build_error and job.build_error_trace:
                 prompt += f"\n\nPREVIOUS COMPILATION ERROR:\nThe previous LaTeX code failed to compile with the following error:\n{job.build_error_trace}\n\nPlease fix the LaTeX syntax errors."
@@ -191,7 +213,7 @@ class TectonicCompileAgent:
 
         try:
             # Run tectonic
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
             local_tectonic = os.path.join(project_root, "tectonic.exe")
             
             # Prefer local tectonic.exe if it exists, else assume it's in PATH

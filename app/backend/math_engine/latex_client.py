@@ -18,7 +18,7 @@ MODAL_ENDPOINT_URL = os.getenv("MODAL_URL", "https://dakshayaniramanesh--manim-a
 # Replace modal url to the specific endpoints for latex if needed. 
 # We'll use local server URL for now, modal fallback can be added if endpoints match.
 
-def request_latex_generation(image_b64: str, template_type: str) -> str:
+def request_latex_generation(image_b64: str, template_type: str,  mode: str = "study", classroom_action: str= "Solve Question") -> str:
     """
     Submits a LaTeX generation request.
     """
@@ -28,7 +28,7 @@ def request_latex_generation(image_b64: str, template_type: str) -> str:
     try:
         resp = requests.post(
             f"{LOCAL_SERVER_URL}/generate_latex",
-            data={"image_b64": image_b64, "template_type": template_type},
+            data={"image_b64": image_b64, "template_type": template_type, "mode": mode, "classroom_action": classroom_action},
             timeout=10
         )
         if resp.status_code == 200:

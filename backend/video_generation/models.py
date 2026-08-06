@@ -88,7 +88,9 @@ class LatexJob:
     job_id: str
     image_b64: str                     # base64 encoded QPixmap image of handwriting
     template_type: str                 # "Assignment", "Research Paper", "Homework", "Lecture Slides"
-    
+    mode: str = "study"
+    classroom_action: str = "Solve Question"
+
     status: JobStatus = JobStatus.PENDING
     step: str = "init"
     progress_percentage: int = 0

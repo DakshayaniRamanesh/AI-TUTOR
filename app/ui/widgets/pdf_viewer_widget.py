@@ -135,6 +135,14 @@ class PdfViewportEventFilter(QObject):
         self.is_dragging = False
 
     def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.pdf_widget.zoom_in()
+            else:
+                self.pdf_widget.zoom_out()
+            return True
+
         if event.type() == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.LeftButton:
                 self.press_pos = event.pos()
@@ -493,12 +501,18 @@ class PdfViewerWidget(QWidget):
         self.reply_pill.show_at(global_pos, selected_text, self.current_page, surrounding_context)
 
     def _on_visual_page_changed(self, page_index: int):
-        new_page = page_index + 1
-        if 1 <= new_page <= self.total_pages and new_page != self.current_page:
-            self.current_page = new_page
-            self.lbl_page.setText(f"Page {self.current_page} of {self.total_pages}")
-            self.overlay.clear_highlight()
-            self.reply_pill.hide()
+        self.current_page = page_index + 1
+        self.lbl_page.setText(f"Page {self.current_page} of {self.total_pages}")
+        self.overlay.clear_highlight()
+        self.reply_pill.hide()
+
+    def zoom_in(self):
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
+        self.pdf_view.setZoomFactor(self.pdf_view.zoomFactor() * 1.2)
+
+    def zoom_out(self):
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
+        self.pdf_view.setZoomFactor(self.pdf_view.zoomFactor() / 1.2)
 
     def _prev_page(self):
         if self.current_page > 1:

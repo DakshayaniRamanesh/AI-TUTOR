@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QListWidget,
     QListWidgetItem, QPushButton, QLineEdit, QLabel, QFrame,
     QSplitter, QStackedWidget, QFileDialog, QInputDialog, QMessageBox,
-    QGraphicsDropShadowEffect, QMenu, QComboBox
+    QGraphicsDropShadowEffect, QMenu, QComboBox, QTabWidget, QTabBar
 )
 from PyQt6.QtCore import Qt, QSize, QEvent, QPoint, QBuffer, QIODevice
 from PyQt6.QtGui import QFont, QColor, QAction, QPixmap
@@ -261,26 +261,34 @@ class MainWindow(QMainWindow):
         cw_layout.setContentsMargins(0, 0, 0, 0)
         cw_layout.setSpacing(0)
 
-        # PDF Splitter (Left: PDF Viewer, Right: Canvas View)
-        self.pdf_canvas_splitter = QSplitter(Qt.Orientation.Horizontal, canvas_wrapper)
-        self.pdf_canvas_splitter.setHandleWidth(2)
+        from PyQt6.QtWidgets import QTabWidget
+        self.canvas_tabs = QTabWidget(canvas_wrapper)
+        self.canvas_tabs.setTabsClosable(True)
+        self.canvas_tabs.setStyleSheet("""
+            QTabWidget::pane { border: 0px; }
+            QTabBar::tab { padding: 8px 16px; font-weight: 600; background: #f1f5f9; border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 2px;}
+            QTabBar::tab:selected { background: #ffffff; color: #7c3aed; border-bottom: 2px solid #7c3aed; }
+        """)
+        self.canvas_tabs.tabCloseRequested.connect(self._on_canvas_tab_closed)
 
-        # PDF Viewer Widget
-        self.pdf_viewer_widget = PdfViewerWidget(self.pdf_canvas_splitter)
+        # PDF Viewer Widget (will be added to a tab when needed)
+        self.pdf_viewer_widget = PdfViewerWidget(self.canvas_tabs)
+        self.pdf_viewer_widget.hide() # Hidden initially so it doesn't float over the UI
         self.pdf_viewer_widget.close_requested.connect(self._close_pdf_split_screen)
         self.pdf_viewer_widget.reply_clicked.connect(self._on_pdf_reply_clicked)
         self.pdf_viewer_widget.latex_video_requested.connect(self._on_latex_video_requested)
-        self.pdf_viewer_widget.hide() # Hidden by default until PDF is opened
-        self.pdf_canvas_splitter.addWidget(self.pdf_viewer_widget)
 
         # Scene and View
         self.scene = CanvasScene(self)
         self.scene.ink_written_detected.connect(self._on_ink_written_detected)
         self.view = CanvasView(self.scene, self)
         self.view.zoom_changed.connect(self._on_zoom_changed)
-        self.pdf_canvas_splitter.addWidget(self.view)
+        
+        self.canvas_tabs.addTab(self.view, "✍️ Notebook Canvas")
+        # Ensure the canvas tab doesn't show a close button
+        self.canvas_tabs.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
 
-        cw_layout.addWidget(self.pdf_canvas_splitter)
+        cw_layout.addWidget(self.canvas_tabs)
 
         # Bottom Floating HUD Overlay (AskBar + Zoom HUD + Floating Tools)
         self.hud_overlay = self._create_hud_overlay()
@@ -641,6 +649,10 @@ class MainWindow(QMainWindow):
         self.latex_combo.addItems(["Homework", "Assignment", "Research Paper", "Lecture Slides"])
         self.latex_combo.setFixedWidth(110)
 
+        self.classroom_action_combo = QComboBox(group4)
+        self.classroom_action_combo.addItems(["Solve Question", "Transcribe Notes"])
+        self.classroom_action_combo.setFixedWidth(120)
+
         btn_latex = QPushButton(qta.icon('fa5s.file-export', color='#7c3aed'), " LaTeX", group4)
         btn_latex.setIconSize(QSize(13, 13))
         btn_latex.setStyleSheet("color: #7c3aed; font-weight: 600;")
@@ -649,6 +661,7 @@ class MainWindow(QMainWindow):
         btn_latex.clicked.connect(self._convert_to_latex)
 
         g4_layout.addWidget(self.latex_combo)
+        g4_layout.addWidget(self.classroom_action_combo)
         g4_layout.addWidget(btn_latex)
         layout.addWidget(group4)
         layout.addSpacing(8)
@@ -858,8 +871,14 @@ class MainWindow(QMainWindow):
             success_view = self.pdf_viewer_widget.load_pdf(file_path)
 
             if success_rag and success_view:
-                self.pdf_viewer_widget.show()
-                self.pdf_canvas_splitter.setSizes([520, 520])
+                fname = os.path.basename(file_path)
+                
+                if self.canvas_tabs.indexOf(self.pdf_viewer_widget) == -1:
+                    self.canvas_tabs.addTab(self.pdf_viewer_widget, f"📄 {fname}")
+                else:
+                    idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
+                    self.canvas_tabs.setTabText(idx, f"📄 {fname}")
+                self.canvas_tabs.setCurrentWidget(self.pdf_viewer_widget)
                 
                 fname = os.path.basename(file_path)
                 self.ask_bar.set_pdf_mode(True, filename=fname)
@@ -880,8 +899,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "PDF Exception", f"Error opening PDF:\n{err}")
 
     def _close_pdf_split_screen(self):
-        self.pdf_viewer_widget.hide()
+        idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
+        if idx != -1:
+            self.canvas_tabs.removeTab(idx)
         self.ask_bar.set_pdf_mode(False)
+        
+    def _on_canvas_tab_closed(self, index):
+        if self.canvas_tabs.widget(index) == self.pdf_viewer_widget:
+            self._close_pdf_split_screen()
 
     def _on_pdf_reply_clicked(self, selected_text: str, page_num: int, surrounding_context: str):
         """
@@ -1272,9 +1297,11 @@ class MainWindow(QMainWindow):
         image_b64 = buffer.data().toBase64().data().decode()
         
         template_type = self.latex_combo.currentText()
+        current_mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
+        action = self.classroom_action_combo.currentText()
         
         try:
-            job_id = request_latex_generation(image_b64, template_type)
+            job_id = request_latex_generation(image_b64, template_type, current_mode, action)
         except Exception as e:
             QMessageBox.warning(self, "API Connection Error", f"Could not connect to the backend server.\nPlease ensure you are running the backend local server (`python backend/local_server.py`).\n\nError: {e}")
             return
@@ -1299,27 +1326,55 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
             self.progress_dialog.finish_success()
         self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-        import tempfile
-        import base64
         
-        fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+        import os
+        import base64
+        from PyQt6.QtGui import QDesktopServices
+        from PyQt6.QtCore import QUrl
+        
+        # 1. Gather the notebook context (Title, Mode, and Action)
+        notebook_title = self.current_board.title or "Untitled_Notebook"
+        mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
+        action = self.classroom_action_combo.currentText() if hasattr(self, 'classroom_action_combo') else "Action"
+        
+        # 2. Sanitize the notebook title to make it a safe filename
+        safe_title = "".join(c for c in notebook_title if c.isalnum() or c in " _-").strip()
+        filename = f"{safe_title}_{mode}_{action}.pdf".replace(" ", "_")
+        
+        # 3. Create a dedicated export folder inside storage_data
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        export_dir = os.path.join(base_dir, "storage_data", "latex_exports")
+        os.makedirs(export_dir, exist_ok=True)
+        
+        save_path = os.path.join(export_dir, filename)
+        
+        # 4. Save the PDF to the hard drive
         if pdf_b64:
-            with open(temp_path, "wb") as f:
+            with open(save_path, "wb") as f:
                 f.write(base64.b64decode(pdf_b64))
         else:
             import requests
             try:
                 r = requests.get(pdf_url)
-                with open(temp_path, "wb") as f:
+                with open(save_path, "wb") as f:
                     f.write(r.content)
             except Exception as e:
                 QMessageBox.warning(self, "Download Error", f"Failed to download generated PDF:\n{e}")
                 return
                 
-        self.pdf_viewer_widget.load_latex_pdf(temp_path)
-        self.pdf_viewer_widget.show()
-        if self.pdf_canvas_splitter.sizes()[0] == 0:
-            self.pdf_canvas_splitter.setSizes([520, 520])
+        # 5. Load the PDF into the internal viewer
+        self.pdf_viewer_widget.load_latex_pdf(save_path)
+        
+        # 6. Add the PDF Viewer as a new Tab (if it isn't already added)
+        if self.canvas_tabs.indexOf(self.pdf_viewer_widget) == -1:
+            self.canvas_tabs.addTab(self.pdf_viewer_widget, f"📄 {filename}")
+        else:
+            # Update the tab title if it already exists
+            idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
+            self.canvas_tabs.setTabText(idx, f"📄 {filename}")
+            
+        # 7. Switch the view automatically to the new PDF tab!
+        self.canvas_tabs.setCurrentWidget(self.pdf_viewer_widget)
 
     def _on_latex_failed(self, job_id, error_msg):
         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():

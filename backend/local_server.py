@@ -177,14 +177,18 @@ def run_latex_job_background(job: LatexJob):
 async def generate_latex(
     background_tasks: BackgroundTasks,
     image_b64: str = Form(...),
-    template_type: str = Form("Homework")
+    template_type: str = Form("Homework"),
+    mode: str = Form("study"),
+    classroom_action: str = Form("Solve Question")
 ):
     job_id = f"latex_{uuid.uuid4().hex[:8]}"
     
     job = LatexJob(
         job_id=job_id,
         image_b64=image_b64,
-        template_type=template_type
+        template_type=template_type,
+        mode=mode,
+        classroom_action=classroom_action 
     )
     latex_jobs_store[job_id] = job
 
@@ -259,8 +263,16 @@ async def test_gemini():
 @app.get("/api/diagnostics/tectonic")
 async def test_tectonic():
     import subprocess
+    import os
     try:
-        result = subprocess.run(["tectonic", "--version"], capture_output=True, text=True, timeout=5)
+        # 1. Look for tectonic.exe in the root folder (AI-TUTOR)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        local_tectonic = os.path.join(project_root, "tectonic.exe")
+        
+        # 2. Use it if it exists, otherwise fall back to global PATH
+        tectonic_cmd = local_tectonic if os.path.exists(local_tectonic) else "tectonic"
+        
+        result = subprocess.run([tectonic_cmd, "--version"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             return {"status": "ok", "message": "Tectonic found"}
         return JSONResponse({"status": "error", "message": "Tectonic executed but failed"}, status_code=500)
@@ -268,6 +280,7 @@ async def test_tectonic():
         return JSONResponse({"status": "error", "message": "Tectonic binary not found"}, status_code=500)
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
 
 if __name__ == "__main__":
     import uvicorn
