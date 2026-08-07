@@ -4,7 +4,9 @@ import tempfile
 from dotenv import load_dotenv
 
 # Load backend/.env environment variables
+load_dotenv()
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 try:
     import imageio_ffmpeg
@@ -264,22 +266,43 @@ async def test_gemini():
 async def test_tectonic():
     import subprocess
     import os
+    import urllib.request
+    import zipfile
+    import io
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_tectonic = os.path.join(project_root, "tectonic.exe")
+
+    # If tectonic.exe does not exist locally and 'tectonic' is not in PATH, try auto-downloading
+    tectonic_cmd = local_tectonic if os.path.exists(local_tectonic) else "tectonic"
+
     try:
-        # 1. Look for tectonic.exe in the root folder (AI-TUTOR)
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        local_tectonic = os.path.join(project_root, "tectonic.exe")
-        
-        # 2. Use it if it exists, otherwise fall back to global PATH
-        tectonic_cmd = local_tectonic if os.path.exists(local_tectonic) else "tectonic"
-        
         result = subprocess.run([tectonic_cmd, "--version"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             return {"status": "ok", "message": "Tectonic found"}
-        return JSONResponse({"status": "error", "message": "Tectonic executed but failed"}, status_code=500)
-    except FileNotFoundError:
-        return JSONResponse({"status": "error", "message": "Tectonic binary not found"}, status_code=500)
+    except (FileNotFoundError, Exception):
+        pass
+
+    # Auto-download Tectonic binary if missing
+    try:
+        url = "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%400.17.0/tectonic-0.17.0-x86_64-pc-windows-msvc.zip"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as resp:
+            zip_bytes = resp.read()
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            for name in zf.namelist():
+                if name.endswith("tectonic.exe"):
+                    data = zf.read(name)
+                    with open(local_tectonic, "wb") as f:
+                        f.write(data)
+                    break
+        result = subprocess.run([local_tectonic, "--version"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            return {"status": "ok", "message": "Tectonic auto-downloaded & verified"}
     except Exception as e:
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+        return JSONResponse({"status": "error", "message": f"Tectonic missing & auto-download failed: {e}"}, status_code=500)
+
+    return JSONResponse({"status": "error", "message": "Tectonic binary not found"}, status_code=500)
 
 
 if __name__ == "__main__":

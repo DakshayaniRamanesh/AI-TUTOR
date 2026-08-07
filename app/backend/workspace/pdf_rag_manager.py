@@ -132,7 +132,7 @@ class PdfRAGManager:
 
         # Call Gemini API
         if GOOGLE_API_KEY:
-            models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+            models = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]
             payload = {"contents": [{"parts": [{"text": prompt}]}]}
             for model in models:
                 try:
@@ -180,14 +180,15 @@ class PdfRAGManager:
         )
 
         if GOOGLE_API_KEY:
-            try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GOOGLE_API_KEY}"
-                payload = {"contents": [{"parts": [{"text": prompt}]}]}
-                resp = requests.post(url, json=payload, timeout=10)
-                if resp.status_code == 200:
-                    return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-            except Exception as err:
-                print(f"[PdfRAGManager] Summary API Notice: {err}")
+            for m in ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={GOOGLE_API_KEY}"
+                    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                    resp = requests.post(url, json=payload, timeout=10)
+                    if resp.status_code == 200:
+                        return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                except Exception as err:
+                    print(f"[PdfRAGManager] Summary API Notice ({m}): {err}")
 
         # Fallback summary
         first_page = self.pages_text[0] if self.pages_text else (1, "Document content")
