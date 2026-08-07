@@ -9,7 +9,8 @@ from ..backend.workspace.link_utils import is_valid_url, is_video_url, fetch_url
 from ..backend.workspace.summarizer_client import summarize_url
 from .items.video_float_item import VideoFloatItem
 from .items.answer_bubble import AnswerBubble
-from .items.handwriting_note import HandwritingNote
+
+
 from .items.card_item import CardItem
 from .items.image_item import ImageItem
 
@@ -104,13 +105,9 @@ class CanvasView(QGraphicsView):
             scene_pos = self.mapToScene(event.position().toPoint())
             items = self.scene().items(scene_pos)
             if not items:
-                note = HandwritingNote(text="Start typing note here...")
+                from .items.text_box_item import TextBoxItem
+                note = TextBoxItem(text="Type here...")
                 note.setPos(scene_pos)
-                main_win = self.window()
-                if hasattr(main_win, "_on_generate_video_requested"):
-                    note.widget.video_requested.connect(main_win._on_generate_video_requested)
-                if hasattr(main_win, "_on_stem_question_asked"):
-                    note.widget.solve_requested.connect(main_win._on_stem_question_asked)
                 self.scene().addItem(note)
                 event.accept()
                 return
@@ -128,40 +125,86 @@ class CanvasView(QGraphicsView):
                     event.accept()
                     return
 
-        # Intercept Ctrl+V / Cmd+V paste
-        if event.key() == Qt.Key.Key_V and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            clipboard = QApplication.clipboard()
-            mime_data = clipboard.mimeData()
-            
-            center_pos = self.mapToScene(self.viewport().rect().center())
-            
-            # 1. Handle pasting raw images (scans/screenshots)
-            if mime_data.hasImage():
-                pixmap = clipboard.pixmap()
-                if not pixmap.isNull():
-                    item = ImageItem(pixmap)
-                    item.setPos(center_pos)
-                    self.scene().addItem(item)
+        # Intercept Ctrl+C / Ctrl+X / Ctrl+V
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.key() == Qt.Key.Key_C or event.key() == Qt.Key.Key_X:
+                scene = self.scene()
+                if scene:
+                    selected = scene.selectedItems()
+                    if selected:
+                        items_data = []
+                        for item in selected:
+                            if hasattr(item, "to_dict"):
+                                try:
+                                    items_data.append(item.to_dict())
+                                    if event.key() == Qt.Key.Key_X:
+                                        scene.removeItem(item)
+                                except Exception as e:
+                                    print(f"Error copying item: {e}")
+                        if items_data:
+                            import json
+                            from PyQt6.QtCore import QMimeData
+                            mime_data = QMimeData()
+                            mime_data.setData("application/x-kestrel-items", json.dumps(items_data).encode("utf-8"))
+                            QApplication.clipboard().setMimeData(mime_data)
+                        event.accept()
+                        return
+
+            elif event.key() == Qt.Key.Key_V:
+                clipboard = QApplication.clipboard()
+                mime_data = clipboard.mimeData()
+                
+                center_pos = self.mapToScene(self.viewport().rect().center())
+                
+                # 0. Handle pasting Kestrel items
+                if mime_data.hasFormat("application/x-kestrel-items"):
+                    import json
+                    payload = mime_data.data("application/x-kestrel-items").data().decode("utf-8")
+                    try:
+                        items_data = json.loads(payload)
+                        scene = self.scene()
+                        if scene and hasattr(scene, "create_item_from_dict"):
+                            for data in items_data:
+                                item = scene.create_item_from_dict(data)
+                                if item:
+                                    # Paste them at center
+                                    item.setPos(center_pos.x() + data.get("x", 0), center_pos.y() + data.get("y", 0))
+                                    if "z_value" in data:
+                                        item.setZValue(data["z_value"])
+                                    scene.addItem(item)
+                            event.accept()
+                            return
+                    except Exception as e:
+                        print(f"Error pasting items: {e}")
+
+                # 1. Handle pasting raw images (scans/screenshots)
+                if mime_data.hasImage():
+                    pixmap = clipboard.pixmap()
+                    if not pixmap.isNull():
+                        item = ImageItem(pixmap)
+                        item.setPos(center_pos)
+                        item.setZValue(5) # Behind ink
+                        self.scene().addItem(item)
+                        event.accept()
+                        return
+
+                # 2. Handle pasting URLs
+                text = clipboard.text()
+                if text and is_valid_url(text):
+                    meta = fetch_url_metadata(text)
+                    
+                    if meta["is_video"]:
+                        # Create floating video player
+                        item = VideoFloatItem(title=meta["title"], video_url_or_path=text)
+                        item.setPos(center_pos)
+                        self.scene().addItem(item)
+                    else:
+                        # Summarize article -> AnswerBubble in handwritten font
+                        summary = summarize_url(text, title=meta["title"])
+                        bubble = AnswerBubble(title=meta["title"], full_text=summary)
+                        bubble.setPos(center_pos)
+                        self.scene().addItem(bubble)
                     event.accept()
                     return
-
-            # 2. Handle pasting URLs
-            text = clipboard.text()
-            if text and is_valid_url(text):
-                meta = fetch_url_metadata(text)
-                
-                if meta["is_video"]:
-                    # Create floating video player
-                    item = VideoFloatItem(title=meta["title"], video_url_or_path=text)
-                    item.setPos(center_pos)
-                    self.scene().addItem(item)
-                else:
-                    # Summarize article -> AnswerBubble in handwritten font
-                    summary = summarize_url(text, title=meta["title"])
-                    bubble = AnswerBubble(title=meta["title"], full_text=summary)
-                    bubble.setPos(center_pos)
-                    self.scene().addItem(bubble)
-                event.accept()
-                return
 
         super().keyPressEvent(event)

@@ -12,7 +12,8 @@ STICKY_COLORS = {
     "yellow": "#fff59d",
     "pink": "#ff80ab",
     "blue": "#80d8ff",
-    "green": "#b9f6ca"
+    "green": "#b9f6ca",
+    "transparent": "transparent"
 }
 
 class HeaderDragBar(QWidget):
@@ -156,14 +157,22 @@ class StickyNoteWidget(QWidget):
         self.color_changed.emit(key)
 
     def _apply_style(self):
-        bg = STICKY_COLORS.get(self.color_key, STICKY_COLORS["yellow"])
-        self.setStyleSheet(f"""
-            QWidget {{
-                background-color: {bg};
-                border-radius: 12px;
-                border: 1px solid rgba(0, 0, 0, 0.12);
-            }}
-        """)
+        if self.color_key == "transparent":
+            self.setStyleSheet("""
+                QWidget {
+                    background-color: transparent;
+                    border: none;
+                }
+            """)
+        else:
+            bg = STICKY_COLORS.get(self.color_key, STICKY_COLORS["yellow"])
+            self.setStyleSheet(f"""
+                QWidget {{
+                    background-color: {bg};
+                    border-radius: 12px;
+                    border: 1px solid rgba(0, 0, 0, 0.12);
+                }}
+            """)
 
 class StickyNote(QGraphicsProxyWidget, BaseGraphicsItemMixin):
     def __init__(self, text: str = "Sticky Note", color_key: str = "yellow", parent=None):

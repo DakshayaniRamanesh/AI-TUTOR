@@ -206,7 +206,23 @@ class MainWindow(QMainWindow):
 
         self._apply_global_styles()
         self._init_ui()
+        self._setup_shortcuts()
         self._update_window_corners()
+
+    def _setup_shortcuts(self):
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        # Undo
+        QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(lambda: self.floating_toolbar.action_triggered.emit("undo"))
+        # Tools
+        QShortcut(QKeySequence("V"), self).activated.connect(lambda: self.floating_toolbar.btn_select.click())
+        QShortcut(QKeySequence("H"), self).activated.connect(lambda: self.floating_toolbar.btn_pan.click())
+        QShortcut(QKeySequence("P"), self).activated.connect(lambda: self.floating_toolbar.btn_pen.click())
+        QShortcut(QKeySequence("Alt+H"), self).activated.connect(lambda: self.floating_toolbar.btn_highlighter.click())
+        QShortcut(QKeySequence("E"), self).activated.connect(lambda: self.floating_toolbar.btn_eraser.click())
+        QShortcut(QKeySequence("S"), self).activated.connect(lambda: self.floating_toolbar.btn_shapes.click())
+        QShortcut(QKeySequence("T"), self).activated.connect(lambda: self.floating_toolbar.action_triggered.emit("text"))
+        # Export
+        QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(lambda: self._convert_to_latex())
 
     def _init_ui(self):
         # Outer Translucent Container
@@ -260,6 +276,9 @@ class MainWindow(QMainWindow):
         cw_layout = QVBoxLayout(canvas_wrapper)
         cw_layout.setContentsMargins(0, 0, 0, 0)
         cw_layout.setSpacing(0)
+        
+        canvas_wrapper.installEventFilter(self)
+        self._canvas_wrapper = canvas_wrapper
 
         from PyQt6.QtWidgets import QTabWidget
         self.canvas_tabs = QTabWidget(canvas_wrapper)
@@ -293,6 +312,32 @@ class MainWindow(QMainWindow):
         # Bottom Floating HUD Overlay (AskBar + Zoom HUD + Floating Tools)
         self.hud_overlay = self._create_hud_overlay()
         cw_layout.addWidget(self.hud_overlay)
+
+        # After cw_layout.addWidget(self.canvas_tabs) — around line 295
+
+        from .floating_toolbar import FloatingToolbar
+        from .pen_properties_popup import PenPropertiesPopup
+
+        self.floating_toolbar = FloatingToolbar(canvas_wrapper)
+        self.floating_toolbar.tool_changed.connect(self._on_floating_tool_changed)
+        self.floating_toolbar.action_triggered.connect(self._on_floating_action)
+        self.floating_toolbar.show()
+        self.floating_toolbar.raise_()
+        
+        self.pen_popup = PenPropertiesPopup(canvas_wrapper)
+        self.pen_popup.hide()
+        self.pen_popup.color_changed.connect(self._on_pen_popup_color_changed)
+        self.pen_popup.thickness_changed.connect(self._on_pen_popup_thickness_changed)
+
+        from .shapes_popup import ShapesPopup
+        self.shapes_popup = ShapesPopup(canvas_wrapper)
+        self.shapes_popup.hide()
+        self.shapes_popup.shape_selected.connect(self._on_shapes_popup_selected)
+
+        from .eraser_popup import EraserPopup
+        self.eraser_popup = EraserPopup(canvas_wrapper)
+        self.eraser_popup.hide()
+        self.eraser_popup.size_changed.connect(self._on_eraser_popup_size_changed)
 
         self.main_stack.addWidget(canvas_wrapper) # Index 0
 
@@ -571,100 +616,46 @@ class MainWindow(QMainWindow):
         self.title_edit.editingFinished.connect(self._on_title_changed)
         layout.addWidget(self.title_edit)
 
-        layout.addStretch()
+        # Insert Image
+        btn_img = self._make_toolbar_btn('fa5s.image', "Insert Image", tb, '#64748b', "Insert Image")
+        btn_img.clicked.connect(self._on_insert_image)
+        layout.addWidget(btn_img)
 
-        # ── GROUP 1: File actions ──
-        group1 = QWidget(tb)
-        group1.setStyleSheet("background-color: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;")
-        g1_layout = QHBoxLayout(group1)
-        g1_layout.setContentsMargins(4, 2, 4, 2)
-        g1_layout.setSpacing(0)
-
-        btn_save = self._make_toolbar_btn('fa5s.save', " Save", group1, '#475569', "Save Board (Ctrl+S)")
-        btn_save.clicked.connect(self._on_toolbar_save)
-        btn_paste = self._make_toolbar_btn('fa5s.paste', " Paste", group1, '#475569', "Paste from Clipboard")
-        btn_paste.clicked.connect(self._on_toolbar_paste)
-
-        g1_layout.addWidget(btn_save)
-        g1_layout.addWidget(btn_paste)
-        layout.addWidget(group1)
-        layout.addSpacing(6)
-
-        # ── GROUP 2: Insert actions ──
-        group2 = QWidget(tb)
-        group2.setStyleSheet("background-color: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;")
-        g2_layout = QHBoxLayout(group2)
-        g2_layout.setContentsMargins(4, 2, 4, 2)
-        g2_layout.setSpacing(0)
-
-        btn_sticky = self._make_toolbar_btn('fa5s.sticky-note', " Sticky", group2, '#475569', "Add Sticky Note")
-        btn_sticky.clicked.connect(self._add_sticky_note)
-        btn_note = self._make_toolbar_btn('fa5s.pen', " Note", group2, '#475569', "Add Handwriting Note")
-        btn_note.clicked.connect(self._add_handwriting_note)
-        btn_table = self._make_toolbar_btn('fa5s.table', " Table", group2, '#475569', "Add Table")
-        btn_table.clicked.connect(self._add_table)
-        btn_group = self._make_toolbar_btn('fa5s.layer-group', " Group", group2, '#475569', "Group Items")
-        btn_group.clicked.connect(self._add_group)
-
-        g2_layout.addWidget(btn_sticky)
-        g2_layout.addWidget(btn_note)
-        g2_layout.addWidget(btn_table)
-        g2_layout.addWidget(btn_group)
-        layout.addWidget(group2)
-        layout.addSpacing(6)
-
-        # ── GROUP 3: Toggles ──
-        group3 = QWidget(tb)
-        group3.setStyleSheet("background-color: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;")
-        g3_layout = QHBoxLayout(group3)
-        g3_layout.setContentsMargins(4, 2, 4, 2)
-        g3_layout.setSpacing(0)
-
-        self.btn_grid_mode = QPushButton(qta.icon('fa5s.grip-lines', color='#475569'), " Ruled", group3)
-        self.btn_grid_mode.setIconSize(QSize(13, 13))
-        self.btn_grid_mode.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_grid_mode.setToolTip("Toggle Ruled Paper")
+        # Grid Toggle
+        self.btn_grid_mode = self._make_toolbar_btn('fa5s.border-none', " Blank", tb, '#64748b', "Toggle Grid")
         self.btn_grid_mode.clicked.connect(self._toggle_grid_mode)
+        layout.addWidget(self.btn_grid_mode)
 
-        self.btn_mode_toggle = QPushButton(qta.icon('fa5s.graduation-cap', color='#10b981'), " Study", group3)
-        self.btn_mode_toggle.setIconSize(QSize(13, 13))
-        self.btn_mode_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_mode_toggle.setStyleSheet("color: #10b981; font-weight: 600;")
-        self.btn_mode_toggle.setToolTip("Switch AI Mode: Study (step-by-step) / Classroom (direct answer)")
-        self.btn_mode_toggle.clicked.connect(self._toggle_tutor_mode)
-
-        g3_layout.addWidget(self.btn_grid_mode)
-        g3_layout.addWidget(self.btn_mode_toggle)
-        layout.addWidget(group3)
-        layout.addSpacing(6)
-
-        # ── GROUP 4: LaTeX export ──
-        group4 = QWidget(tb)
-        group4.setStyleSheet("background-color: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;")
-        g4_layout = QHBoxLayout(group4)
-        g4_layout.setContentsMargins(6, 2, 6, 2)
-        g4_layout.setSpacing(4)
-
-        self.latex_combo = QComboBox(group4)
+        # LaTeX Export Controls
+        self.latex_combo = QComboBox(tb)
         self.latex_combo.addItems(["Homework", "Assignment", "Research Paper", "Lecture Slides"])
         self.latex_combo.setFixedWidth(110)
-
-        self.classroom_action_combo = QComboBox(group4)
+        
+        self.classroom_action_combo = QComboBox(tb)
         self.classroom_action_combo.addItems(["Solve Question", "Transcribe Notes"])
         self.classroom_action_combo.setFixedWidth(120)
 
-        btn_latex = QPushButton(qta.icon('fa5s.file-export', color='#7c3aed'), " LaTeX", group4)
-        btn_latex.setIconSize(QSize(13, 13))
-        btn_latex.setStyleSheet("color: #7c3aed; font-weight: 600;")
-        btn_latex.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_latex.setToolTip("Convert handwritten notes to LaTeX PDF")
-        btn_latex.clicked.connect(self._convert_to_latex)
+        layout.addWidget(self.latex_combo)
+        layout.addWidget(self.classroom_action_combo)
 
-        g4_layout.addWidget(self.latex_combo)
-        g4_layout.addWidget(self.classroom_action_combo)
-        g4_layout.addWidget(btn_latex)
-        layout.addWidget(group4)
-        layout.addSpacing(8)
+        btn_latex = self._make_toolbar_btn('fa5s.file-export', " LaTeX", tb, '#8b5cf6', "Convert to LaTeX")
+        btn_latex.clicked.connect(self._convert_to_latex)
+        layout.addWidget(btn_latex)
+
+        layout.addWidget(self._make_toolbar_separator(tb))
+
+        # Study/Classroom Mode
+        self.btn_mode_toggle = self._make_toolbar_btn('fa5s.graduation-cap', " Study", tb, '#10b981', "Toggle Mode")
+        self.btn_mode_toggle.clicked.connect(self._toggle_tutor_mode)
+        layout.addWidget(self.btn_mode_toggle)
+
+        layout.addStretch()
+
+        # Add mock Search and Share icons
+        btn_search = self._make_toolbar_btn('fa5s.search', "", tb, '#94a3b8', "Search")
+        btn_share = self._make_toolbar_btn('fa5s.share', "", tb, '#94a3b8', "Share")
+        layout.addWidget(btn_search)
+        layout.addWidget(btn_share)
 
         # Settings
         btn_settings = self._make_toolbar_btn('fa5s.cog', "", tb, '#94a3b8', "Settings")
@@ -767,93 +758,163 @@ class MainWindow(QMainWindow):
         self.ask_bar.pdf_requested.connect(self._open_pdf_dialog)
         pl.addWidget(self.ask_bar, stretch=1)
 
-        # Separator
-        sep2 = QFrame(pill)
-        sep2.setFrameShape(QFrame.Shape.VLine)
-        sep2.setFixedHeight(18)
-        sep2.setStyleSheet("color: #e2e8f0;")
-        pl.addSpacing(4)
-        pl.addWidget(sep2)
-        pl.addSpacing(4)
-
-        # Drawing tools
-        btn_cursor = QPushButton(qta.icon('fa5s.mouse-pointer', color='#475569'), "", pill)
-        btn_cursor.setIconSize(QSize(14, 14))
-        btn_cursor.setFixedSize(32, 32)
-        btn_cursor.setToolTip("Select")
-        btn_cursor.clicked.connect(lambda: self._set_tool("select"))
-
-        btn_pen = QPushButton(qta.icon('fa5s.pen-nib', color='#475569'), "", pill)
-        btn_pen.setIconSize(QSize(14, 14))
-        btn_pen.setFixedSize(32, 32)
-        btn_pen.setToolTip("Pen")
-        btn_pen.clicked.connect(lambda: self._set_tool("pen"))
-
-        self.btn_highlighter = QPushButton(qta.icon('fa5s.highlighter', color='#f59e0b'), "", pill)
-        self.btn_highlighter.setIconSize(QSize(14, 14))
-        self.btn_highlighter.setFixedSize(32, 32)
-        self.btn_highlighter.setToolTip("Highlighter")
-        self.btn_highlighter.clicked.connect(self._on_highlighter_clicked)
-
-        btn_eraser = QPushButton(qta.icon('fa5s.eraser', color='#475569'), "", pill)
-        btn_eraser.setIconSize(QSize(14, 14))
-        btn_eraser.setFixedSize(32, 32)
-        btn_eraser.setToolTip("Eraser")
-        btn_eraser.clicked.connect(lambda: self._set_tool("eraser"))
-
-        pl.addWidget(btn_cursor)
-        pl.addWidget(btn_pen)
-        pl.addWidget(self.btn_highlighter)
-        pl.addWidget(btn_eraser)
-
         outer.addWidget(pill)
         return hud
 
-    def _on_highlighter_clicked(self):
-        """
-        Activates highlighter tool and pops up a color selection menu (Yellow, Green, Blue, Pink).
-        """
-        self._set_tool("highlighter")
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #d1d1d6;
-                border-radius: 8px;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 6px 12px;
-                border-radius: 4px;
-                font-weight: 600;
-            }
-            QMenu::item:selected {
-                background-color: #f2f2f7;
-            }
-        """)
-
-        act_yellow = QAction("🟡 Yellow (#ffe066)", self)
-        act_yellow.triggered.connect(lambda: self.scene.set_highlighter_color("#ffe066"))
-
-        act_green = QAction("🟢 Green (#a8e6cf)", self)
-        act_green.triggered.connect(lambda: self.scene.set_highlighter_color("#a8e6cf"))
-
-        act_blue = QAction("🔵 Blue (#90caf9)", self)
-        act_blue.triggered.connect(lambda: self.scene.set_highlighter_color("#90caf9"))
-
-        act_pink = QAction("🌸 Pink (#ffb7b2)", self)
-        act_pink.triggered.connect(lambda: self.scene.set_highlighter_color("#ffb7b2"))
-
-        menu.addAction(act_yellow)
-        menu.addAction(act_green)
-        menu.addAction(act_blue)
-        menu.addAction(act_pink)
-
-        pos = self.btn_highlighter.mapToGlobal(self.btn_highlighter.rect().topLeft())
-        menu.exec(pos)
+    def _on_pen_popup_color_changed(self, color_hex: str):
+        if self.scene.active_tool == "highlighter":
+            self.scene.set_highlighter_color(color_hex)
+        else:
+            self.scene.set_pen_color(color_hex)
+            
+    def _on_pen_popup_thickness_changed(self, thickness: int):
+        self.scene.pen_width = float(thickness)
 
     def _set_tool(self, tool_name: str):
         self.scene.active_tool = tool_name
+
+    def _on_floating_tool_changed(self, tool: str):
+        was_active = (self.scene.active_tool == tool)
+        self._set_tool(tool)
+        
+        if tool in ["pen", "highlighter", "shapes", "eraser"]:
+            from PyQt6.QtCore import QPoint
+            if tool in ["pen", "highlighter"]:
+                btn = self.floating_toolbar.btn_highlighter if tool == "highlighter" else self.floating_toolbar.btn_pen
+                popup = self.pen_popup
+            elif tool == "shapes":
+                btn = self.floating_toolbar.btn_shapes
+                popup = self.shapes_popup
+            elif tool == "eraser":
+                btn = self.floating_toolbar.btn_eraser
+                popup = self.eraser_popup
+
+            if tool == "highlighter":
+                self.pen_popup.set_active_color(self.scene.highlighter_color)
+                self.pen_popup.set_active_thickness(int(self.scene.pen_width))
+            elif tool == "pen":
+                self.pen_popup.set_active_color(self.scene.pen_color)
+                self.pen_popup.set_active_thickness(int(self.scene.pen_width))
+            
+            if was_active and popup.isVisible():
+                popup.hide()
+            else:
+                self.pen_popup.hide()
+                self.shapes_popup.hide()
+                self.eraser_popup.hide()
+
+                pos = btn.mapTo(self._canvas_wrapper, QPoint(0, 0))
+                popup.adjustSize()
+                px = pos.x() - (popup.width() // 2) + (btn.width() // 2)
+                py = pos.y() - popup.height() - 10
+                
+                popup.move(px, py)
+                popup.show()
+                popup.raise_()
+        else:
+            self.pen_popup.hide()
+            self.shapes_popup.hide()
+            self.eraser_popup.hide()
+
+    def _on_shapes_popup_selected(self, shape_id: str):
+        self.scene.active_shape_type = shape_id
+
+    def _on_eraser_popup_size_changed(self, size: int):
+        self.scene.eraser_size = size
+
+    def _on_floating_action(self, action: str):
+        """Called when an action button is clicked in the floating toolbar."""
+        if action == "undo":
+            pass  # TODO: Undo last action
+        elif action == "sticky":
+            self._add_sticky_note()
+        elif action == "note":
+            self._add_handwriting_note()
+        elif action == "text":
+            self._add_text_box()
+        elif action == "table":
+            self._add_table()
+        elif action == "latex":
+            self._convert_to_latex()
+        elif action == "more":
+            self._show_overflow_menu()
+            
+    def _show_overflow_menu(self):
+        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtGui import QAction
+        menu = QMenu(self)
+        
+        # Add actions to menu
+        act_save = QAction("Save Board", self)
+        act_save.triggered.connect(self._on_toolbar_save)
+        menu.addAction(act_save)
+        
+        act_paste = QAction("Paste (Ctrl+V)", self)
+        act_paste.triggered.connect(self._on_toolbar_paste)
+        menu.addAction(act_paste)
+        
+        menu.addSeparator()
+        
+        act_image = QAction("Insert Image", self)
+        act_image.triggered.connect(self._on_insert_image)
+        menu.addAction(act_image)
+        
+        act_sticky = QAction("Sticky Note", self)
+        act_sticky.triggered.connect(self._add_sticky_note)
+        menu.addAction(act_sticky)
+        
+        act_table = QAction("Table", self)
+        act_table.triggered.connect(self._add_table)
+        menu.addAction(act_table)
+        
+        menu.addSeparator()
+        
+        act_grid = QAction("Toggle Grid/Blank", self)
+        act_grid.triggered.connect(self._toggle_grid_mode)
+        menu.addAction(act_grid)
+        
+        act_mode = QAction("Toggle Study/Classroom Mode", self)
+        act_mode.triggered.connect(self._toggle_tutor_mode)
+        menu.addAction(act_mode)
+        
+        # Show menu above the "more" button
+        btn = self.floating_toolbar.btn_more
+        pos = btn.mapToGlobal(btn.rect().topLeft())
+        pos.setY(pos.y() - menu.sizeHint().height() - 10)
+        menu.exec(pos)
+
+    def _on_insert_image(self):
+        from PyQt6.QtWidgets import QFileDialog
+        from .items.image_item import ImageItem
+        from PyQt6.QtGui import QPixmap
+        file_path, _ = QFileDialog.getOpenFileName(self, "Insert Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
+        if file_path:
+            self.scene.active_tool = "select"
+            pixmap = QPixmap(file_path)
+            if not pixmap.isNull():
+                item = ImageItem(pixmap)
+                # Center it
+                item.setPos(self.view.mapToScene(self.view.viewport().rect().center()))
+                # Images should stay under ink
+                item.setZValue(5)
+                self.scene.addItem(item)
+
+    def _add_text_box(self):
+        self.scene.active_tool = "select"
+        from .items.text_box_item import TextBoxItem
+        item = TextBoxItem(text="Type here...")
+        item.setPos(self.view.mapToScene(self.view.viewport().rect().center()))
+        self.scene.addItem(item)
+
+    def eventFilter(self, obj, event):
+        if hasattr(self, '_canvas_wrapper') and obj == self._canvas_wrapper and event.type() == QEvent.Type.Resize:
+            if hasattr(self, 'floating_toolbar'):
+                tb = self.floating_toolbar
+                if not tb.user_moved:
+                    x = (obj.width() - tb.sizeHint().width()) // 2
+                    y = obj.height() - tb.height() - 90  # 90px to clear HUD
+                    tb.setGeometry(x, y, tb.sizeHint().width(), tb.height())
+        return super().eventFilter(obj, event)
 
     def _open_pdf_dialog(self):
         """
@@ -962,12 +1023,18 @@ class MainWindow(QMainWindow):
             self.reference_panel.show_panel(self)
 
     def _toggle_grid_mode(self):
-        if self.scene.background_mode == "ruled":
-            self.scene.set_background_mode("dotted")
-            self.btn_grid_mode.setText("░ Dotted Grid")
-        else:
+        if self.scene.background_mode == "blank":
             self.scene.set_background_mode("ruled")
-            self.btn_grid_mode.setText("🗎 Ruled Paper")
+            self.btn_grid_mode.setText(" Ruled")
+            self.btn_grid_mode.setIcon(qta.icon('fa5s.grip-lines', color='#475569'))
+        elif self.scene.background_mode == "ruled":
+            self.scene.set_background_mode("dotted")
+            self.btn_grid_mode.setText(" Dotted")
+            self.btn_grid_mode.setIcon(qta.icon('fa5s.braille', color='#475569'))
+        else:
+            self.scene.set_background_mode("blank")
+            self.btn_grid_mode.setText(" Blank")
+            self.btn_grid_mode.setIcon(qta.icon('fa5s.square', color='#475569'))
 
     def _on_zoom_changed(self, zoom_factor: float):
         self.lbl_zoom.setText(f"{int(zoom_factor * 100)}%")
@@ -1133,11 +1200,10 @@ class MainWindow(QMainWindow):
                 self._solver_workers.append(worker)
                 worker.start()
         else:
-            note = HandwritingNote(text=text)
-            note.setPos(center_pos)
-            note.widget.video_requested.connect(self._on_generate_video_requested)
-            note.widget.solve_requested.connect(self._on_stem_question_asked)
-            self.scene.addItem(note)
+            from .items.text_box_item import TextBoxItem
+            item = TextBoxItem(text=text)
+            item.setPos(center_pos)
+            self.scene.addItem(item)
 
     def _add_sticky_note(self):
         self.scene.active_tool = "select"

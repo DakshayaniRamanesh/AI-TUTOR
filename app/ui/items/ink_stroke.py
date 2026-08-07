@@ -3,7 +3,7 @@ Ink Stroke Canvas Item (Pen, Highlighter, Object & Pixel Eraser)
 """
 
 from PyQt6.QtWidgets import QGraphicsPathItem, QGraphicsItem
-from PyQt6.QtGui import QPen, QColor, QPainterPath, QPainter
+from PyQt6.QtGui import QPen, QColor, QPainterPath, QPainter, QPainterPathStroker
 from PyQt6.QtCore import Qt
 from .base_item import BaseGraphicsItemMixin
 
@@ -30,6 +30,27 @@ class InkStroke(QGraphicsPathItem, BaseGraphicsItemMixin):
 
         if path:
             self.setPath(path)
+
+    def boundingRect(self):
+        return self.shape().boundingRect()
+
+    def shape(self) -> QPainterPath:
+        stroker = QPainterPathStroker()
+        stroker.setWidth(max(20.0, self.stroke_width + 10))
+        stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
+        stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        return stroker.createStroke(self.path())
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(self.pen())
+        painter.drawPath(self.path())
+        
+        if self.isSelected():
+            sel_pen = QPen(QColor("#007aff"), 1.5, Qt.PenStyle.DashLine)
+            painter.setPen(sel_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(self.path().boundingRect().adjusted(-2, -2, 2, 2))
 
     def contextMenuEvent(self, event):
         self.build_context_menu(event.screenPos())

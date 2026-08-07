@@ -34,12 +34,15 @@ class CanvasScene(QGraphicsScene):
         
         # Background mode: "dotted" or "ruled" (ruled is default notebook mode)
         self.background_mode = "ruled"
+        self.background_mode = "blank"
         
         # Active tool state: "select", "pen", "highlighter", "eraser"
         self.active_tool = "select"
         self.pen_color = "#1c1c1e"
         self.pen_width = 3.0
         self.highlighter_color = "#ffe066"
+        self.active_shape_type = "rectangle"
+        self.eraser_size = 2 # 1=small, 2=medium, 3=large
         
         self.stroke_processor = StrokeProcessor(enable_smart_shapes=True, enable_smoothing=True)
         self._current_path_item = None
@@ -70,14 +73,22 @@ class CanvasScene(QGraphicsScene):
         self.highlighter_color = color_hex
         self.active_tool = "highlighter"
 
+    def set_pen_color(self, color_hex: str):
+        self.pen_color = color_hex
+        self.active_tool = "pen"
+
     def set_background_mode(self, mode: str):
-        if mode in ["dotted", "ruled"]:
+        if mode in ["dotted", "ruled", "blank"]:
             self.background_mode = mode
             self.update()
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
+
+        if self.background_mode == "blank":
+            painter.fillRect(rect, QColor("#ffffff"))
+            return
         painter.fillRect(rect, QColor("#f4f4f6"))
-        
+              
         grid_size = 28
         left = int(rect.left()) - (int(rect.left()) % grid_size)
         top = int(rect.top()) - (int(rect.top()) % grid_size)
@@ -96,7 +107,16 @@ class CanvasScene(QGraphicsScene):
                 painter.drawLine(left, y, right, y)
 
     def erase_items_at(self, pos: QPointF):
-        items = self.items(pos)
+        from PyQt6.QtGui import QPainterPath
+        radius = 5
+        if self.eraser_size == 1: radius = 5
+        elif self.eraser_size == 2: radius = 10
+        elif self.eraser_size == 3: radius = 15
+        
+        path = QPainterPath()
+        path.addEllipse(pos, radius, radius)
+        
+        items = self.items(path, Qt.ItemSelectionMode.IntersectsItemShape)
         for item in items:
             if item.scene() == self:
                 if item == self._active_handles or item == self._active_properties_panel:
@@ -115,8 +135,8 @@ class CanvasScene(QGraphicsScene):
         self.deactivate_active_shape()
         self.clear()
 
-    def activate_shape(self, shape_item: SmartShapeItem):
-        """Activates a SmartShapeItem, attaching interactive resize handles and properties panel."""
+    def activate_shape(self, shape_item):
+        """Activates an item, attaching interactive resize handles and properties panel."""
         if not shape_item or shape_item.scene() != self:
             return
 
@@ -126,14 +146,15 @@ class CanvasScene(QGraphicsScene):
         self.deactivate_active_shape()
 
         self._active_shape_item = shape_item
-        self._active_handles = ShapeResizeHandles(shape_item)
-        # Note: _active_handles is a child item (setParentItem(shape_item)), so it is automatically in the scene.
-
-        self._active_properties_panel = ShapePropertiesPanel(shape_item)
-        # Note: _active_properties_panel is parented to shape_item (setParentItem), so it is automatically in the scene.
-
-        # Connect live handle drag signal to toolbar refresh
-        self._active_handles.signals.geometry_changed.connect(self._active_properties_panel.refresh)
+        
+        if isinstance(shape_item, SmartShapeItem):
+            self._active_handles = ShapeResizeHandles(shape_item)
+            self._active_properties_panel = ShapePropertiesPanel(shape_item)
+            self._active_handles.signals.geometry_changed.connect(self._active_properties_panel.refresh)
+        else:
+            from .bounding_box_handles import BoundingBoxHandles
+            self._active_handles = BoundingBoxHandles(shape_item)
+            self._active_properties_panel = None
 
     def deactivate_active_shape(self):
         """Deactivates active shape and hides handles and properties toolbar.
@@ -219,47 +240,82 @@ class CanvasScene(QGraphicsScene):
             x = data.get("x", 0)
             y = data.get("y", 0)
 
-            item = None
-            if itype == "SmartShapeItem":
-                pen = QPen(QColor(data.get("color", "#1c1c1e")), data.get("width", 3.0))
-                item = SmartShapeItem(
-                    shape_type=data.get("stroke_type", "rectangle"),
-                    fit_data={},
-                    pen=pen,
-                    raw_stroke=data.get("raw_stroke", [])
-                )
-                dims = data.get("dimensions_px", {})
-                if dims:
-                    item.set_dimensions_px(dims)
-            elif itype == "StickyNote":
-                item = StickyNote(text=data.get("text", ""), color_key=data.get("color_key", "yellow"))
-            elif itype == "HandwritingNote":
-                item = HandwritingNote(text=data.get("text", ""))
-            elif itype == "TableItem":
-                item = TableItem(headers=data.get("headers"), rows=data.get("rows"))
-            elif itype == "CardItem":
-                item = CardItem(title=data.get("title", "Card"), content=data.get("content", ""))
-            elif itype == "GraphCard":
-                item = GraphCard(title=data.get("title", "Plot"), image_path=data.get("image_path", ""))
-            elif itype == "VideoFloatItem":
-                item = VideoFloatItem(
-                    job_id=data.get("job_id", ""),
-                    title=data.get("title", "Video"),
-                    video_url_or_path=data.get("video_path", "")
-                )
-            elif itype == "AnswerBubble":
-                item = AnswerBubble(
-                    question=data.get("question", ""),
-                    full_text=data.get("full_text", "")
-                )
-            elif itype == "GroupSelection":
-                item = GroupSelection(title=data.get("title", "Group"))
-
+            item = self.create_item_from_dict(data)
             if item:
                 item.setPos(x, y)
                 if "z_value" in data:
                     item.setZValue(data["z_value"])
                 self.addItem(item)
+
+    def create_item_from_dict(self, data: dict):
+        itype = data.get("type")
+        item = None
+        if itype == "SmartShapeItem":
+            pen = QPen(QColor(data.get("color", "#1c1c1e")), data.get("width", 3.0))
+            item = SmartShapeItem(
+                shape_type=data.get("stroke_type", "rectangle"),
+                fit_data={},
+                pen=pen,
+                raw_stroke=data.get("raw_stroke", [])
+            )
+            dims = data.get("dimensions_px", {})
+            if dims:
+                item.set_dimensions_px(dims)
+        elif itype == "InkStroke":
+            path = QPainterPath()
+            elements = data.get("path_elements", [])
+            for el in elements:
+                if el["type"] == 0:  # MoveTo
+                    path.moveTo(el["x"], el["y"])
+                elif el["type"] == 1:  # LineTo
+                    path.lineTo(el["x"], el["y"])
+                elif el["type"] == 2:  # CurveTo
+                    pass # Approximation or not supported
+                elif el["type"] == 3:  # CurveToData
+                    pass
+            item = InkStroke(
+                path=path,
+                tool_mode=data.get("tool_mode", "pen"),
+                color=data.get("color", "#1c1c1e"),
+                width=data.get("width", 3.0)
+            )
+        elif itype == "TextBoxItem":
+            from .items.text_box_item import TextBoxItem
+            item = TextBoxItem(text=data.get("text", ""))
+        elif itype == "ImageItem":
+            import base64
+            from PyQt6.QtGui import QImage, QPixmap
+            b64_data = data.get("image_base64", "")
+            img_data = base64.b64decode(b64_data)
+            img = QImage.fromData(img_data)
+            if not img.isNull():
+                item = ImageItem(QPixmap.fromImage(img))
+        elif itype == "StickyNote":
+            item = StickyNote(text=data.get("text", ""), color_key=data.get("color_key", "yellow"))
+        elif itype == "HandwritingNote":
+            item = HandwritingNote(text=data.get("text", ""))
+        elif itype == "TableItem":
+            item = TableItem(headers=data.get("headers"), rows=data.get("rows"))
+        elif itype == "CardItem":
+            item = CardItem(title=data.get("title", "Card"), content=data.get("content", ""))
+        elif itype == "GraphCard":
+            item = GraphCard(title=data.get("title", "Plot"), image_path=data.get("image_path", ""))
+        elif itype == "VideoFloatItem":
+            from .items.video_float_item import VideoFloatItem
+            item = VideoFloatItem(
+                job_id=data.get("job_id", ""),
+                title=data.get("title", "Video"),
+                video_url_or_path=data.get("video_path", "")
+            )
+        elif itype == "AnswerBubble":
+            from .items.answer_bubble import AnswerBubble
+            item = AnswerBubble(
+                question=data.get("question", ""),
+                full_text=data.get("full_text", "")
+            )
+        elif itype == "GroupSelection":
+            item = GroupSelection(title=data.get("title", "Group"))
+        return item
 
     def handle_tablet_event(self, event, scene_pos: QPointF) -> bool:
         import time
@@ -399,6 +455,20 @@ class CanvasScene(QGraphicsScene):
             self.erase_selected_items()
             self.erase_items_at(event.scenePos())
             event.accept()
+        elif self.active_tool == "shapes" and event.button() == Qt.MouseButton.LeftButton:
+            self._shape_start_pos = pos
+            shape_type = self.active_shape_type
+            if shape_type in ["rectangle", "circle", "ellipse", "square"]:
+                fit_data = {"bbox": (pos.x(), pos.y(), 0, 0)}
+            elif shape_type in ["line", "arrow"]:
+                fit_data = {"p1": (pos.x(), pos.y()), "p2": (pos.x(), pos.y())}
+            else:
+                fit_data = {}
+                
+            pen = QPen(QColor(self.pen_color), self.pen_width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            self._current_drawing_shape = SmartShapeItem(shape_type=shape_type, fit_data=fit_data, pen=pen)
+            self.addItem(self._current_drawing_shape)
+            event.accept()
         elif self.active_tool in ["pen", "highlighter"] and event.button() == Qt.MouseButton.LeftButton:
             self._stroke_start_pos = pos
             self._hold_last_pos = pos
@@ -432,6 +502,23 @@ class CanvasScene(QGraphicsScene):
 
         if self._is_erasing and self.active_tool == "eraser":
             self.erase_items_at(pos)
+            event.accept()
+        elif self.active_tool == "shapes" and hasattr(self, '_shape_start_pos') and self._shape_start_pos:
+            st = self.active_shape_type
+            if st in ["rectangle", "circle", "ellipse", "square"]:
+                x = min(pos.x(), self._shape_start_pos.x())
+                y = min(pos.y(), self._shape_start_pos.y())
+                w = abs(pos.x() - self._shape_start_pos.x())
+                h = abs(pos.y() - self._shape_start_pos.y())
+                if st in ["circle", "square"]:
+                    side = max(w, h)
+                    w, h = side, side
+                self._current_drawing_shape.fit_data["bbox"] = (x, y, w, h)
+            elif st in ["line", "arrow"]:
+                self._current_drawing_shape.fit_data["p2"] = (pos.x(), pos.y())
+                
+            self._current_drawing_shape._init_geometry_from_fit()
+            self._current_drawing_shape.update_path()
             event.accept()
         elif self._current_path_item and self._current_painter_path:
             self.stroke_processor.add_point(pos, pressure=1.0)
@@ -473,6 +560,11 @@ class CanvasScene(QGraphicsScene):
 
         if self._is_erasing:
             self._is_erasing = False
+            event.accept()
+        elif self.active_tool == "shapes" and hasattr(self, '_shape_start_pos') and self._shape_start_pos:
+            self.activate_shape(self._current_drawing_shape)
+            self._shape_start_pos = None
+            self._current_drawing_shape = None
             event.accept()
         elif self._current_path_item:
             if self._is_live_snapped and self._snapped_shape_item:

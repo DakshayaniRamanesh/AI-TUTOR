@@ -27,7 +27,7 @@ from PyQt6.QtCore import Qt, QPointF, QRectF, QLineF
 # ==============================================================================
 # DEBUG FLAG — set to True to print classification decisions during development
 # ==============================================================================
-SHAPE_DEBUG: bool = True
+SHAPE_DEBUG: bool = False
 
 
 # ==============================================================================
@@ -787,8 +787,8 @@ class StrokeProcessor:
             timestamp = time.time()
         self.raw_points.append((float(pos.x()), float(pos.y()), float(pressure), float(timestamp)))
 
-    def make_handwriting_item(self, pen: QPen):
-        """Builds and returns a smoothed freehand handwriting QGraphicsPathItem."""
+    def make_handwriting_item(self, pen: QPen, tool_mode: str = "pen"):
+        """Builds and returns a smoothed freehand handwriting InkStroke."""
         if not self.raw_points:
             return None
 
@@ -803,7 +803,8 @@ class StrokeProcessor:
             for pt in smoothed_pts[1:]:
                 path.lineTo(QPointF(float(pt[0]), float(pt[1])))
 
-        item = QGraphicsPathItem(path)
+        from .items.ink_stroke import InkStroke
+        item = InkStroke(path=path, tool_mode=tool_mode, color=pen.color().name(), width=pen.widthF())
         item.setPen(pen)
         item.raw_stroke = self.raw_points
         item.processed_stroke = [tuple(pt) for pt in smoothed_pts]
@@ -836,7 +837,7 @@ class StrokeProcessor:
             pen.setColor(highlight_color)
             pen.setWidthF(18.0)
 
-        return self.make_handwriting_item(pen)
+        return self.make_handwriting_item(pen, tool_mode=tool_mode)
 
     def classify_and_snap(self,
                           color: QColor = QColor("#1c1c1e"),
@@ -876,4 +877,4 @@ class StrokeProcessor:
             item.classification_confidence = confidence
             return item
 
-        return self.make_handwriting_item(pen)
+        return self.make_handwriting_item(pen, tool_mode=tool_mode)
