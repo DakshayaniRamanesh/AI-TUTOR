@@ -16,6 +16,9 @@ Bug & UX Fixes:
    added drop shadow, explicit close button, and generous padding/spacing.
 """
 
+import sys
+print(f"[MODULE LOAD] shape_properties_panel.py loaded from: {__file__}", flush=True)
+
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QComboBox,
     QDoubleSpinBox, QLabel, QFrame, QGraphicsProxyWidget,
@@ -186,12 +189,12 @@ class ShapePropertiesWidget(QFrame):
             }
         """)
 
-        # Add drop shadow
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(16)
-        shadow.setColor(QColor(0, 0, 0, 45))
-        shadow.setOffset(0, 4)
-        self.setGraphicsEffect(shadow)
+        # # Add drop shadow (commented out for empirical verification)
+        # shadow = QGraphicsDropShadowEffect(self)
+        # shadow.setBlurRadius(16)
+        # shadow.setColor(QColor(0, 0, 0, 45))
+        # shadow.setOffset(0, 4)
+        # self.setGraphicsEffect(shadow)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(12, 12, 12, 12)

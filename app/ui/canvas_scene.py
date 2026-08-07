@@ -130,8 +130,7 @@ class CanvasScene(QGraphicsScene):
         # Note: _active_handles is a child item (setParentItem(shape_item)), so it is automatically in the scene.
 
         self._active_properties_panel = ShapePropertiesPanel(shape_item)
-        self.addItem(self._active_properties_panel)
-        self._active_properties_panel.attach_to_scene(self)
+        # Note: _active_properties_panel is parented to shape_item (setParentItem), so it is automatically in the scene.
 
         # Connect live handle drag signal to toolbar refresh
         self._active_handles.signals.geometry_changed.connect(self._active_properties_panel.refresh)
