@@ -136,7 +136,11 @@ class CanvasScene(QGraphicsScene):
         self._active_handles.signals.geometry_changed.connect(self._active_properties_panel.refresh)
 
     def deactivate_active_shape(self):
-        """Deactivates active shape and hides handles and properties toolbar."""
+        """Deactivates active shape and hides handles and properties toolbar.
+        Also clears Qt's native selection state so selectedItems() stays in sync
+        with the visual deselection — preventing the Delete handler from acting on
+        a shape that the user has already visually dismissed.
+        """
         if self._active_handles:
             self._active_handles.setParentItem(None)
             if self._active_handles.scene() == self:
@@ -148,6 +152,12 @@ class CanvasScene(QGraphicsScene):
             if self._active_properties_panel.scene() == self:
                 self.removeItem(self._active_properties_panel)
             self._active_properties_panel = None
+
+        # Always clear Qt selection state so Delete/Backspace key handler (which
+        # reads scene.selectedItems()) cannot delete a shape that is no longer
+        # visually active.  clearSelection() is safe to call even when nothing
+        # is selected.
+        self.clearSelection()
 
         self._active_shape_item = None
 
