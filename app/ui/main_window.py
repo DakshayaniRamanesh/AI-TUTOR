@@ -39,6 +39,7 @@ from .views.settings_dialog import SettingsDialog
 from .views.progress_dialog import ProgressDialog
 from .theme_manager import ThemeManager
 from .widgets.latex_editor_widget import LatexEditorWidget
+from .widgets.speedometer_progress_widget import SpeedometerProgressWidget
 
 
 from ..backend.math_engine.stem_solver import solve_stem_question
@@ -327,6 +328,8 @@ class MainWindow(QMainWindow):
         self.latex_editor_widget = LatexEditorWidget(self.canvas_tabs)
         self.latex_editor_widget.hide()
         self.latex_editor_widget.close_requested.connect(self._close_latex_editor_tab)
+        self.latex_editor_widget.pdf_compiled.connect(self._on_pdf_compiled)
+        self.last_compiled_pdf_path = None
 
         # Scene and View
         self.scene = CanvasScene(self)
@@ -729,7 +732,16 @@ class MainWindow(QMainWindow):
                 background-color: #dbeafe;
             }
         """)
-        self.btn_save.clicked.connect(self._on_toolbar_save)
+        # Non-Popup Speedometer Live Status Widget
+        self.speedometer_widget = SpeedometerProgressWidget(tb)
+        layout.addWidget(self.speedometer_widget)
+
+        # In-App View PDF Button (Appears on top right panel after PDF is exported)
+        self.btn_view_pdf = self._make_toolbar_btn('fa5s.file-pdf', " View PDF", tb, '#ef4444', "View Compiled PDF In-App")
+        self.btn_view_pdf.clicked.connect(self._open_in_app_pdf_viewer)
+        self.btn_view_pdf.setVisible(False)
+        layout.addWidget(self.btn_view_pdf)
+
         layout.addWidget(self.btn_save)
 
         layout.addWidget(self._make_toolbar_separator(tb))
@@ -1516,8 +1528,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "API Connection Error", f"Could not connect to the backend server.\nPlease ensure you are running the backend local server (`python backend/local_server.py`).\n\nError: {e}")
             return
         
-        self.progress_dialog = ProgressDialog(self, title=f"Generating {template_type}...")
-        self.progress_dialog.show()
+        # Speedometer Live Progress Indicator (Non-popup top header indicator)
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.start_task(f"Generating {template_type}...")
         
         self.latex_worker = LatexPollWorker(job_id, self)
         self.latex_worker.status_updated.connect(self._on_latex_status_updated)
@@ -1532,14 +1545,52 @@ class MainWindow(QMainWindow):
         ThemeManager.instance().toggle_theme()
 
     def _close_latex_editor_tab(self):
-        idx = self.canvas_tabs.indexOf(self.latex_editor_widget)
+        if self.latex_editor_widget.confirm_close():
+            idx = self.canvas_tabs.indexOf(self.latex_editor_widget)
+            if idx != -1:
+                self.canvas_tabs.removeTab(idx)
+            self.canvas_tabs.setCurrentWidget(self.view)
+
+    def _close_pdf_split_screen(self):
+        idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
         if idx != -1:
             self.canvas_tabs.removeTab(idx)
         self.canvas_tabs.setCurrentWidget(self.view)
 
+    def _on_canvas_tab_closed(self, index: int):
+        if index == 0:
+            return
+        widget = self.canvas_tabs.widget(index)
+        if widget == self.latex_editor_widget:
+            self._close_latex_editor_tab()
+        elif widget == self.pdf_viewer_widget:
+            self._close_pdf_split_screen()
+
+    def _on_pdf_compiled(self, pdf_path: str):
+        self.last_compiled_pdf_path = pdf_path
+        if hasattr(self, 'btn_view_pdf'):
+            self.btn_view_pdf.setVisible(True)
+
+    def _open_in_app_pdf_viewer(self):
+        if not hasattr(self, 'last_compiled_pdf_path') or not self.last_compiled_pdf_path or not os.path.exists(self.last_compiled_pdf_path):
+            QMessageBox.information(self, "No PDF Available", "No compiled PDF file is available to view yet.\nPlease export your LaTeX document as a PDF first.")
+            return
+
+        self.pdf_viewer_widget.load_pdf(self.last_compiled_pdf_path)
+        fname = os.path.basename(self.last_compiled_pdf_path)
+        tab_title = f"📄 PDF: {fname[:16]}..." if len(fname) > 18 else f"📄 PDF: {fname}"
+
+        if self.canvas_tabs.indexOf(self.pdf_viewer_widget) == -1:
+            self.canvas_tabs.addTab(self.pdf_viewer_widget, tab_title)
+        else:
+            idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
+            self.canvas_tabs.setTabText(idx, tab_title)
+
+        self.canvas_tabs.setCurrentWidget(self.pdf_viewer_widget)
+
     def _on_latex_ready(self, job_id, latex_code):
-        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
-            self.progress_dialog.finish_success()
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.finish_success("LaTeX Ready!")
         self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
 
         notebook_title = self.current_board.title or "LaTeX_Document"
@@ -1555,8 +1606,8 @@ class MainWindow(QMainWindow):
         self.canvas_tabs.setCurrentWidget(self.latex_editor_widget)
 
     def _on_latex_status_updated(self, job_id, stage, progress):
-        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
-            self.progress_dialog.update_progress(stage, progress)
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.update_progress(stage, progress)
         self.ask_bar.input_field.setPlaceholderText(f"{stage} ({progress}%)")
         
     def _on_latex_pdf_ready(self, job_id, pdf_url, pdf_b64):

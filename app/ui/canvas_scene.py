@@ -60,7 +60,10 @@ class CanvasScene(QGraphicsScene):
         self._hold_last_pos = None
 
         from .theme_manager import ThemeManager
-        ThemeManager.instance().theme_changed.connect(lambda: self.update())
+        tm = ThemeManager.instance()
+        if tm.is_dark():
+            self.pen_color = "#ffffff"
+        tm.theme_changed.connect(self._on_theme_changed)
         self._is_live_snapped = False
         self._snapped_shape_item = None
 
@@ -74,6 +77,40 @@ class CanvasScene(QGraphicsScene):
         self._auto_convert_timer = QTimer(self)
         self._auto_convert_timer.setSingleShot(True)
         self._auto_convert_timer.timeout.connect(self._on_auto_convert_ink)
+
+    def _on_theme_changed(self, theme_name: str):
+        is_dark = theme_name == "dark"
+        
+        # 1. Update default pen color to maintain high contrast readability
+        if is_dark and self.pen_color in ["#1c1c1e", "#000000", "#0b2545", "#0f172a", "#111111"]:
+            self.pen_color = "#ffffff"
+        elif not is_dark and self.pen_color in ["#ffffff", "#f4f4f5", "#f8f9fa", "#e2e8f0"]:
+            self.pen_color = "#1c1c1e"
+
+        # 2. Automatically adjust existing canvas stroke & item colors for maximum legibility!
+        for item in self.items():
+            if isinstance(item, InkStroke):
+                col = item.pen().color().name().lower()
+                if is_dark and col in ["#1c1c1e", "#000000", "#0b2545", "#0f172a", "#111111"]:
+                    new_pen = QPen(QColor("#ffffff"), item.stroke_width)
+                    new_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                    new_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    item.setPen(new_pen)
+                    item.stroke_color = QColor("#ffffff")
+                elif not is_dark and col in ["#ffffff", "#f4f4f5", "#f8f9fa", "#e2e8f0"]:
+                    new_pen = QPen(QColor("#1c1c1e"), item.stroke_width)
+                    new_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                    new_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    item.setPen(new_pen)
+                    item.stroke_color = QColor("#1c1c1e")
+            elif isinstance(item, SmartShapeItem):
+                col = item.pen.color().name().lower()
+                if is_dark and col in ["#1c1c1e", "#000000", "#0b2545", "#0f172a", "#111111"]:
+                    item.set_pen_color("#ffffff")
+                elif not is_dark and col in ["#ffffff", "#f4f4f5", "#f8f9fa", "#e2e8f0"]:
+                    item.set_pen_color("#1c1c1e")
+                    
+        self.update()
 
     def set_highlighter_color(self, color_hex: str):
         self.highlighter_color = color_hex
