@@ -1,7 +1,8 @@
 """
-Freeform Canvas Scene (Infinite SceneRect, Dotted & Ruled Paper Backgrounds, Freehand Drawing, Universal Eraser & Serialization)
+Freeform Canvas Scene (Infinite SceneRect, Dotted & Ruled Paper Backgrounds, Freehand Drawing, Shape Snapping & Serialization)
 """
 
+import math
 from PyQt6.QtWidgets import QGraphicsScene, QGraphicsPathItem, QGraphicsProxyWidget
 from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QPainter
 from PyQt6.QtCore import Qt, QRectF, QPointF, QTimer, pyqtSignal
@@ -16,7 +17,12 @@ from .items.video_float_item import VideoFloatItem
 from .items.answer_bubble import AnswerBubble
 from .items.group_selection import GroupSelection
 from .items.image_item import ImageItem
-from .stroke_processor import StrokeProcessor
+from .items.smart_shape_item import SmartShapeItem
+from .shape_handles import ShapeResizeHandles
+from .shape_properties_panel import ShapePropertiesPanel
+from .stroke_processor import (
+    StrokeProcessor, HOLD_DURATION_MS, HOLD_MOVE_THRESHOLD_PX, SHAPE_DEBUG
+)
 
 class CanvasScene(QGraphicsScene):
     ink_written_detected = pyqtSignal(str, QPointF)
@@ -33,13 +39,26 @@ class CanvasScene(QGraphicsScene):
         self.active_tool = "select"
         self.pen_color = "#1c1c1e"
         self.pen_width = 3.0
-        self.highlighter_color = "#ffe066" # Yellow, Green, Blue, Pink
+        self.highlighter_color = "#ffe066"
         
         self.stroke_processor = StrokeProcessor(enable_smart_shapes=True, enable_smoothing=True)
         self._current_path_item = None
         self._current_painter_path = None
         self._stroke_start_pos = None
         self._is_erasing = False
+
+        # Live Hold-to-Snap State Machine
+        self._hold_snap_timer = QTimer(self)
+        self._hold_snap_timer.setSingleShot(True)
+        self._hold_snap_timer.timeout.connect(self._on_hold_snap_timeout)
+        self._hold_last_pos = None
+        self._is_live_snapped = False
+        self._snapped_shape_item = None
+
+        # Active Shape & Overlay Controls
+        self._active_shape_item: SmartShapeItem = None
+        self._active_handles: ShapeResizeHandles = None
+        self._active_properties_panel: ShapePropertiesPanel = None
 
         # Auto-convert handwriting timer (Apple Notes Math Notes style)
         self._recent_ink_strokes = []
@@ -50,7 +69,6 @@ class CanvasScene(QGraphicsScene):
     def set_highlighter_color(self, color_hex: str):
         self.highlighter_color = color_hex
         self.active_tool = "highlighter"
-
 
     def set_background_mode(self, mode: str):
         if mode in ["dotted", "ruled"]:
@@ -81,25 +99,101 @@ class CanvasScene(QGraphicsScene):
         items = self.items(pos)
         for item in items:
             if item.scene() == self:
+                if item == self._active_handles or item == self._active_properties_panel:
+                    continue
+                if item == self._active_shape_item:
+                    self.deactivate_active_shape()
                 self.removeItem(item)
 
     def erase_selected_items(self):
         for item in self.selectedItems():
+            if item == self._active_shape_item:
+                self.deactivate_active_shape()
             self.removeItem(item)
 
     def clear_all(self):
-        """
-        Clears all items from the canvas scene.
-        """
+        self.deactivate_active_shape()
         self.clear()
 
+    def activate_shape(self, shape_item: SmartShapeItem):
+        """Activates a SmartShapeItem, attaching interactive resize handles and properties panel."""
+        if not shape_item or shape_item.scene() != self:
+            return
+
+        if self._active_shape_item == shape_item:
+            return
+
+        self.deactivate_active_shape()
+
+        self._active_shape_item = shape_item
+        self._active_handles = ShapeResizeHandles(shape_item)
+        # Note: _active_handles is a child item (setParentItem(shape_item)), so it is automatically in the scene.
+
+        self._active_properties_panel = ShapePropertiesPanel(shape_item)
+        self.addItem(self._active_properties_panel)
+        self._active_properties_panel.attach_to_scene(self)
+
+        # Connect live handle drag signal to toolbar refresh
+        self._active_handles.signals.geometry_changed.connect(self._active_properties_panel.refresh)
+
+    def deactivate_active_shape(self):
+        """Deactivates active shape and hides handles and properties toolbar."""
+        if self._active_handles:
+            self._active_handles.setParentItem(None)
+            if self._active_handles.scene() == self:
+                self.removeItem(self._active_handles)
+            self._active_handles = None
+
+        if self._active_properties_panel:
+            self._active_properties_panel.detach_from_scene()
+            if self._active_properties_panel.scene() == self:
+                self.removeItem(self._active_properties_panel)
+            self._active_properties_panel = None
+
+        self._active_shape_item = None
+
+    def _on_hold_snap_timeout(self):
+        """Fires only when user holds cursor steady for HOLD_DURATION_MS after drawing.
+        Delegates classification and snapping entirely to StrokeProcessor.classify_and_snap.
+        Shape snapping must NEVER happen on release — only here.
+        """
+        if SHAPE_DEBUG:
+            pt_count = len(self.stroke_processor.raw_points) if self.stroke_processor else 0
+            print(f"[HoldSnapTimer] TIMEOUT FIRED! Evaluating stroke with {pt_count} points...", flush=True)
+
+        if not self._current_path_item or not self.stroke_processor.raw_points:
+            if SHAPE_DEBUG:
+                print(f"[HoldSnapTimer] Timeout aborted: missing path_item or raw_points", flush=True)
+            return
+
+        tool_name = self.active_tool
+        color = self.highlighter_color if tool_name == "highlighter" else self.pen_color
+
+        snapped_item = self.stroke_processor.classify_and_snap(
+            color=color,
+            width=self.pen_width,
+            tool_mode=tool_name
+        )
+
+        if isinstance(snapped_item, SmartShapeItem):
+            if SHAPE_DEBUG:
+                print(f"[HoldSnapTimer] SNAP SUCCESS! Replacing raw stroke with SmartShapeItem({snapped_item.stroke_type}) live while held.", flush=True)
+            # Hide live raw path and show snapped shape
+            if self._current_path_item and self._current_path_item.scene() == self:
+                self.removeItem(self._current_path_item)
+
+            self.addItem(snapped_item)
+            self._snapped_shape_item = snapped_item
+            self._is_live_snapped = True
+            self.activate_shape(snapped_item)
+        else:
+            if SHAPE_DEBUG:
+                print(f"[HoldSnapTimer] Classified as handwriting. Kept raw stroke.", flush=True)
+
     def to_dict_list(self) -> list[dict]:
-        """
-        Serializes all supported canvas items into a list of dict payloads.
-        """
         items_data = []
         for item in self.items():
-            if hasattr(item, "to_dict"):
+            if hasattr(item, "to_dict") and item not in [self._active_handles, self._active_properties_panel]:
                 try:
                     items_data.append(item.to_dict())
                 except Exception as err:
@@ -107,9 +201,6 @@ class CanvasScene(QGraphicsScene):
         return items_data
 
     def load_from_dict_list(self, items_data: list[dict], video_requested_callback=None, solve_requested_callback=None):
-        """
-        Restores canvas items from a list of dict payloads.
-        """
         self.clear_all()
         if not items_data:
             return
@@ -120,15 +211,21 @@ class CanvasScene(QGraphicsScene):
             y = data.get("y", 0)
 
             item = None
-            if itype == "StickyNote":
+            if itype == "SmartShapeItem":
+                pen = QPen(QColor(data.get("color", "#1c1c1e")), data.get("width", 3.0))
+                item = SmartShapeItem(
+                    shape_type=data.get("stroke_type", "rectangle"),
+                    fit_data={},
+                    pen=pen,
+                    raw_stroke=data.get("raw_stroke", [])
+                )
+                dims = data.get("dimensions_px", {})
+                if dims:
+                    item.set_dimensions_px(dims)
+            elif itype == "StickyNote":
                 item = StickyNote(text=data.get("text", ""), color_key=data.get("color_key", "yellow"))
             elif itype == "HandwritingNote":
                 item = HandwritingNote(text=data.get("text", ""))
-                if hasattr(item, "widget"):
-                    if video_requested_callback:
-                        item.widget.video_requested.connect(video_requested_callback)
-                    if solve_requested_callback:
-                        item.widget.solve_requested.connect(solve_requested_callback)
             elif itype == "TableItem":
                 item = TableItem(headers=data.get("headers"), rows=data.get("rows"))
             elif itype == "CardItem":
@@ -148,19 +245,6 @@ class CanvasScene(QGraphicsScene):
                 )
             elif itype == "GroupSelection":
                 item = GroupSelection(title=data.get("title", "Group"))
-            elif itype == "ImageItem":
-                import base64
-                from PyQt6.QtGui import QPixmap
-                from PyQt6.QtCore import QByteArray
-                
-                b64_data = data.get("image_b64", "")
-                if b64_data:
-                    byte_data = base64.b64decode(b64_data)
-                    pixmap = QPixmap()
-                    pixmap.loadFromData(QByteArray(byte_data), "PNG")
-                    item = ImageItem(pixmap)
-                    if "scale" in data:
-                        item.setScale(data["scale"])
 
             if item:
                 item.setPos(x, y)
@@ -169,7 +253,6 @@ class CanvasScene(QGraphicsScene):
                 self.addItem(item)
 
     def handle_tablet_event(self, event, scene_pos: QPointF) -> bool:
-        """Handles QTabletEvent stylus inputs (pressure & tilt)."""
         import time
         if self.active_tool not in ["pen", "highlighter"]:
             return False
@@ -179,7 +262,12 @@ class CanvasScene(QGraphicsScene):
 
         event_type = event.type()
         if event_type == event.Type.TabletPress:
+            self.deactivate_active_shape()
             self._stroke_start_pos = scene_pos
+            self._hold_last_pos = scene_pos
+            self._is_live_snapped = False
+            self._snapped_shape_item = None
+
             self.stroke_processor.start_stroke(scene_pos, pressure=pressure, timestamp=timestamp)
             self._current_painter_path = QPainterPath()
             self._current_painter_path.moveTo(scene_pos)
@@ -193,19 +281,49 @@ class CanvasScene(QGraphicsScene):
                 width=self.pen_width
             )
             self.addItem(self._current_path_item)
+            self._hold_snap_timer.start(HOLD_DURATION_MS)
             return True
 
         elif event_type == event.Type.TabletMove and self._current_path_item:
             self.stroke_processor.add_point(scene_pos, pressure=pressure, timestamp=timestamp)
-            self._current_painter_path.lineTo(scene_pos)
-            self._current_path_item.setPath(self._current_painter_path)
+            
+            # Check movement threshold for hold timer
+            dist_moved = math.hypot(scene_pos.x() - self._hold_last_pos.x(), scene_pos.y() - self._hold_last_pos.y())
+            if dist_moved > HOLD_MOVE_THRESHOLD_PX:
+                if SHAPE_DEBUG:
+                    print(f"[HoldSnapTimer] Tablet Move ({dist_moved:.2f}px > {HOLD_MOVE_THRESHOLD_PX}px) -> Resetting hold timer ({HOLD_DURATION_MS}ms)", flush=True)
+                self._hold_last_pos = scene_pos
+                self._hold_snap_timer.start(HOLD_DURATION_MS)
+                
+                # If user moved again after live snap, revert back to raw stroke
+                if self._is_live_snapped:
+                    if self._snapped_shape_item and self._snapped_shape_item.scene() == self:
+                        self.deactivate_active_shape()
+                        self.removeItem(self._snapped_shape_item)
+                    self._snapped_shape_item = None
+                    self._is_live_snapped = False
+                    if self._current_path_item.scene() != self:
+                        self.addItem(self._current_path_item)
+
+            if not self._is_live_snapped:
+                self._current_painter_path.lineTo(scene_pos)
+                self._current_path_item.setPath(self._current_painter_path)
             return True
 
         elif event_type == event.Type.TabletRelease and self._current_path_item:
+            self._hold_snap_timer.stop()
+            if self._is_live_snapped and self._snapped_shape_item:
+                self._current_path_item = None
+                self._current_painter_path = None
+                self._stroke_start_pos = None
+                return True
+
             self.stroke_processor.add_point(scene_pos, pressure=pressure, timestamp=timestamp)
             tool_name = self.active_tool
             color = self.highlighter_color if tool_name == "highlighter" else self.pen_color
             
+            # process_stroke on release always produces a handwriting item (no snapping).
+            # Shape snapping only happens in _on_hold_snap_timeout.
             final_item = self.stroke_processor.process_stroke(
                 color=color,
                 width=self.pen_width,
@@ -214,8 +332,6 @@ class CanvasScene(QGraphicsScene):
             if final_item:
                 self.removeItem(self._current_path_item)
                 self.addItem(final_item)
-                if self.active_tool == "pen":
-                    self._recent_ink_strokes.append(final_item)
 
             self._current_path_item = None
             self._current_painter_path = None
@@ -225,14 +341,61 @@ class CanvasScene(QGraphicsScene):
         return False
 
     def mousePressEvent(self, event):
+        pos = event.scenePos()
+        clicked_items = self.items(pos)
+
+        # Identify clicked shape or active shape controls
+        shape_clicked = None
+        is_active_control_clicked = False
+
+        for item in clicked_items:
+            if isinstance(item, SmartShapeItem):
+                shape_clicked = item
+                break
+
+        for item in clicked_items:
+            if item in [self._active_shape_item, self._active_handles, self._active_properties_panel]:
+                is_active_control_clicked = True
+                break
+            if self._active_properties_panel and item == self._active_properties_panel.popup_proxy:
+                is_active_control_clicked = True
+                break
+            if self._active_shape_item and item and item.parentItem() == self._active_shape_item:
+                is_active_control_clicked = True
+                break
+
+        if SHAPE_DEBUG:
+            print(f"[CanvasScene] mousePressEvent at ({pos.x():.1f}, {pos.y():.1f}): "
+                  f"shape_clicked={type(shape_clicked).__name__ if shape_clicked else None}, "
+                  f"is_active_control_clicked={is_active_control_clicked}, "
+                  f"tool={self.active_tool}", flush=True)
+
+        if is_active_control_clicked:
+            # Clicked active shape body, handle, or properties toolbar/popup card.
+            # Do NOT deactivate! Route event to item/widgets natively.
+            super().mousePressEvent(event)
+            return
+
+        if shape_clicked:
+            # Clicked an inactive shape item
+            self.activate_shape(shape_clicked)
+            super().mousePressEvent(event)
+            return
+
+        # Clicked blank canvas -> deactivate active shape controls
+        self.deactivate_active_shape()
+
         if self.active_tool == "eraser" and event.button() == Qt.MouseButton.LeftButton:
             self._is_erasing = True
             self.erase_selected_items()
             self.erase_items_at(event.scenePos())
             event.accept()
         elif self.active_tool in ["pen", "highlighter"] and event.button() == Qt.MouseButton.LeftButton:
-            pos = event.scenePos()
             self._stroke_start_pos = pos
+            self._hold_last_pos = pos
+            self._is_live_snapped = False
+            self._snapped_shape_item = None
+
             self.stroke_processor.start_stroke(pos, pressure=1.0)
             
             self._current_painter_path = QPainterPath()
@@ -248,42 +411,76 @@ class CanvasScene(QGraphicsScene):
                 width=self.pen_width
             )
             self.addItem(self._current_path_item)
+            if SHAPE_DEBUG:
+                print(f"[HoldSnapTimer] Mouse Press -> Starting hold timer ({HOLD_DURATION_MS}ms)", flush=True)
+            self._hold_snap_timer.start(HOLD_DURATION_MS)
             event.accept()
         else:
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        pos = event.scenePos()
+
         if self._is_erasing and self.active_tool == "eraser":
-            self.erase_items_at(event.scenePos())
+            self.erase_items_at(pos)
             event.accept()
         elif self._current_path_item and self._current_painter_path:
-            pos = event.scenePos()
             self.stroke_processor.add_point(pos, pressure=1.0)
-            if self.active_tool == "highlighter" and self._stroke_start_pos:
-                # Straight-line snapping for clean horizontal highlighting across text lines
-                snapped_pos = QPointF(pos.x(), self._stroke_start_pos.y())
-                new_path = QPainterPath()
-                new_path.moveTo(self._stroke_start_pos)
-                new_path.lineTo(snapped_pos)
-                self._current_path_item.setPath(new_path)
-            else:
-                self._current_painter_path.lineTo(pos)
-                self._current_path_item.setPath(self._current_painter_path)
+
+            # Check hold distance
+            dist_moved = math.hypot(pos.x() - self._hold_last_pos.x(), pos.y() - self._hold_last_pos.y())
+            if dist_moved > HOLD_MOVE_THRESHOLD_PX:
+                if SHAPE_DEBUG:
+                    print(f"[HoldSnapTimer] Mouse Move ({dist_moved:.2f}px > {HOLD_MOVE_THRESHOLD_PX}px) -> Resetting hold timer ({HOLD_DURATION_MS}ms)", flush=True)
+                self._hold_last_pos = pos
+                self._hold_snap_timer.start(HOLD_DURATION_MS)
+
+                # Revert live snap if user continues drawing
+                if self._is_live_snapped:
+                    if self._snapped_shape_item and self._snapped_shape_item.scene() == self:
+                        self.deactivate_active_shape()
+                        self.removeItem(self._snapped_shape_item)
+                    self._snapped_shape_item = None
+                    self._is_live_snapped = False
+                    if self._current_path_item.scene() != self:
+                        self.addItem(self._current_path_item)
+
+            if not self._is_live_snapped:
+                if self.active_tool == "highlighter" and self._stroke_start_pos:
+                    snapped_pos = QPointF(pos.x(), self._stroke_start_pos.y())
+                    new_path = QPainterPath()
+                    new_path.moveTo(self._stroke_start_pos)
+                    new_path.lineTo(snapped_pos)
+                    self._current_path_item.setPath(new_path)
+                else:
+                    self._current_painter_path.lineTo(pos)
+                    self._current_path_item.setPath(self._current_painter_path)
             event.accept()
         else:
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        self._hold_snap_timer.stop()
+
         if self._is_erasing:
             self._is_erasing = False
             event.accept()
         elif self._current_path_item:
+            if self._is_live_snapped and self._snapped_shape_item:
+                self._current_path_item = None
+                self._current_painter_path = None
+                self._stroke_start_pos = None
+                event.accept()
+                return
+
             pos = event.scenePos()
             self.stroke_processor.add_point(pos, pressure=1.0)
             
             tool_name = self.active_tool
             color = self.highlighter_color if tool_name == "highlighter" else self.pen_color
             
+            # process_stroke on release always produces a handwriting item (no snapping).
+            # Shape snapping only happens in _on_hold_snap_timeout.
             final_item = self.stroke_processor.process_stroke(
                 color=color,
                 width=self.pen_width,
