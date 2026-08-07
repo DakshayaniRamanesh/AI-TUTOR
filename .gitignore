@@ -16,6 +16,7 @@ venv/
 .venv/
 env/
 ENV/
+venv313/
 
 # Kestrel App Storage & Downloads
 storage_data/
@@ -36,6 +37,7 @@ dist/
 # Manim & Generated Media Output
 media/
 _manim_output/
+opengl_test/
 *.mp4
 *.avi
 *.mov
@@ -48,8 +50,14 @@ scratch/
 *.tmp
 *.bak
 
+# Large binaries (download separately)
+tectonic.exe
+tectonic
+get-pip.py
+
 # IDE & OS System Files
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
