@@ -55,12 +55,40 @@ def request_latex_generation(image_b64: str, template_type: str,  mode: str = "s
     return job_id
 
 
+def compile_custom_latex_pdf(latex_code: str, target_path: str) -> tuple[bool, str]:
+    """
+    Submits raw LaTeX code to backend /compile_pdf endpoint on demand, and saves the result to target_path.
+    """
+    try:
+        resp = requests.post(
+            f"{LOCAL_SERVER_URL}/compile_pdf",
+            json={"latex_code": latex_code},
+            timeout=60
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            pdf_b64 = data.get("pdf_b64")
+            if pdf_b64:
+                pdf_bytes = base64.b64decode(pdf_b64)
+                os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
+                with open(target_path, "wb") as f:
+                    f.write(pdf_bytes)
+                return True, target_path
+            return False, "No PDF data returned from compiler."
+        else:
+            err_msg = resp.json().get("message", "Compilation failed")
+            return False, err_msg
+    except Exception as e:
+        return False, str(e)
+
+
 class LatexPollWorker(QThread):
     """
     Background worker that polls the LaTeX generation pipeline asynchronously.
     """
     status_updated = pyqtSignal(str, str, int) # job_id, stage, progress_percent
     pdf_ready = pyqtSignal(str, str, str)      # job_id, pdf_url (if local), pdf_b64 (if modal)
+    latex_ready = pyqtSignal(str, str)         # job_id, latex_code
     pdf_failed = pyqtSignal(str, str)          # job_id, error_message
 
     def __init__(self, job_id: str, parent=None):
@@ -70,7 +98,6 @@ class LatexPollWorker(QThread):
 
     def run(self):
         attempts = 0
-        # 1200 * 1.5s = 1800s (30 minutes). Tectonic downloads packages on first run, which can take 10+ minutes on slow internet!
         max_attempts = 1200
         
         while self._running and attempts < max_attempts:
@@ -85,22 +112,24 @@ class LatexPollWorker(QThread):
                     status = data.get("status", "processing")
                     pdf_url = data.get("pdf_url")
                     pdf_b64 = data.get("pdf_b64")
+                    latex_code = data.get("latex_code")
                     progress = data.get("progress_percentage", min(95, attempts * 5))
                     stage = data.get("step", "Processing")
 
                     self.status_updated.emit(self.job_id, f"LaTeX: {stage}", int(progress))
 
-                    if status in ["completed", "done", "success"] and (pdf_url or pdf_b64):
-                        self.pdf_ready.emit(self.job_id, pdf_url or "", pdf_b64 or "")
+                    if status in ["completed", "done", "success"]:
+                        if latex_code:
+                            self.latex_ready.emit(self.job_id, latex_code)
+                        if pdf_url or pdf_b64:
+                            self.pdf_ready.emit(self.job_id, pdf_url or "", pdf_b64 or "")
                         return
                     elif status == "error":
                         err_msg = data.get("error_message", "LaTeX pipeline error")
                         self.pdf_failed.emit(self.job_id, err_msg)
                         return
-                    # If still processing, continue to next loop iteration
                     continue
             except Exception:
-                # Local check failed, try modal check
                 try:
                     modal_url = MODAL_ENDPOINT_URL.replace("/generate", "/latex_status")
                     r = requests.get(f"{modal_url}?job_id={self.job_id}", timeout=2)
@@ -108,25 +137,28 @@ class LatexPollWorker(QThread):
                         data = r.json()
                         status = data.get("status", "processing")
                         pdf_b64 = data.get("pdf_b64")
+                        latex_code = data.get("latex_code")
                         progress = data.get("progress_percentage", min(95, attempts * 5))
                         stage = data.get("step", "Processing")
                         
                         self.status_updated.emit(self.job_id, f"LaTeX: {stage}", int(progress))
                         
-                        if status in ["completed", "done", "success"] and pdf_b64:
-                            self.pdf_ready.emit(self.job_id, "", pdf_b64)
+                        if status in ["completed", "done", "success"]:
+                            if latex_code:
+                                self.latex_ready.emit(self.job_id, latex_code)
+                            if pdf_b64:
+                                self.pdf_ready.emit(self.job_id, "", pdf_b64)
                             return
                         elif status == "error":
                             err_msg = data.get("error_message", "LaTeX pipeline error")
                             self.pdf_failed.emit(self.job_id, err_msg)
                             return
-                        # If still processing, continue to next loop iteration
                         continue
                 except Exception:
                     pass
 
-            # Only reached if BOTH backend checks failed (e.g. server is down/unreachable)
-            stage_name = "Transcribing & Structuring" if attempts < 10 else "Compiling LaTeX PDF"
+            stage_name = "Transcribing & Structuring" if attempts < 10 else "Processing LaTeX"
             self.status_updated.emit(self.job_id, f"📝 {stage_name} ({attempts*2}s)...", min(95, attempts * 3))
 
         self.pdf_failed.emit(self.job_id, "Timeout while generating LaTeX document.")
+

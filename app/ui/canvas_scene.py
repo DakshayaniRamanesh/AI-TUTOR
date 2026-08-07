@@ -58,6 +58,9 @@ class CanvasScene(QGraphicsScene):
         self._hold_snap_timer.setSingleShot(True)
         self._hold_snap_timer.timeout.connect(self._on_hold_snap_timeout)
         self._hold_last_pos = None
+
+        from .theme_manager import ThemeManager
+        ThemeManager.instance().theme_changed.connect(lambda: self.update())
         self._is_live_snapped = False
         self._snapped_shape_item = None
 
@@ -86,11 +89,13 @@ class CanvasScene(QGraphicsScene):
             self.update()
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
+        from .theme_manager import ThemeManager
+        c = ThemeManager.instance().get_colors()
 
         if self.background_mode == "blank":
-            painter.fillRect(rect, QColor("#ffffff"))
+            painter.fillRect(rect, QColor(c["canvas_bg"]))
             return
-        painter.fillRect(rect, QColor("#f4f4f6"))
+        painter.fillRect(rect, QColor(c["canvas_bg"]))
               
         grid_size = 28
         left = int(rect.left()) - (int(rect.left()) % grid_size)
@@ -98,14 +103,16 @@ class CanvasScene(QGraphicsScene):
         right = int(rect.right())
         bottom = int(rect.bottom())
 
+        grid_pen_color = QColor(c["canvas_grid"])
+
         if self.background_mode == "dotted":
-            painter.setPen(QPen(QColor("#c7c7cc"), 1.5))
+            painter.setPen(QPen(grid_pen_color, 1.5))
             for x in range(left, right, grid_size):
                 for y in range(top, bottom, grid_size):
                     painter.drawPoint(x, y)
                     
         elif self.background_mode == "ruled":
-            painter.setPen(QPen(QColor("#d1d1d6"), 1))
+            painter.setPen(QPen(grid_pen_color, 1))
             for y in range(top, bottom, grid_size):
                 painter.drawLine(left, y, right, y)
 

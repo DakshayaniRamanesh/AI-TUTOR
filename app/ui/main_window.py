@@ -37,6 +37,8 @@ from .views.obsidian_graph_panel import ObsidianGraphPanel
 from .views.placeholder_panel import PlaceholderPanel
 from .views.settings_dialog import SettingsDialog
 from .views.progress_dialog import ProgressDialog
+from .theme_manager import ThemeManager
+from .widgets.latex_editor_widget import LatexEditorWidget
 
 
 from ..backend.math_engine.stem_solver import solve_stem_question
@@ -228,6 +230,9 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self._update_window_corners()
 
+        # Connect ThemeManager
+        ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
+
     def _setup_shortcuts(self):
         from PyQt6.QtGui import QShortcut, QKeySequence
         # Undo
@@ -318,6 +323,11 @@ class MainWindow(QMainWindow):
         self.pdf_viewer_widget.reply_clicked.connect(self._on_pdf_reply_clicked)
         self.pdf_viewer_widget.latex_video_requested.connect(self._on_latex_video_requested)
 
+        # LaTeX Editor & Live Preview Widget (added to tab when LaTeX is generated)
+        self.latex_editor_widget = LatexEditorWidget(self.canvas_tabs)
+        self.latex_editor_widget.hide()
+        self.latex_editor_widget.close_requested.connect(self._close_latex_editor_tab)
+
         # Scene and View
         self.scene = CanvasScene(self)
         self.scene.ink_written_detected.connect(self._on_ink_written_detected)
@@ -399,14 +409,15 @@ class MainWindow(QMainWindow):
         self._populate_demo_canvas()
 
     def _apply_global_styles(self):
-        self.setStyleSheet("""
-            QMainWindow {
+        c = ThemeManager.instance().get_colors()
+        self.setStyleSheet(f"""
+            QMainWindow {{
                 background: transparent;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            }
-            QSplitter::handle {
-                background-color: #1e293b;
-            }
+            }}
+            QSplitter::handle {{
+                background-color: {c['border_color']};
+            }}
         """)
 
     def changeEvent(self, event):
@@ -415,38 +426,48 @@ class MainWindow(QMainWindow):
             self._update_window_corners()
 
     def _update_window_corners(self):
+        c = ThemeManager.instance().get_colors()
         if self.isMaximized():
             if hasattr(self, 'outer_layout'):
                 self.outer_layout.setContentsMargins(0, 0, 0, 0)
-            self.central_card.setStyleSheet("""
-                QWidget#CentralCard {
-                    background-color: #f8f8fa;
+            self.central_card.setStyleSheet(f"""
+                QWidget#CentralCard {{
+                    background-color: {c['bg_card']};
                     border-radius: 0px;
                     border: none;
-                }
-                QWidget#MacTitleBar {
-                    background-color: #f2f2f7;
+                }}
+                QWidget#MacTitleBar {{
+                    background-color: {c['bg_titlebar']};
                     border-top-left-radius: 0px;
                     border-top-right-radius: 0px;
-                    border-bottom: 1px solid #d1d1d6;
-                }
+                    border-bottom: 1px solid {c['border_color']};
+                }}
             """)
         else:
             if hasattr(self, 'outer_layout'):
                 self.outer_layout.setContentsMargins(6, 6, 6, 6)
-            self.central_card.setStyleSheet("""
-                QWidget#CentralCard {
-                    background-color: #f8f8fa;
+            self.central_card.setStyleSheet(f"""
+                QWidget#CentralCard {{
+                    background-color: {c['bg_card']};
                     border-radius: 12px;
-                    border: 1px solid #d1d1d6;
-                }
-                QWidget#MacTitleBar {
-                    background-color: #f2f2f7;
+                    border: 1px solid {c['border_color']};
+                }}
+                QWidget#MacTitleBar {{
+                    background-color: {c['bg_titlebar']};
                     border-top-left-radius: 12px;
                     border-top-right-radius: 12px;
-                    border-bottom: 1px solid #d1d1d6;
-                }
+                    border-bottom: 1px solid {c['border_color']};
+                }}
             """)
+
+    def _on_theme_changed(self, theme_name: str):
+        self._apply_global_styles()
+        self._update_window_corners()
+        if hasattr(self, 'btn_theme_toggle'):
+            if theme_name == "dark":
+                self.btn_theme_toggle.setText(" Light")
+            else:
+                self.btn_theme_toggle.setText(" Dark")
 
     # --- 8-Direction Resizing Engine ---
     def _get_resize_edges(self, pos: QPoint):
@@ -671,6 +692,12 @@ class MainWindow(QMainWindow):
         self.btn_mode_toggle = self._make_toolbar_btn('fa5s.graduation-cap', " Study", tb, '#10b981', "Toggle Mode")
         self.btn_mode_toggle.clicked.connect(self._toggle_tutor_mode)
         layout.addWidget(self.btn_mode_toggle)
+
+        # Theme Toggle (Light / Dark Mode)
+        theme_icon_txt = " Light" if ThemeManager.instance().is_dark() else " Dark"
+        self.btn_theme_toggle = self._make_toolbar_btn('fa5s.moon', theme_icon_txt, tb, '#f59e0b', "Toggle Light/Dark Theme")
+        self.btn_theme_toggle.clicked.connect(self._toggle_theme)
+        layout.addWidget(self.btn_theme_toggle)
 
         layout.addStretch()
 
@@ -1494,11 +1521,38 @@ class MainWindow(QMainWindow):
         
         self.latex_worker = LatexPollWorker(job_id, self)
         self.latex_worker.status_updated.connect(self._on_latex_status_updated)
+        self.latex_worker.latex_ready.connect(self._on_latex_ready)
         self.latex_worker.pdf_ready.connect(self._on_latex_pdf_ready)
         self.latex_worker.pdf_failed.connect(self._on_latex_failed)
         self.latex_worker.start()
         
         self.ask_bar.input_field.setPlaceholderText(f"Converting to {template_type}...")
+
+    def _toggle_theme(self):
+        ThemeManager.instance().toggle_theme()
+
+    def _close_latex_editor_tab(self):
+        idx = self.canvas_tabs.indexOf(self.latex_editor_widget)
+        if idx != -1:
+            self.canvas_tabs.removeTab(idx)
+        self.canvas_tabs.setCurrentWidget(self.view)
+
+    def _on_latex_ready(self, job_id, latex_code):
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.finish_success()
+        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
+
+        notebook_title = self.current_board.title or "LaTeX_Document"
+        self.latex_editor_widget.set_latex_code(latex_code, title=f"LaTeX: {notebook_title}")
+
+        tab_title = "📝 Editable LaTeX"
+        if self.canvas_tabs.indexOf(self.latex_editor_widget) == -1:
+            self.canvas_tabs.addTab(self.latex_editor_widget, tab_title)
+        else:
+            idx = self.canvas_tabs.indexOf(self.latex_editor_widget)
+            self.canvas_tabs.setTabText(idx, tab_title)
+
+        self.canvas_tabs.setCurrentWidget(self.latex_editor_widget)
 
     def _on_latex_status_updated(self, job_id, stage, progress):
         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
