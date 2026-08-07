@@ -220,8 +220,45 @@ async def latex_status(job_id: str):
         "step": job.step,
         "progress_percentage": job.progress_percentage,
         "pdf_url": pdf_url or job.pdf_url,
+        "latex_code": job.final_tex_code or job.structured_latex or job.raw_transcription or "",
+        "raw_transcription": job.raw_transcription or "",
+        "structured_latex": job.structured_latex or "",
         "error_message": job.error_message
     }
+
+@app.post("/compile_pdf")
+async def compile_pdf(payload: dict):
+    latex_code = payload.get("latex_code", "").strip()
+    if not latex_code:
+        return JSONResponse({"status": "error", "message": "No LaTeX code provided."}, status_code=400)
+
+    import subprocess
+    import tempfile
+    import base64
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_tectonic = os.path.join(project_root, "tectonic.exe")
+    tectonic_cmd = local_tectonic if os.path.exists(local_tectonic) else "tectonic"
+
+    temp_dir = tempfile.mkdtemp()
+    tex_path = os.path.join(temp_dir, "document.tex")
+    pdf_path = os.path.join(temp_dir, "document.pdf")
+
+    with open(tex_path, "w", encoding="utf-8") as f:
+        f.write(latex_code)
+
+    try:
+        res = subprocess.run([tectonic_cmd, tex_path], cwd=temp_dir, capture_output=True, text=True, timeout=300)
+        if res.returncode == 0 and os.path.exists(pdf_path):
+            with open(pdf_path, "rb") as pf:
+                pdf_bytes = pf.read()
+            pdf_b64 = base64.b64encode(pdf_bytes).decode()
+            return {"status": "ok", "pdf_b64": pdf_b64}
+        else:
+            err_msg = res.stderr or res.stdout or "Compilation error"
+            return JSONResponse({"status": "error", "message": f"Compilation failed: {err_msg}"}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 @app.api_route("/pdf/{filename}", methods=["GET", "HEAD"])
 async def serve_pdf(filename: str):
