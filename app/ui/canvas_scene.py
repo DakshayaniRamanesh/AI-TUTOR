@@ -26,6 +26,9 @@ from .stroke_processor import (
 
 class CanvasScene(QGraphicsScene):
     ink_written_detected = pyqtSignal(str, QPointF)
+    # Emitted whenever the scene content changes (stroke, erase, shape add/remove).
+    # MainWindow connects this to the debounced autosave timer.
+    scene_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -117,6 +120,7 @@ class CanvasScene(QGraphicsScene):
         path.addEllipse(pos, radius, radius)
         
         items = self.items(path, Qt.ItemSelectionMode.IntersectsItemShape)
+        erased_any = False
         for item in items:
             if item.scene() == self:
                 if item == self._active_handles or item == self._active_properties_panel:
@@ -124,12 +128,18 @@ class CanvasScene(QGraphicsScene):
                 if item == self._active_shape_item:
                     self.deactivate_active_shape()
                 self.removeItem(item)
+                erased_any = True
+        if erased_any:
+            self.scene_changed.emit()
 
     def erase_selected_items(self):
-        for item in self.selectedItems():
+        items_to_remove = list(self.selectedItems())
+        for item in items_to_remove:
             if item == self._active_shape_item:
                 self.deactivate_active_shape()
             self.removeItem(item)
+        if items_to_remove:
+            self.scene_changed.emit()
 
     def clear_all(self):
         self.deactivate_active_shape()
@@ -216,6 +226,7 @@ class CanvasScene(QGraphicsScene):
             self._snapped_shape_item = snapped_item
             self._is_live_snapped = True
             self.activate_shape(snapped_item)
+            self.scene_changed.emit()
         else:
             if SHAPE_DEBUG:
                 print(f"[HoldSnapTimer] Classified as handwriting. Kept raw stroke.", flush=True)
@@ -248,8 +259,12 @@ class CanvasScene(QGraphicsScene):
                 self.addItem(item)
 
     def create_item_from_dict(self, data: dict):
+        """Deserializes a single item dict into a QGraphicsItem subclass.
+        Returns None for unknown types and logs a warning — never silently drops data.
+        """
         itype = data.get("type")
         item = None
+
         if itype == "SmartShapeItem":
             pen = QPen(QColor(data.get("color", "#1c1c1e")), data.get("width", 3.0))
             item = SmartShapeItem(
@@ -261,60 +276,122 @@ class CanvasScene(QGraphicsScene):
             dims = data.get("dimensions_px", {})
             if dims:
                 item.set_dimensions_px(dims)
+
         elif itype == "InkStroke":
+            # NOTE: to_dict() saves key "elements" — NOT "path_elements".
             path = QPainterPath()
-            elements = data.get("path_elements", [])
-            for el in elements:
-                if el["type"] == 0:  # MoveTo
+            elements = data.get("elements") or data.get("path_elements", [])
+            i = 0
+            while i < len(elements):
+                el = elements[i]
+                el_type = el.get("type", -1)
+                if el_type == 0:   # MoveTo
                     path.moveTo(el["x"], el["y"])
-                elif el["type"] == 1:  # LineTo
+                    i += 1
+                elif el_type == 1: # LineTo
                     path.lineTo(el["x"], el["y"])
-                elif el["type"] == 2:  # CurveTo
-                    pass # Approximation or not supported
-                elif el["type"] == 3:  # CurveToData
-                    pass
+                    i += 1
+                elif el_type == 2: # CurveTo (control point 1 — next two are ctrl2 + end)
+                    if i + 2 < len(elements):
+                        el2, el3 = elements[i + 1], elements[i + 2]
+                        path.cubicTo(el["x"], el["y"], el2["x"], el2["y"], el3["x"], el3["y"])
+                        i += 3
+                    else:
+                        i += 1  # Incomplete curve — skip
+                else:
+                    i += 1  # CurveToData or unknown — already consumed by type 2
             item = InkStroke(
                 path=path,
                 tool_mode=data.get("tool_mode", "pen"),
                 color=data.get("color", "#1c1c1e"),
                 width=data.get("width", 3.0)
             )
+
         elif itype == "TextBoxItem":
             from .items.text_box_item import TextBoxItem
             item = TextBoxItem(text=data.get("text", ""))
+
         elif itype == "ImageItem":
             import base64
             from PyQt6.QtGui import QImage, QPixmap
-            b64_data = data.get("image_base64", "")
-            img_data = base64.b64decode(b64_data)
-            img = QImage.fromData(img_data)
-            if not img.isNull():
-                item = ImageItem(QPixmap.fromImage(img))
+            # to_dict() saves key "image_b64" — support both for backward compat.
+            b64_data = data.get("image_b64") or data.get("image_base64", "")
+            if b64_data:
+                try:
+                    img_data = base64.b64decode(b64_data)
+                    img = QImage.fromData(img_data)
+                    if not img.isNull():
+                        item = ImageItem(QPixmap.fromImage(img))
+                        saved_scale = data.get("scale")
+                        if saved_scale is not None:
+                            item.setScale(saved_scale)
+                except Exception as err:
+                    print(f"[CanvasScene] Warning: Could not decode ImageItem: {err}")
+
         elif itype == "StickyNote":
             item = StickyNote(text=data.get("text", ""), color_key=data.get("color_key", "yellow"))
+            # Restore minimized state
+            if data.get("is_minimized") and hasattr(item, 'widget'):
+                item.widget._toggle_minimize()
+
         elif itype == "HandwritingNote":
             item = HandwritingNote(text=data.get("text", ""))
+            # Restore minimized and font state
+            if hasattr(item, 'widget'):
+                if data.get("is_minimized"):
+                    item.widget._toggle_minimize()
+                if "use_handwriting_font" in data:
+                    item.widget.use_handwriting_font = data["use_handwriting_font"]
+
         elif itype == "TableItem":
             item = TableItem(headers=data.get("headers"), rows=data.get("rows"))
+
         elif itype == "CardItem":
-            item = CardItem(title=data.get("title", "Card"), content=data.get("content", ""))
+            # to_dict() uses "subtitle" and "source_url" — NOT "content".
+            item = CardItem(
+                title=data.get("title", "Card"),
+                subtitle=data.get("subtitle", data.get("content", "")),
+                source_url=data.get("source_url", "")
+            )
+
         elif itype == "GraphCard":
             item = GraphCard(title=data.get("title", "Plot"), image_path=data.get("image_path", ""))
+
         elif itype == "VideoFloatItem":
-            from .items.video_float_item import VideoFloatItem
             item = VideoFloatItem(
                 job_id=data.get("job_id", ""),
                 title=data.get("title", "Video"),
                 video_url_or_path=data.get("video_path", "")
             )
+            # Restore minimized state
+            if data.get("is_minimized") and hasattr(item, 'player_widget'):
+                item.player_widget._toggle_minimize()
+
         elif itype == "AnswerBubble":
-            from .items.answer_bubble import AnswerBubble
             item = AnswerBubble(
                 question=data.get("question", ""),
-                full_text=data.get("full_text", "")
+                full_text=data.get("full_text", ""),
+                hints=data.get("hints", ""),
+                is_direct_math=data.get("is_direct_math", False)
             )
+
         elif itype == "GroupSelection":
             item = GroupSelection(title=data.get("title", "Group"))
+            # Restore collapsed state
+            if data.get("is_collapsed") and hasattr(item, 'group_widget'):
+                item.group_widget._toggle_collapse()
+
+        elif itype == "MapPinCard":
+            from .items.map_pin_card import MapPinCard
+            item = MapPinCard(
+                title=data.get("title", ""),
+                address=data.get("address", "")
+            )
+
+        else:
+            print(f"[CanvasScene] WARNING: Unrecognized item type '{itype}' — skipping. "
+                  f"Add a load branch in create_item_from_dict() to prevent silent data loss.")
+
         return item
 
     def handle_tablet_event(self, event, scene_pos: QPointF) -> bool:
@@ -565,6 +642,7 @@ class CanvasScene(QGraphicsScene):
             self.activate_shape(self._current_drawing_shape)
             self._shape_start_pos = None
             self._current_drawing_shape = None
+            self.scene_changed.emit()
             event.accept()
         elif self._current_path_item:
             if self._is_live_snapped and self._snapped_shape_item:
@@ -593,6 +671,9 @@ class CanvasScene(QGraphicsScene):
                 self.addItem(final_item)
                 if self.active_tool == "pen":
                     self._recent_ink_strokes.append(final_item)
+                self.scene_changed.emit()
+            elif self._current_path_item:  # Highlighter or very short stroke — keep it
+                self.scene_changed.emit()
 
             self._current_path_item = None
             self._current_painter_path = None
