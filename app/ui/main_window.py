@@ -47,6 +47,11 @@ from ..storage.notebook_storage import NotebookStorage
 from ..storage.downloads_manager import DownloadsManager
 from ..backend.math_engine.latex_client import request_latex_generation, LatexPollWorker
 
+# ── Autosave Configuration ─────────────────────────────────────────────────────
+# Delay (ms) after the last scene change before autosave fires to disk.
+# Keeps rapid edits (e.g. mid-drag) from spamming disk writes.
+_AUTOSAVE_DELAY_MS = 1000
+
 
 class MacTitleBar(QWidget):
     """Custom macOS-Inspired Title Bar with Traffic Light Window Controls & Seamless Blending."""
@@ -204,6 +209,20 @@ class MainWindow(QMainWindow):
         self.reference_panel.insert_data_requested.connect(self._on_insert_reference_table)
         self._solver_workers = []
 
+        # ── Autosave State ─────────────────────────────────────────────────────
+        # ID of the currently open notebook. None = demo/unsaved canvas.
+        self._current_notebook_id: str | None = None
+        # Single-shot debounce timer: fires _do_autosave after user pauses editing.
+        from PyQt6.QtCore import QTimer
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.timeout.connect(self._do_autosave)
+        # Timer to clear the "Saved ✓" status label.
+        self._save_status_clear_timer = QTimer(self)
+        self._save_status_clear_timer.setSingleShot(True)
+        self._save_status_clear_timer.timeout.connect(lambda: self._set_save_status(""))
+
+
         self._apply_global_styles()
         self._init_ui()
         self._setup_shortcuts()
@@ -213,6 +232,8 @@ class MainWindow(QMainWindow):
         from PyQt6.QtGui import QShortcut, QKeySequence
         # Undo
         QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(lambda: self.floating_toolbar.action_triggered.emit("undo"))
+        # Save
+        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._on_toolbar_save)
         # Tools
         QShortcut(QKeySequence("V"), self).activated.connect(lambda: self.floating_toolbar.btn_select.click())
         QShortcut(QKeySequence("H"), self).activated.connect(lambda: self.floating_toolbar.btn_pan.click())
@@ -300,6 +321,8 @@ class MainWindow(QMainWindow):
         # Scene and View
         self.scene = CanvasScene(self)
         self.scene.ink_written_detected.connect(self._on_ink_written_detected)
+        # Connect scene_changed to the debounced autosave
+        self.scene.scene_changed.connect(self._on_scene_changed)
         self.view = CanvasView(self.scene, self)
         self.view.zoom_changed.connect(self._on_zoom_changed)
         
@@ -651,6 +674,39 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
+        # ── Save Button + Status Indicator ───────────────────────────────────
+        self.lbl_save_status = QLabel("", tb)
+        self.lbl_save_status.setStyleSheet(
+            "font-size: 11px; color: #2563eb; font-weight: 600; padding: 0 4px;"
+        )
+        self.lbl_save_status.setVisible(False)
+        layout.addWidget(self.lbl_save_status)
+
+        self.btn_save = self._make_toolbar_btn('fa5s.save', " Save", tb, '#3b82f6', "Save Notebook (Ctrl+S)")
+        self.btn_save.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: 1px solid #dbeafe;
+                border-radius: 7px;
+                padding: 5px 10px;
+                font-size: 12px;
+                font-weight: 600;
+                color: #2563eb;
+            }
+            QPushButton:hover {
+                background-color: #eff6ff;
+                border-color: #3b82f6;
+                color: #1e40af;
+            }
+            QPushButton:pressed {
+                background-color: #dbeafe;
+            }
+        """)
+        self.btn_save.clicked.connect(self._on_toolbar_save)
+        layout.addWidget(self.btn_save)
+
+        layout.addWidget(self._make_toolbar_separator(tb))
+
         # Add mock Search and Share icons
         btn_search = self._make_toolbar_btn('fa5s.search', "", tb, '#94a3b8', "Search")
         btn_share = self._make_toolbar_btn('fa5s.share', "", tb, '#94a3b8', "Share")
@@ -898,6 +954,7 @@ class MainWindow(QMainWindow):
                 # Images should stay under ink
                 item.setZValue(5)
                 self.scene.addItem(item)
+                self.scene.scene_changed.emit()
 
     def _add_text_box(self):
         self.scene.active_tool = "select"
@@ -905,6 +962,7 @@ class MainWindow(QMainWindow):
         item = TextBoxItem(text="Type here...")
         item.setPos(self.view.mapToScene(self.view.viewport().rect().center()))
         self.scene.addItem(item)
+        self.scene.scene_changed.emit()
 
     def eventFilter(self, obj, event):
         if hasattr(self, '_canvas_wrapper') and obj == self._canvas_wrapper and event.type() == QEvent.Type.Resize:
@@ -1125,23 +1183,76 @@ class MainWindow(QMainWindow):
         self.folder_tree.select_folder(folder_id or "")
 
     def _on_toolbar_save(self):
-        current_name = self.current_board.title or "Untitled Notebook"
-        name, ok = QInputDialog.getText(self, "Save Notebook", "Enter Notebook Name:", text=current_name)
-        if ok and name.strip():
+        """Manual Save: immediately serializes the live scene and writes to disk.
+        No dialog — saves with the current notebook name. Shows brief status feedback.
+        """
+        if not self._current_notebook_id:
+            # No notebook open yet: prompt for name and create one
+            current_name = self.current_board.title or "Untitled Notebook"
+            name, ok = QInputDialog.getText(self, "Save New Notebook", "Enter Notebook Name:", text=current_name)
+            if not (ok and name.strip()):
+                return
             try:
-                name_clean = name.strip()
-                items_data = self.scene.to_dict_list()
-                NotebookStorage.save_notebook(self.current_board.board_id, name_clean, items_data)
-                self.current_board.title = name_clean
-                self.title_edit.setText(name_clean)
-                QMessageBox.information(self, "Saved", f"Notebook '{name_clean}' saved successfully!")
-                self.notebooks_panel.refresh()
+                meta = NotebookStorage.create_notebook(name.strip())
+                self._current_notebook_id = meta["id"]
+                self.current_board.board_id = meta["id"]
+                self.current_board.title = meta["name"]
+                self.title_edit.setText(meta["name"])
             except Exception as err:
+                import traceback
+                traceback.print_exc()
+                QMessageBox.warning(self, "Save Failed", f"Could not create notebook:\n{err}")
+                return
+
+        self._do_autosave(manual=True)
+
+    # ── Autosave Helpers ──────────────────────────────────────────────────────
+
+    def _on_scene_changed(self):
+        """Called whenever the canvas is mutated. Resets the debounce timer.
+        Only fires a disk write when the user pauses for _AUTOSAVE_DELAY_MS ms.
+        """
+        if self._current_notebook_id:
+            self._autosave_timer.start(_AUTOSAVE_DELAY_MS)
+
+    def _do_autosave(self, manual: bool = False):
+        """Performs the actual save: serializes the LIVE scene and writes to disk.
+        Always saves to the SAME notebook_id — never creates a duplicate.
+        """
+        if not self._current_notebook_id:
+            return
+        try:
+            self._set_save_status("Saving...")
+            name = self.current_board.title or "Untitled Notebook"
+            items_data = self.scene.to_dict_list()
+            NotebookStorage.save_notebook(self._current_notebook_id, name, items_data)
+            if hasattr(self, 'notebooks_panel'):
+                self.notebooks_panel.refresh()
+            self._set_save_status("Saved ✓", clear_after_ms=2000)
+        except Exception as err:
+            import traceback
+            traceback.print_exc()
+            self._set_save_status("Save failed!")
+            if manual:
                 QMessageBox.warning(self, "Save Failed", f"Could not save notebook:\n{err}")
+
+    def _set_save_status(self, text: str, clear_after_ms: int = 0):
+        """Updates the save status label and optionally schedules it to clear."""
+        if not hasattr(self, 'lbl_save_status'):
+            return
+        if text:
+            self.lbl_save_status.setText(text)
+            self.lbl_save_status.setVisible(True)
+        else:
+            self.lbl_save_status.setVisible(False)
+        if clear_after_ms > 0:
+            self._save_status_clear_timer.start(clear_after_ms)
+
 
     def _on_load_notebook_requested(self, notebook_id: str):
         try:
             payload = NotebookStorage.load_notebook(notebook_id)
+            self._current_notebook_id = payload.get("board_id", notebook_id)
             self.current_board.board_id = payload.get("board_id", notebook_id)
             self.current_board.title = payload.get("title", "Notebook")
             self.title_edit.setText(self.current_board.title)
@@ -1186,10 +1297,12 @@ class MainWindow(QMainWindow):
                 v_item = VideoFloatItem(title=meta.get("title", "Video"), video_url_or_path=text)
                 v_item.setPos(center_pos)
                 self.scene.addItem(v_item)
+                self.scene.scene_changed.emit()
             else:
                 bubble = AnswerBubble(title=f"Web Explanation: {meta.get('title', 'Article')[:25]}", full_text="Scraping & generating AI study guide...", question=f"Explain link: {text}")
                 bubble.setPos(center_pos)
                 self.scene.addItem(bubble)
+                self.scene.scene_changed.emit()
 
                 worker = UrlSummarizerWorker(text, title=meta.get("title", ""), parent=self)
                 def _on_finished(u, t, summary):
@@ -1204,12 +1317,14 @@ class MainWindow(QMainWindow):
             item = TextBoxItem(text=text)
             item.setPos(center_pos)
             self.scene.addItem(item)
+            self.scene.scene_changed.emit()
 
     def _add_sticky_note(self):
         self.scene.active_tool = "select"
         item = StickyNote(text="New Freeform Note", color_key="yellow")
         item.setPos(self.view.mapToScene(self.view.viewport().rect().center()))
         self.scene.addItem(item)
+        self.scene.scene_changed.emit()
 
     def _add_handwriting_note(self):
         self.scene.active_tool = "select"
@@ -1218,12 +1333,14 @@ class MainWindow(QMainWindow):
         item.widget.video_requested.connect(self._on_generate_video_requested)
         item.widget.solve_requested.connect(self._on_stem_question_asked)
         self.scene.addItem(item)
+        self.scene.scene_changed.emit()
 
     def _add_table(self):
         self.scene.active_tool = "select"
         item = TableItem()
         item.setPos(self.view.mapToScene(self.view.viewport().rect().center()))
         self.scene.addItem(item)
+        self.scene.scene_changed.emit()
 
     def _add_group(self):
         self.scene.active_tool = "select"

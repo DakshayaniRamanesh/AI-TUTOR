@@ -237,8 +237,11 @@ class NotebookStorage:
     def save_notebook(cls, notebook_id: str, name: str, items_data: list) -> dict:
         """
         Saves full canvas content for notebook_id and updates index entry.
+        Always UPDATES the existing record — never creates a duplicate notebook.
+        Raises on write failure (caller should handle and surface to user).
         """
         cls._ensure_dirs()
+        import traceback
         now_str = time.strftime("%Y-%m-%d %H:%M:%S")
 
         file_path = os.path.join(BOARDS_DIR, f"{notebook_id}.json")
@@ -248,8 +251,13 @@ class NotebookStorage:
             "updated_at": now_str,
             "items": items_data or [],
         }
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as err:
+            print(f"[NotebookStorage] ERROR writing notebook {notebook_id} to disk: {err}")
+            traceback.print_exc()
+            raise
 
         index = cls.get_index()
         found = False
@@ -271,6 +279,7 @@ class NotebookStorage:
 
         cls._save_index(index)
         return payload
+
 
     @classmethod
     def rename_notebook(cls, notebook_id: str, new_name: str) -> bool:

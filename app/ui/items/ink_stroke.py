@@ -60,7 +60,8 @@ class InkStroke(QGraphicsPathItem, BaseGraphicsItemMixin):
         path = self.path()
         for i in range(path.elementCount()):
             el = path.elementAt(i)
-            element_list.append({"x": el.x, "y": el.y, "type": int(el.type)})
+            el_type = int(el.type.value) if hasattr(el.type, "value") else int(el.type)
+            element_list.append({"x": el.x, "y": el.y, "type": el_type})
         return {
             "type": "InkStroke",
             "x": self.x(),
