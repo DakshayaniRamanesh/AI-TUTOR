@@ -22,62 +22,12 @@ class AskBar(QWidget):
         self.surrounding_context = ""
         self.doc_filename = ""
         
-        self.setStyleSheet("""
-            QWidget#AskBarContainer {
-                background-color: #ffffff;
-                border: 1px solid #e5e5ea;
-                border-radius: 20px;
-            }
-            QLineEdit {
-                border: none;
-                background: transparent;
-                font-size: 14px;
-                padding-left: 8px;
-                color: #1c1c1e;
-            }
-            QComboBox {
-                background-color: #f2f2f7;
-                color: #1c1c1e;
-                border: 1px solid #d1d1d6;
-                border-radius: 12px;
-                padding: 4px 10px;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QComboBox:hover {
-                background-color: #e5e5ea;
-                border-color: #007aff;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 16px;
-            }
-            QPushButton#BtnAsk {
-                background-color: #007aff;
-                color: white;
-                border: none;
-                border-radius: 14px;
-                padding: 6px 16px;
-                font-size: 13px;
-                font-weight: 600;
-            }
-            QPushButton#BtnAsk:hover {
-                background-color: #0056b3;
-            }
-            QPushButton#BtnPdf {
-                background-color: #f2f2f7;
-                color: #ff3b30;
-                border: 1px solid #d1d1d6;
-                border-radius: 14px;
-                padding: 6px 12px;
-                font-size: 12px;
-                font-weight: bold;
-            }
-            QPushButton#BtnPdf:hover {
-                background-color: #ffebee;
-            }
-        """)
-        
+        self._init_ui()
+        from ..theme_manager import ThemeManager
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._apply_theme(ThemeManager.instance().current_theme)
+
+    def _init_ui(self):
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
@@ -177,3 +127,50 @@ class AskBar(QWidget):
             self.question_submitted.emit(text)
 
         self.input_field.clear()
+
+    def _apply_theme(self, theme_name: str = "light"):
+        from ..theme_manager import ThemeManager
+        c = ThemeManager.instance().get_colors()
+        self.setStyleSheet(f"""
+            QWidget#AskBarContainer {{
+                background-color: {c['bg_toolbar']};
+                border: 1px solid {c['border_color']};
+                border-radius: 20px;
+            }}
+            QLineEdit {{
+                border: none;
+                background: transparent;
+                font-size: 14px;
+                padding-left: 8px;
+                color: {c['text_primary']};
+            }}
+            QComboBox {{
+                background-color: {c['bg_card']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border_color']};
+                border-radius: 12px;
+                padding: 4px 10px;
+                font-size: 12px;
+                font-weight: 600;
+            }}
+            QComboBox:hover {{
+                background-color: {c['panel_card_bg']};
+                border-color: {c['accent']};
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 16px;
+            }}
+            QPushButton#BtnAsk {{
+                background-color: {c['accent']};
+                color: white;
+                border: none;
+                border-radius: 14px;
+                padding: 6px 16px;
+                font-size: 13px;
+                font-weight: bold;
+            }}
+            QPushButton#BtnAsk:hover {{
+                background-color: {c['accent_hover']};
+            }}
+        """)

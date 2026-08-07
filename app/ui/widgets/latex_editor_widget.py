@@ -1,6 +1,6 @@
 """
-Interactive LaTeX Editor & Live Preview Widget for Kestrel AI Notebook
-Allows real-time viewing, manual editing, live math preview, and on-demand PDF compilation.
+Interactive LaTeX Editor & Live PDF-Level Preview Widget for Kestrel AI Notebook
+Allows real-time viewing, manual editing, live syntax-free PDF page preview, and on-demand PDF compilation.
 """
 
 import os
@@ -9,10 +9,10 @@ import requests
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QPlainTextEdit, QTextBrowser, QSplitter, QFileDialog, QMessageBox,
-    QApplication, QFrame
+    QApplication, QFrame, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QKeySequence
+from PyQt6.QtGui import QFont
 
 from ...backend.math_engine.latex_formatter import format_math_to_html
 from ..theme_manager import ThemeManager
@@ -20,10 +20,14 @@ from ..theme_manager import ThemeManager
 class LatexEditorWidget(QWidget):
     export_pdf_requested = pyqtSignal(str) # Emits current latex_code
     close_requested = pyqtSignal()
+    pdf_compiled = pyqtSignal(str) # Emits compiled pdf_file_path
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.doc_title = "LaTeX Document"
+        self.is_dirty = False
+        self._initial_code = ""
+
         self.theme_mgr = ThemeManager.instance()
         self.theme_mgr.theme_changed.connect(self._apply_theme)
         
@@ -32,21 +36,22 @@ class LatexEditorWidget(QWidget):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
 
-        # Header Bar
+        # Header Bar (Compact single line bar)
         self.header = QFrame(self)
         self.header.setObjectName("LatexEditorHeader")
+        self.header.setFixedHeight(42)
         h_layout = QHBoxLayout(self.header)
-        h_layout.setContentsMargins(8, 4, 8, 4)
+        h_layout.setContentsMargins(10, 4, 10, 4)
         h_layout.setSpacing(10)
 
         lbl_icon = QLabel("📝", self.header)
-        lbl_icon.setFont(QFont("-apple-system", 14))
+        lbl_icon.setFont(QFont("-apple-system", 13))
 
         self.lbl_title = QLabel("LaTeX Document Editor & Preview", self.header)
-        self.lbl_title.setFont(QFont("-apple-system", 13, QFont.Weight.Bold))
+        self.lbl_title.setFont(QFont("-apple-system", 12, QFont.Weight.Bold))
 
         h_layout.addWidget(lbl_icon)
         h_layout.addWidget(self.lbl_title)
@@ -67,7 +72,7 @@ class LatexEditorWidget(QWidget):
 
         self.btn_close = QPushButton("✕ Close", self.header)
         self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_close.clicked.connect(lambda: self.close_requested.emit())
+        self.btn_close.clicked.connect(self._on_close_clicked)
 
         h_layout.addWidget(self.btn_copy)
         h_layout.addWidget(self.btn_refresh)
@@ -76,8 +81,9 @@ class LatexEditorWidget(QWidget):
 
         layout.addWidget(self.header)
 
-        # Splitter (Editor vs Live Preview)
+        # Splitter (Editor vs PDF-Page Live Preview)
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Left: Monospace Code Editor
         left_container = QWidget(self.splitter)
@@ -98,13 +104,13 @@ class LatexEditorWidget(QWidget):
         left_layout.addWidget(lbl_editor)
         left_layout.addWidget(self.editor)
 
-        # Right: Rich Math Preview
+        # Right: PDF-Styled Page Preview (Pure Black & White)
         right_container = QWidget(self.splitter)
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
 
-        lbl_preview = QLabel("Live Math & Document Preview:", right_container)
+        lbl_preview = QLabel("PDF Page Live Preview (Pure Black & White):", right_container)
         lbl_preview.setFont(QFont("-apple-system", 11, QFont.Weight.Bold))
 
         self.preview_browser = QTextBrowser(right_container)
@@ -115,20 +121,22 @@ class LatexEditorWidget(QWidget):
 
         self.splitter.addWidget(left_container)
         self.splitter.addWidget(right_container)
-        self.splitter.setSizes([500, 500])
+        self.splitter.setSizes([480, 520])
 
-        layout.addWidget(self.splitter)
+        layout.addWidget(self.splitter, stretch=1)
 
         # Debounce timer for preview update while typing
         from PyQt6.QtCore import QTimer
         self._update_timer = QTimer(self)
         self._update_timer.setSingleShot(True)
-        self._update_timer.setInterval(400) # Update 400ms after user pauses typing
+        self._update_timer.setInterval(300)
         self._update_timer.timeout.connect(self.update_preview)
 
     def set_latex_code(self, code: str, title: str = "LaTeX Document"):
         self.doc_title = title
         self.lbl_title.setText(f"📝 {title}")
+        self._initial_code = code
+        self.is_dirty = False
         self.editor.setPlainText(code)
         self.update_preview()
 
@@ -136,41 +144,152 @@ class LatexEditorWidget(QWidget):
         return self.editor.toPlainText()
 
     def _on_text_changed_debounced(self):
+        if self.editor.toPlainText() != self._initial_code:
+            self.is_dirty = True
         self._update_timer.start()
 
     def update_preview(self):
         code = self.editor.toPlainText()
         if not code.strip():
-            self.preview_browser.setHtml("<p style='color:#888; font-style:italic;'>No LaTeX code provided.</p>")
+            self.preview_browser.setHtml("<p style='color:#666; font-style:italic; padding: 20px;'>No LaTeX code provided.</p>")
             return
 
-        formatted_html = format_math_to_html(code)
-        c = self.theme_mgr.get_colors()
+        formatted_body = format_math_to_html(code)
+
+        is_dark = self.theme_mgr.is_dark()
+        page_bg = "#ffffff" if not is_dark else "#1c1c1e"
+        outer_bg = "#f2f2f7" if not is_dark else "#111113"
+        text_col = "#000000" if not is_dark else "#ffffff"
+        head_col = "#000000" if not is_dark else "#ffffff"
+        math_bg = "#f8f9fa" if not is_dark else "#27272a"
+        border_col = "#000000" if not is_dark else "#444444"
 
         html_doc = f"""
+        <!DOCTYPE html>
         <html>
         <head>
             <style>
                 body {{
-                    background-color: {c['editor_bg']};
-                    color: {c['text_primary']};
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    padding: 16px;
-                    line-height: 1.6;
+                    background-color: {outer_bg};
+                    margin: 0;
+                    padding: 20px 10px;
+                    display: flex;
+                    justify-content: center;
+                    font-family: 'Cambria', 'Georgia', 'Times New Roman', serif;
                 }}
-                h1, h2, h3 {{ color: {c['accent']}; }}
-                .math-block {{
-                    background: {c['bg_card']};
-                    border-left: 3px solid {c['accent']};
-                    padding: 10px 14px;
-                    margin: 12px 0;
-                    border-radius: 4px;
+                .pdf-page {{
+                    background-color: {page_bg};
+                    color: {text_col};
+                    width: 92%;
+                    max-width: 760px;
+                    min-height: 960px;
+                    margin: 0 auto;
+                    padding: 50px 60px;
+                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+                    border: 1px solid {border_col};
+                    box-sizing: border-box;
                 }}
-                .equation {{ font-size: 15px; font-weight: bold; }}
+                .pdf-header {{
+                    text-align: center;
+                    border-bottom: 2px solid {border_col};
+                    padding-bottom: 16px;
+                    margin-bottom: 24px;
+                }}
+                .pdf-header h1 {{
+                    font-size: 24px;
+                    margin: 0 0 6px 0;
+                    color: {head_col};
+                    font-family: 'Times New Roman', serif;
+                    font-weight: bold;
+                }}
+                .pdf-header .meta {{
+                    font-size: 12px;
+                    color: #555555;
+                    font-style: italic;
+                }}
+                .pdf-sec-head {{
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: {head_col};
+                    margin-top: 20px;
+                    margin-bottom: 8px;
+                    border-bottom: 1px solid {border_col};
+                    padding-bottom: 4px;
+                    font-family: 'Times New Roman', serif;
+                }}
+                .pdf-subsec-head {{
+                    font-size: 15px;
+                    font-weight: bold;
+                    color: {head_col};
+                    margin-top: 14px;
+                    margin-bottom: 6px;
+                    font-family: 'Times New Roman', serif;
+                }}
+                .pdf-display-math {{
+                    font-size: 17px;
+                    font-weight: bold;
+                    text-align: center;
+                    margin: 16px 0;
+                    padding: 12px 16px;
+                    background-color: {math_bg};
+                    border-left: 3px solid {border_col};
+                    color: {text_col};
+                }}
+                .pdf-inline-math {{
+                    font-size: 15px;
+                    font-weight: bold;
+                    color: {text_col};
+                    padding: 0 2px;
+                }}
+                .math-frac {{
+                    display: inline-block;
+                    vertical-align: middle;
+                    text-align: center;
+                    font-size: 0.95em;
+                    padding: 0 2px;
+                }}
+                .math-num {{
+                    display: block;
+                    border-bottom: 1px solid {border_col};
+                    padding: 0 2px;
+                }}
+                .math-den {{
+                    display: block;
+                    padding: 0 2px;
+                }}
+                .pdf-slide-box {{
+                    background: {math_bg};
+                    border: 1px solid {border_col};
+                    padding: 14px;
+                    margin: 14px 0;
+                }}
+                .slide-heading {{
+                    font-size: 15px;
+                    font-weight: bold;
+                    color: {head_col};
+                    margin: 0 0 8px 0;
+                }}
+                .pdf-footer {{
+                    margin-top: 50px;
+                    padding-top: 12px;
+                    border-top: 1px solid {border_col};
+                    text-align: center;
+                    font-size: 11px;
+                    color: #666666;
+                }}
             </style>
         </head>
         <body>
-            {formatted_html}
+            <div class="pdf-page">
+                <div class="pdf-header">
+                    <h1>{self.doc_title}</h1>
+                    <div class="meta">PDF Document Live Preview • Pure Black & White Render</div>
+                </div>
+                {formatted_body}
+                <div class="pdf-footer">
+                    Page 1 of 1 • PDF Preview Mode (Uncompiled)
+                </div>
+            </div>
         </body>
         </html>
         """
@@ -182,19 +301,48 @@ class LatexEditorWidget(QWidget):
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(1500, lambda: self.btn_copy.setText("📋 Copy Code"))
 
-    def _export_pdf(self):
+    def confirm_close(self) -> bool:
+        if not self.is_dirty and not self.editor.toPlainText().strip():
+            return True
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Close LaTeX Document?")
+        msg_box.setText("You have an active LaTeX document workspace.")
+        msg_box.setInformativeText("Would you like to export the latest edited LaTeX as a PDF before closing, or discard it?")
+        
+        btn_export = msg_box.addButton("📥 Export as PDF", QMessageBox.ButtonRole.AcceptRole)
+        btn_discard = msg_box.addButton("🗑️ Discard Changes", QMessageBox.ButtonRole.DestructiveRole)
+        btn_cancel = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        msg_box.setDefaultButton(btn_export)
+
+        msg_box.exec()
+
+        clicked = msg_box.clickedButton()
+        if clicked == btn_export:
+            return self._export_pdf()
+        elif clicked == btn_discard:
+            self.is_dirty = False
+            return True
+        else:
+            return False
+
+    def _on_close_clicked(self):
+        if self.confirm_close():
+            self.close_requested.emit()
+
+    def _export_pdf(self) -> bool:
+        # ALWAYS fetch the latest edited LaTeX code string from the code editor
         code = self.editor.toPlainText().strip()
         if not code:
             QMessageBox.warning(self, "Empty LaTeX", "Cannot compile empty LaTeX source.")
-            return
+            return False
 
-        # Prompt save location
         default_filename = f"{self.doc_title.replace(' ', '_')}.pdf"
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save Compiled PDF", default_filename, "PDF Documents (*.pdf)"
         )
         if not file_path:
-            return
+            return False
 
         self.btn_export.setText("Compiling PDF...")
         self.btn_export.setEnabled(False)
@@ -202,16 +350,22 @@ class LatexEditorWidget(QWidget):
 
         try:
             from ...backend.math_engine.latex_client import compile_custom_latex_pdf
+            # Compiles the current (edited/non-edited) LaTeX code from the editor
             success, msg_or_path = compile_custom_latex_pdf(code, file_path)
             if success:
+                self.is_dirty = False
+                self.pdf_compiled.emit(file_path)
                 QMessageBox.information(
                     self, "PDF Exported",
                     f"LaTeX compiled and saved successfully to:\n{file_path}"
                 )
+                return True
             else:
                 QMessageBox.warning(self, "Compilation Error", f"LaTeX compilation failed:\n{msg_or_path}")
+                return False
         except Exception as e:
             QMessageBox.warning(self, "Export Error", f"Failed to compile PDF:\n{e}")
+            return False
         finally:
             self.btn_export.setText("📥 Export as PDF")
             self.btn_export.setEnabled(True)
@@ -226,7 +380,7 @@ class LatexEditorWidget(QWidget):
             QFrame#LatexEditorHeader {{
                 background-color: {c['bg_titlebar']};
                 border-bottom: 1px solid {c['border_color']};
-                border-radius: 8px;
+                border-radius: 6px;
             }}
             QLabel {{
                 color: {c['text_primary']};
@@ -250,7 +404,7 @@ class LatexEditorWidget(QWidget):
                 color: {c['text_primary']};
                 border: 1px solid {c['border_color']};
                 border-radius: 6px;
-                padding: 6px 12px;
+                padding: 4px 10px;
                 font-weight: 600;
             }}
             QPushButton:hover {{

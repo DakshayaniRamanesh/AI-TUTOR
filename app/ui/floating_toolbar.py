@@ -46,15 +46,11 @@ class FloatingToolbar(QWidget):
             event.accept()
 
     def _init_ui(self):
+        from .theme_manager import ThemeManager
         # Main container with pill shape
         self.container = QFrame(self)
-        self.container.setStyleSheet("""
-            QFrame {
-                background-color: #ffffff;
-                border: 1px solid #e2e8f0;
-                border-radius: 16px;
-            }
-        """)
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._apply_theme(ThemeManager.instance().current_theme)
         
         # Drop shadow for floating effect
         shadow = QGraphicsDropShadowEffect(self.container)
@@ -205,3 +201,14 @@ class FloatingToolbar(QWidget):
             c = "#ffffff" if name == tool_name else "#475569"
             btn.setIcon(qta.icon(icon_map[name], color=c))
         self.tool_changed.emit(tool_name)
+
+    def _apply_theme(self, theme_name: str = "light"):
+        from .theme_manager import ThemeManager
+        c = ThemeManager.instance().get_colors()
+        self.container.setStyleSheet(f"""
+            QFrame {{
+                background-color: {c['bg_toolbar']};
+                border: 1px solid {c['border_color']};
+                border-radius: 16px;
+            }}
+        """)
