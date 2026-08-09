@@ -1,18 +1,20 @@
 import os
 import uuid
 import tempfile
+import subprocess
+import base64
+import zipfile
+import io
+import urllib.request
 from dotenv import load_dotenv
 
-# Load backend/.env environment variables
-load_dotenv()
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+# Load backend/.env — explicit path takes precedence over CWD
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 try:
     import imageio_ffmpeg
     ffmpeg_dir = os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
     os.environ["PATH"] += os.pathsep + ffmpeg_dir
-    print(f"[Setup] Injected FFmpeg into PATH from {ffmpeg_dir}")
 except ImportError:
     pass
 
@@ -232,10 +234,6 @@ async def compile_pdf(payload: dict):
     if not latex_code:
         return JSONResponse({"status": "error", "message": "No LaTeX code provided."}, status_code=400)
 
-    import subprocess
-    import tempfile
-    import base64
-
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     local_tectonic = os.path.join(project_root, "tectonic.exe")
     tectonic_cmd = local_tectonic if os.path.exists(local_tectonic) else "tectonic"
@@ -251,8 +249,7 @@ async def compile_pdf(payload: dict):
         res = subprocess.run([tectonic_cmd, tex_path], cwd=temp_dir, capture_output=True, text=True, timeout=300)
         if res.returncode == 0 and os.path.exists(pdf_path):
             with open(pdf_path, "rb") as pf:
-                pdf_bytes = pf.read()
-            pdf_b64 = base64.b64encode(pdf_bytes).decode()
+                pdf_b64 = base64.b64encode(pf.read()).decode()
             return {"status": "ok", "pdf_b64": pdf_b64}
         else:
             err_msg = res.stderr or res.stdout or "Compilation error"
@@ -301,16 +298,8 @@ async def test_gemini():
 
 @app.get("/api/diagnostics/tectonic")
 async def test_tectonic():
-    import subprocess
-    import os
-    import urllib.request
-    import zipfile
-    import io
-
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     local_tectonic = os.path.join(project_root, "tectonic.exe")
-
-    # If tectonic.exe does not exist locally and 'tectonic' is not in PATH, try auto-downloading
     tectonic_cmd = local_tectonic if os.path.exists(local_tectonic) else "tectonic"
 
     try:
@@ -329,9 +318,8 @@ async def test_tectonic():
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             for name in zf.namelist():
                 if name.endswith("tectonic.exe"):
-                    data = zf.read(name)
                     with open(local_tectonic, "wb") as f:
-                        f.write(data)
+                        f.write(zf.read(name))
                     break
         result = subprocess.run([local_tectonic, "--version"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
