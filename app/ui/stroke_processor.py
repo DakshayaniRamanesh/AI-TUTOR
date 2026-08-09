@@ -30,6 +30,11 @@ from PyQt6.QtCore import Qt, QPointF, QRectF, QLineF
 SHAPE_DEBUG: bool = False
 
 
+def _dbg(msg: str) -> None:
+    """No-op unless SHAPE_DEBUG is True. Centralises all debug output."""
+_dbg(msg)
+
+
 # ==============================================================================
 # TUNABLE THRESHOLD CONSTANTS & CONFIGURATION
 # ==============================================================================
@@ -237,8 +242,7 @@ def fit_arrow(points: np.ndarray) -> dict:
 
     directness = start_end_dist / total_len
     if directness < ARROW_MIN_DIRECTNESS:
-        if SHAPE_DEBUG:
-            print(f"[Arrow] Rejected: directness={directness:.3f} < {ARROW_MIN_DIRECTNESS}")
+_dbg(f"[Arrow] Rejected: directness={directness:.3f} < {ARROW_MIN_DIRECTNESS}")
         return {'is_valid': False}
 
     tail_count = max(4, int(N * ARROW_TAIL_RATIO))
@@ -543,28 +547,25 @@ def fit_cloud(points: np.ndarray) -> dict:
     is_closed = start_end_dist < max(CLOSED_LOOP_MAX_DIST_PX, bbox_diag * CLOSED_LOOP_RELATIVE_THRES)
     if not is_closed:
         if SHAPE_DEBUG:
-            print(f"[Cloud] Rejected: not closed (start_end_dist={start_end_dist:.1f})", flush=True)
+            print(f"[Cloud] Rejected: not closed (start_end_dist={start_end_dist:.1f})")
         return {'is_valid': False}
 
     # Reject 4-corner polygonal boxes (rectangle/square candidate)
     corners = detect_corners(points)
     if len(corners) in [3, 4, 5] and is_closed:
-        if SHAPE_DEBUG:
-            print(f"[Cloud] Rejected: {len(corners)} sharp corners detected (likely rectangle/square)", flush=True)
+_dbg(f"[Cloud] Rejected: {len(corners)} sharp corners detected (likely rectangle/square)")
         return {'is_valid': False}
 
     # Gate 2: Minimum bounding box size (filters single letters)
     if w < CLOUD_MIN_BBOX_PX or h < CLOUD_MIN_BBOX_PX:
-        if SHAPE_DEBUG:
-            print(f"[Cloud] Rejected: bbox too small ({w:.0f}x{h:.0f} < {CLOUD_MIN_BBOX_PX})", flush=True)
+_dbg(f"[Cloud] Rejected: bbox too small ({w:.0f}x{h:.0f} < {CLOUD_MIN_BBOX_PX})")
         return {'is_valid': False}
 
     # Gate 3: Minimum arc length
     diffs_all = np.diff(points, axis=0)
     arc_length = float(np.sum(np.hypot(diffs_all[:, 0], diffs_all[:, 1])))
     if arc_length < CLOUD_MIN_ARC_LENGTH_PX:
-        if SHAPE_DEBUG:
-            print(f"[Cloud] Rejected: arc too short ({arc_length:.1f} < {CLOUD_MIN_ARC_LENGTH_PX})", flush=True)
+_dbg(f"[Cloud] Rejected: arc too short ({arc_length:.1f} < {CLOUD_MIN_ARC_LENGTH_PX})")
         return {'is_valid': False}
 
     # Gate 4 & 5: Curvature oscillation analysis
@@ -583,10 +584,9 @@ def fit_cloud(points: np.ndarray) -> dict:
     sign_arr = np.sign(angle_changes)
     sign_changes = int(np.sum(np.diff(sign_arr[sign_arr != 0]) != 0))
 
-    if SHAPE_DEBUG:
-        print(f"[Cloud] curv_var={curvature_var:.5f} (min {CLOUD_CURVATURE_VAR_THRESHOLD}), "
+_dbg(f"[Cloud] curv_var={curvature_var:.5f} (min {CLOUD_CURVATURE_VAR_THRESHOLD}), "
               f"sign_changes={sign_changes} (min {CLOUD_MIN_SIGN_CHANGES}), "
-              f"bbox={w:.0f}x{h:.0f}, arc={arc_length:.0f}", flush=True)
+              f"bbox={w:.0f}x{h:.0f}, arc={arc_length:.0f}")
 
     if curvature_var >= CLOUD_CURVATURE_VAR_THRESHOLD and sign_changes >= CLOUD_MIN_SIGN_CHANGES:
         return {
@@ -596,8 +596,7 @@ def fit_cloud(points: np.ndarray) -> dict:
             'sign_changes': sign_changes
         }
 
-    if SHAPE_DEBUG:
-        print(f"[Cloud] Rejected: curv_var or sign_changes below threshold", flush=True)
+_dbg(f"[Cloud] Rejected: curv_var or sign_changes below threshold")
     return {'is_valid': False}
 
 
@@ -616,8 +615,7 @@ def classify_stroke_precheck(points: np.ndarray) -> tuple[bool, dict]:
     segment_lengths = np.hypot(diffs[:, 0], diffs[:, 1])
     total_length = float(np.sum(segment_lengths))
     if total_length < PRECHECK_MIN_ARC_LENGTH_PX:
-        if SHAPE_DEBUG:
-            print(f"[Precheck] HANDWRITING: arc_length={total_length:.1f} < {PRECHECK_MIN_ARC_LENGTH_PX}", flush=True)
+_dbg(f"[Precheck] HANDWRITING: arc_length={total_length:.1f} < {PRECHECK_MIN_ARC_LENGTH_PX}")
         return (False, {'reason': 'micro_stroke'})
 
     min_xy = np.min(pts_eval, axis=0)
@@ -626,8 +624,7 @@ def classify_stroke_precheck(points: np.ndarray) -> tuple[bool, dict]:
     bbox_h = float(max_xy[1] - min_xy[1])
     bbox_diag = float(np.hypot(bbox_w, bbox_h))
     if bbox_diag < PRECHECK_MIN_BBOX_DIAG_PX:
-        if SHAPE_DEBUG:
-            print(f"[Precheck] HANDWRITING: bbox_diag={bbox_diag:.1f} < {PRECHECK_MIN_BBOX_DIAG_PX}", flush=True)
+_dbg(f"[Precheck] HANDWRITING: bbox_diag={bbox_diag:.1f} < {PRECHECK_MIN_BBOX_DIAG_PX}")
         return (False, {'reason': 'micro_bbox'})
 
     start_end_dist = float(np.hypot(*(pts_eval[-1] - pts_eval[0])))
@@ -710,13 +707,11 @@ def classify_stroke(points: np.ndarray) -> tuple[str, float, dict]:
         diff_ratio = abs(bbox_w - bbox_h) / max_dim if max_dim > 0 else 0.0
         
         if diff_ratio <= SQUARE_TOLERANCE_RATIO:
-            if SHAPE_DEBUG:
-                print(f"[Classify] CIRCLE — rmse={circle_fit['rmse']:.2f}, rel_err={circle_fit['relative_error']:.3f}", flush=True)
+_dbg(f"[Classify] CIRCLE — rmse={circle_fit['rmse']:.2f}, rel_err={circle_fit['relative_error']:.3f}")
             return ('shape', 0.94, {'shape_type': 'circle', 'fit': circle_fit})
         else:
             ellipse_fit = fit_ellipse(pts_eval)
-            if SHAPE_DEBUG:
-                print(f"[Classify] ELLIPSE — rmse={circle_fit['rmse']:.2f}, ratio_diff={diff_ratio:.3f}", flush=True)
+_dbg(f"[Classify] ELLIPSE — rmse={circle_fit['rmse']:.2f}, ratio_diff={diff_ratio:.3f}")
             return ('shape', 0.91, {'shape_type': 'ellipse', 'fit': ellipse_fit})
 
     # 2. Rectangle / Square Check (4 Corners near 90° — MUST run BEFORE cloud)
@@ -731,15 +726,13 @@ def classify_stroke(points: np.ndarray) -> tuple[str, float, dict]:
     # 3. Cloud Check (Closed organic bump oscillation)
     cloud_fit = fit_cloud(pts_eval)
     if cloud_fit['is_valid']:
-        if SHAPE_DEBUG:
-            print(f"[Classify] CLOUD — curv_var={cloud_fit['curvature_var']:.5f}, sign_changes={cloud_fit['sign_changes']}", flush=True)
+_dbg(f"[Classify] CLOUD — curv_var={cloud_fit['curvature_var']:.5f}, sign_changes={cloud_fit['sign_changes']}")
         return ('shape', 0.90, {'shape_type': 'cloud', 'fit': cloud_fit})
 
     # 4. Arrow Check (shaft line + endpoint V-flare)
     arrow_fit = fit_arrow(pts_eval)
     if arrow_fit['is_valid']:
-        if SHAPE_DEBUG:
-            print(f"[Classify] ARROW — head_at={arrow_fit['head_at']}, flare_angle={arrow_fit.get('max_flare_angle', '?'):.1f}°", flush=True)
+_dbg(f"[Classify] ARROW — head_at={arrow_fit['head_at']}, flare_angle={arrow_fit.get('max_flare_angle', '?'):.1f}°")
         return ('shape', 0.95, {'shape_type': 'arrow', 'fit': arrow_fit})
 
     # 5. Straight Line Check
@@ -748,8 +741,7 @@ def classify_stroke(points: np.ndarray) -> tuple[str, float, dict]:
         line_fit['rmse'] < LINE_MAX_RMSE_PX and
         line_fit['max_error'] < LINE_MAX_ERROR_PX and
         directness_ratio > LINE_MIN_DIRECTNESS):
-        if SHAPE_DEBUG:
-            print(f"[Classify] LINE — rmse={line_fit['rmse']:.2f}, directness={directness_ratio:.3f}", flush=True)
+_dbg(f"[Classify] LINE — rmse={line_fit['rmse']:.2f}, directness={directness_ratio:.3f}")
         return ('shape', 0.95, {'shape_type': 'line', 'fit': line_fit})
 
     if SHAPE_DEBUG:
