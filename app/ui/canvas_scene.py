@@ -3,10 +3,12 @@ Freeform Canvas Scene (Infinite SceneRect, Dotted & Ruled Paper Backgrounds, Fre
 """
 
 import math
+import time
 from PyQt6.QtWidgets import QGraphicsScene, QGraphicsPathItem, QGraphicsProxyWidget
 from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QPainter
 from PyQt6.QtCore import Qt, QRectF, QPointF, QTimer, pyqtSignal
 
+from .theme_manager import ThemeManager
 from .items.ink_stroke import InkStroke
 from .items.sticky_note import StickyNote
 from .items.handwriting_note import HandwritingNote
@@ -35,8 +37,7 @@ class CanvasScene(QGraphicsScene):
         # Infinite canvas bounds
         self.setSceneRect(QRectF(-50000, -50000, 100000, 100000))
         
-        # Background mode: "dotted" or "ruled" (ruled is default notebook mode)
-        self.background_mode = "ruled"
+        # Background mode: "dotted", "ruled", or "blank"
         self.background_mode = "blank"
         
         # Active tool state: "select", "pen", "highlighter", "eraser"
@@ -59,7 +60,6 @@ class CanvasScene(QGraphicsScene):
         self._hold_snap_timer.timeout.connect(self._on_hold_snap_timeout)
         self._hold_last_pos = None
 
-        from .theme_manager import ThemeManager
         tm = ThemeManager.instance()
         if tm.is_dark():
             self.pen_color = "#ffffff"
@@ -126,7 +126,6 @@ class CanvasScene(QGraphicsScene):
             self.update()
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
-        from .theme_manager import ThemeManager
         c = ThemeManager.instance().get_colors()
 
         if self.background_mode == "blank":
@@ -154,12 +153,7 @@ class CanvasScene(QGraphicsScene):
                 painter.drawLine(left, y, right, y)
 
     def erase_items_at(self, pos: QPointF):
-        from PyQt6.QtGui import QPainterPath
-        radius = 5
-        if self.eraser_size == 1: radius = 5
-        elif self.eraser_size == 2: radius = 10
-        elif self.eraser_size == 3: radius = 15
-        
+        radius = self.eraser_size * 5  # 1=5px, 2=10px, 3=15px
         path = QPainterPath()
         path.addEllipse(pos, radius, radius)
         
@@ -439,7 +433,6 @@ class CanvasScene(QGraphicsScene):
         return item
 
     def handle_tablet_event(self, event, scene_pos: QPointF) -> bool:
-        import time
         if self.active_tool not in ["pen", "highlighter"]:
             return False
 
