@@ -38,6 +38,9 @@ from .views.notebooks_panel import NotebooksPanel
 from .views.git_notes_panel import GitNotesPanel
 from .views.shared_panel import SharedPanel
 from .views.obsidian_graph_panel import ObsidianGraphPanel
+from .views.home_view import HomeView
+from .views.subjects_list import SubjectsListView
+from .views.subject_detail_view import SubjectDetailView
 from .views.placeholder_panel import PlaceholderPanel
 from .views.settings_dialog import SettingsDialog
 from .views.progress_dialog import ProgressDialog
@@ -370,6 +373,29 @@ class MainWindow(QMainWindow):
 
         self.main_stack.addWidget(canvas_wrapper) # Index 0
 
+        self.home_view = HomeView(self.main_stack)
+        self.subjects_list_view = SubjectsListView(self.main_stack)
+        self.subject_detail_view = SubjectDetailView(self.main_stack)
+
+        # Connect Navigation Signals
+        self.home_view.open_blank_notebook.connect(lambda: self.main_stack.setCurrentWidget(canvas_wrapper))
+        self.home_view.open_my_subjects.connect(lambda: self.main_stack.setCurrentWidget(self.subjects_list_view))
+        
+        self.subjects_list_view.go_back.connect(lambda: self.main_stack.setCurrentWidget(self.home_view))
+        self.subjects_list_view.open_subject_detail.connect(self._on_open_subject_detail)
+
+        self.subject_detail_view.go_back.connect(lambda: self.main_stack.setCurrentWidget(self.subjects_list_view))
+        self.subject_detail_view.open_notebook.connect(self._on_load_notebook_requested)
+
+        self.main_stack.addWidget(self.home_view)
+        self.main_stack.addWidget(self.subjects_list_view)
+        self.main_stack.addWidget(self.subject_detail_view)
+        
+        # Make Home the default startup screen instead of the blank canvas
+        self.main_stack.setCurrentWidget(self.home_view)
+        # ------------------------------------
+
+
         # Notebooks View Panel
         self.notebooks_panel = NotebooksPanel(self.main_stack)
         self.notebooks_panel.open_notebook_requested.connect(self._on_load_notebook_requested)
@@ -401,6 +427,11 @@ class MainWindow(QMainWindow):
         self.splitter.setSizes([56, 1224])
         card_layout.addWidget(self.splitter)
         self.outer_layout.addWidget(self.central_card)
+
+    def _on_open_subject_detail(self, subject_id: str):
+        """Loads the requested subject from the DB and switches the view."""
+        self.subject_detail_view.load_subject(subject_id)
+        self.main_stack.setCurrentWidget(self.subject_detail_view)
 
     def _apply_global_styles(self):
         c = ThemeManager.instance().get_colors()
