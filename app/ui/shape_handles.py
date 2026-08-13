@@ -91,7 +91,7 @@ class ShapeResizeHandles(QGraphicsItem):
                 ("top", QPointF(0, -r))
             ]
 
-        elif st in ["ellipse", "rectangle", "square", "cloud"]:
+        elif st in ["ellipse", "rectangle", "square", "cloud", "triangle"]:
             w = dims.get("width", dims.get("side", 80.0))
             h = dims.get("height", dims.get("side", 50.0))
             hw, hh = w / 2.0, h / 2.0
@@ -107,7 +107,7 @@ class ShapeResizeHandles(QGraphicsItem):
                     ("bottom_left", QPointF(-hw, hh)),
                     ("left_mid", QPointF(-hw, 0))
                 ]
-            elif st == "cloud":
+            elif st in ["cloud", "triangle"]:
                 positions = [
                     ("top_left", QPointF(-hw, -hh)),
                     ("top_right", QPointF(hw, -hh)),
@@ -194,7 +194,7 @@ class ShapeResizeHandles(QGraphicsItem):
                 new_side = max(5.0, dist * 2.0 / math.sqrt(2.0) if "top" in self.get_handle_positions()[self._active_handle_index][0] else dist * 2.0)
                 self.target_item.set_dimensions_px({"side": new_side})
 
-            elif st in ["rectangle", "ellipse", "cloud"]:
+            elif st in ["rectangle", "ellipse", "cloud", "triangle"]:
                 w = dims.get("width", 80.0)
                 h = dims.get("height", 50.0)
                 idx = self._active_handle_index

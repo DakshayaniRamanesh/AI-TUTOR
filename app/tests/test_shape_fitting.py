@@ -12,8 +12,8 @@ from app.ui.shape_metadata import (
 from app.ui.stroke_processor import (
     classify_stroke, classify_stroke_precheck, 
     fit_line, fit_arrow, fit_circle_kasa, fit_ellipse, 
-    fit_rectangle_and_square, fit_cloud,
-    generate_arrowhead_polygon, generate_cloud_path_points
+    fit_rectangle_and_square, fit_cloud, fit_triangle,
+    generate_arrowhead_polygon, generate_cloud_path_points, generate_regular_ngon
 )
 
 
@@ -44,8 +44,8 @@ def test_unit_conversions():
 
 
 def test_shape_metadata_registry():
-    """Verifies that all 7 shape types are defined in SHAPE_METADATA with required schema."""
-    expected_shapes = ["circle", "ellipse", "rectangle", "square", "line", "arrow", "cloud"]
+    """Verifies that all 8 shape types are defined in SHAPE_METADATA with required schema."""
+    expected_shapes = ["circle", "ellipse", "rectangle", "square", "line", "arrow", "cloud", "triangle"]
     for shape in expected_shapes:
         assert shape in SHAPE_METADATA
         meta = SHAPE_METADATA[shape]
@@ -53,6 +53,11 @@ def test_shape_metadata_registry():
         assert "fields" in meta
         assert "handles" in meta
         assert len(meta["fields"]) >= 1
+    # Check that triangle has num_sides field
+    tri_fields = [f["key"] for f in SHAPE_METADATA["triangle"]["fields"]]
+    assert "num_sides" in tri_fields
+    assert "width" in tri_fields
+    assert "height" in tri_fields
 
 
 def test_fit_straight_line():
@@ -136,6 +141,31 @@ def test_fit_rectangle_and_square():
     assert pytest.approx(rect_fit['height'], 1.0) == 40.0
 
 
+def test_fit_triangle():
+    """Verifies corner detection and fitting for a 3-corner closed triangle."""
+    tri_points = np.array([
+        [50, 0], [100, 80], [0, 80], [50, 0]
+    ], dtype=np.float64)
+
+    dense_tri = []
+    for i in range(len(tri_points) - 1):
+        p1, p2 = tri_points[i], tri_points[i+1]
+        for alpha in np.linspace(0, 1, 15):
+            dense_tri.append((1 - alpha) * p1 + alpha * p2)
+    dense_tri = np.array(dense_tri)
+
+    fit = fit_triangle(dense_tri)
+    assert fit['is_valid']
+    assert 'bbox' in fit
+    assert pytest.approx(fit['bbox'][2], 1.0) == 100.0
+    assert pytest.approx(fit['bbox'][3], 1.0) == 80.0
+
+    # Verify classification via classify_stroke
+    class_name, conf, details = classify_stroke(dense_tri)
+    assert class_name == 'shape'
+    assert details['shape_type'] == 'triangle'
+
+
 def test_fit_cloud():
     """Verifies cloud detection via curvature oscillation variance."""
     theta = np.linspace(0, 2 * math.pi, 80)
@@ -176,3 +206,20 @@ def test_pure_cloud_path_generator():
         assert "start" in b
         assert "end" in b
         assert "control" in b
+
+
+def test_generate_regular_ngon():
+    """Verifies regular n-gon vertex generation."""
+    # 3-sided ngon (triangle)
+    tri_verts = generate_regular_ngon(0, 0, 50, 3)
+    assert len(tri_verts) == 3
+
+    # 5-sided ngon (pentagon)
+    penta_verts = generate_regular_ngon(0, 0, 50, 5)
+    assert len(penta_verts) == 5
+
+    # Check distance of each vertex to center is equal to radius
+    for vx, vy in penta_verts:
+        dist = math.hypot(vx, vy)
+        assert pytest.approx(dist, 1e-4) == 50.0
+

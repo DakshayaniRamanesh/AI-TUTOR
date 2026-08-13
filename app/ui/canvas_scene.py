@@ -121,7 +121,7 @@ class CanvasScene(QGraphicsScene):
         self.active_tool = "pen"
 
     def set_background_mode(self, mode: str):
-        if mode in ["dotted", "ruled", "blank"]:
+        if mode in ["dotted", "ruled", "blank", "math_ruled"]:
             self.background_mode = mode
             self.update()
 
@@ -152,6 +152,13 @@ class CanvasScene(QGraphicsScene):
             painter.setPen(QPen(grid_pen_color, 1))
             for y in range(top, bottom, grid_size):
                 painter.drawLine(left, y, right, y)
+
+        elif self.background_mode == "math_ruled":
+            painter.setPen(QPen(grid_pen_color, 1))
+            for y in range(top, bottom, grid_size):
+                painter.drawLine(left, y, right, y)
+            for x in range(left, right, grid_size):
+                painter.drawLine(x, top, x, bottom)
 
     def erase_items_at(self, pos: QPointF):
         from PyQt6.QtGui import QPainterPath
@@ -276,7 +283,7 @@ class CanvasScene(QGraphicsScene):
                 print(f"[HoldSnapTimer] Classified as handwriting. Kept raw stroke.", flush=True)
 
     def to_dict_list(self) -> list[dict]:
-        items_data = []
+        items_data = [{"type": "_canvas_meta", "background_mode": self.background_mode}]
         for item in self.items():
             if hasattr(item, "to_dict") and item not in [self._active_handles, self._active_properties_panel]:
                 try:
@@ -292,6 +299,11 @@ class CanvasScene(QGraphicsScene):
 
         for data in items_data:
             itype = data.get("type")
+            if itype == "_canvas_meta":
+                bg_mode = data.get("background_mode", "ruled")
+                self.set_background_mode(bg_mode)
+                continue
+
             x = data.get("x", 0)
             y = data.get("y", 0)
 

@@ -69,6 +69,44 @@ class TestRoundTripSerialization:
         assert pytest.approx(dims.get("width", 0), abs=1) == 120
         assert pytest.approx(dims.get("height", 0), abs=1) == 80
 
+    def test_smartshape_triangle_and_ngon(self, scene, qt_app):
+        """SmartShapeItem (triangle) round-trips with num_sides, and editing num_sides updates geometry."""
+        from app.ui.items.smart_shape_item import SmartShapeItem
+        from PyQt6.QtGui import QPen, QColor
+        pen = QPen(QColor("#00ff00"), 2.0)
+        item = SmartShapeItem(shape_type="triangle",
+                              fit_data={"bbox": (0, 0, 100, 100)}, pen=pen)
+        assert item.dimensions_px["num_sides"] == 3.0
+
+        # Change sides to 5 (pentagon)
+        item.set_dimensions_px({"num_sides": 5.0})
+        assert item.dimensions_px["num_sides"] == 5.0
+
+        d = item.to_dict()
+        assert d["type"] == "SmartShapeItem"
+        assert d["stroke_type"] == "triangle"
+        assert d["dimensions_px"]["num_sides"] == 5.0
+
+        restored = scene.create_item_from_dict(d)
+        assert restored is not None
+        assert restored.stroke_type == "triangle"
+        assert restored.dimensions_px["num_sides"] == 5.0
+
+    def test_math_ruled_background_persistence(self, scene, qt_app):
+        """Background mode 'math_ruled' persists through to_dict_list / load_from_dict_list."""
+        scene.set_background_mode("math_ruled")
+        assert scene.background_mode == "math_ruled"
+
+        dict_list = scene.to_dict_list()
+        assert dict_list[0]["type"] == "_canvas_meta"
+        assert dict_list[0]["background_mode"] == "math_ruled"
+
+        # Load into fresh scene
+        from app.ui.canvas_scene import CanvasScene
+        new_scene = CanvasScene()
+        new_scene.load_from_dict_list(dict_list)
+        assert new_scene.background_mode == "math_ruled"
+
     def test_ink_stroke_roundtrip(self, scene, qt_app):
         """InkStroke round-trips path elements (key fix: 'elements' not 'path_elements')."""
         from app.ui.items.ink_stroke import InkStroke
@@ -314,9 +352,10 @@ class TestAutosaveDebounce:
         assert board_file.exists(), "Board file not found after autosave"
 
         saved = json.loads(board_file.read_text(encoding="utf-8"))
-        assert len(saved["items"]) == 1
-        assert saved["items"][0]["type"] == "StickyNote"
-        assert saved["items"][0]["text"] == "autosaved content"
+        real_items = [i for i in saved["items"] if i.get("type") != "_canvas_meta"]
+        assert len(real_items) == 1
+        assert real_items[0]["type"] == "StickyNote"
+        assert real_items[0]["text"] == "autosaved content"
 
     def test_debounce_collapses_rapid_changes(self, qt_app, tmp_path, monkeypatch):
         """
@@ -398,11 +437,12 @@ class TestManualSaveFlow:
         # Reload from disk into a fresh scene
         payload = NotebookStorage.load_notebook(nb_id)
         loaded_items = payload.get("items", [])
+        real_items = [i for i in loaded_items if i.get("type") != "_canvas_meta"]
 
-        assert len(loaded_items) == 1
-        assert loaded_items[0]["type"] == "StickyNote"
-        assert loaded_items[0]["text"] == "Important formula!"
-        assert loaded_items[0]["color_key"] == "pink"
+        assert len(real_items) == 1
+        assert real_items[0]["type"] == "StickyNote"
+        assert real_items[0]["text"] == "Important formula!"
+        assert real_items[0]["color_key"] == "pink"
 
         fresh_scene = CanvasScene()
         fresh_scene.load_from_dict_list(loaded_items)
@@ -440,11 +480,12 @@ class TestManualSaveFlow:
 
         payload = NotebookStorage.load_notebook(nb_id)
         loaded_items = payload.get("items", [])
-        assert len(loaded_items) == 1
-        assert loaded_items[0]["type"] == "InkStroke"
+        real_items = [i for i in loaded_items if i.get("type") != "_canvas_meta"]
+        assert len(real_items) == 1
+        assert real_items[0]["type"] == "InkStroke"
         # Key fix: must be 'elements'
-        assert "elements" in loaded_items[0]
-        assert len(loaded_items[0]["elements"]) == 3
+        assert "elements" in real_items[0]
+        assert len(real_items[0]["elements"]) == 3
 
         fresh = CanvasScene()
         fresh.load_from_dict_list(loaded_items)

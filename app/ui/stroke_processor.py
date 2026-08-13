@@ -3,12 +3,13 @@ Smart Stroke Processor for Handwriting De-jittering & Real-time Shape Snapping.
 
 Features:
 1. Vector stroke capture with pressure & timestamp support (mouse & tablet).
-2. Pure geometric classification for 7 Shape Types:
-   - Rectangle, Square, Circle, Ellipse, Straight Line, Arrow, Cloud.
+2. Pure geometric classification for 8 Shape Types:
+   - Rectangle, Square, Circle, Ellipse, Straight Line, Arrow, Cloud, Triangle.
 3. Live Hold-to-Snap state machine (500ms hold, 3px movement threshold).
 4. Handwriting de-jittering via SciPy B-spline interpolation.
 5. Least-squares & algebraic shape fitting (Line PCA, Kasa Circle, Angle-change Corner Detection, Cloud Curvature Oscillation).
 6. Self-contained PyQt6 integration preserving raw vector data for future revert capabilities.
+7. Pure generate_regular_ngon() function drives both initial triangle snap and live 'Number of Sides' polygon regeneration.
 """
 
 import time
@@ -79,6 +80,13 @@ CLOSED_LOOP_RELATIVE_THRES: float = 0.30
 CORNER_ANGLE_THRESHOLD_DEG: float = 30.0
 MIN_CORNER_DISTANCE_PX: float = 12.0
 RECTANGLE_ANGLE_TOLERANCE_DEG: float = 25.0
+
+# Triangle Detection Thresholds
+# Expected corner count for a triangle stroke
+TRIANGLE_CORNER_COUNT: int = 3
+# Tolerance (degrees) around ideal 60° interior angle for equilateral — generous
+# because freehand triangles are rarely perfectly equilateral
+TRIANGLE_ANGLE_TOLERANCE_DEG: float = 45.0
 
 # Cloud Detection & Generation Thresholds
 CLOUD_MIN_BUMP_COUNT: int = 6
@@ -601,6 +609,122 @@ def fit_cloud(points: np.ndarray) -> dict:
     return {'is_valid': False}
 
 
+def generate_regular_ngon(cx: float, cy: float, radius: float, n: int,
+                          angle_offset_rad: float = 0.0) -> list[tuple[float, float]]:
+    """
+    Pure geometric function generating vertex coordinates for a regular n-sided polygon
+    inscribed within a circle of the given radius, centred at (cx, cy).
+
+    Used for both:
+      - Initial triangle snap (n=3, derived from stroke bounding box)
+      - Live 'Number of Sides' property edits that regenerate the polygon in-place
+        without requiring a re-draw from scratch.
+
+    Parameters:
+        cx, cy: Centre coordinates.
+        radius: Circumscribed circle radius (half the polygon's diagonal).
+        n: Number of sides (minimum 3).
+        angle_offset_rad: Optional rotation offset in radians (default -π/2 places
+                          the first vertex at the top, giving an upright triangle/pentagon).
+
+    Returns:
+        List of (x, y) vertex tuples in counter-clockwise order.
+    """
+    n = max(3, int(round(n)))
+    vertices = []
+    for i in range(n):
+        theta = angle_offset_rad + 2.0 * math.pi * i / n
+        vertices.append((cx + radius * math.cos(theta), cy + radius * math.sin(theta)))
+    return vertices
+
+
+def fit_triangle(points: np.ndarray) -> dict:
+    """
+    Fits a Triangle from a closed stroke with exactly 3 detected corners.
+
+    Mirrors fit_rectangle_and_square() but checks for TRIANGLE_CORNER_COUNT (3)
+    corners instead of 4. Does NOT re-use fit_rectangle_and_square() to keep
+    classification order clean: rectangle/square runs first, cloud next — triangle
+    is inserted between them so these two shapes never overlap.
+
+    Returns a dict with keys:
+      is_valid  : bool
+      bbox      : (x, y, w, h) bounding box of the original stroke
+      corners   : (3, 2) array of detected corner points
+    """
+    corners = detect_corners(points)
+
+    min_xy = np.min(points, axis=0)
+    max_xy = np.max(points, axis=0)
+    w = float(max_xy[0] - min_xy[0])
+    h = float(max_xy[1] - min_xy[1])
+    bbox_diag = float(np.hypot(w, h))
+
+    start_end_dist = float(np.hypot(*(points[-1] - points[0])))
+    is_closed = start_end_dist < max(CLOSED_LOOP_MAX_DIST_PX, bbox_diag * CLOSED_LOOP_RELATIVE_THRES)
+
+    # If stroke is not closed, reject immediately — open strokes are lines/arrows
+    if not is_closed:
+        if SHAPE_DEBUG:
+            print(f"[Triangle] Rejected: not closed (start_end_dist={start_end_dist:.1f})", flush=True)
+        return {'is_valid': False}
+
+    # Minimum bounding box guard (prevent tiny scribbles)
+    if w < 5.0 or h < 5.0:
+        return {'is_valid': False}
+
+    # Handle 2-detected-corner case: stroke starts at a corner but detect_corners
+    # misses index-0; prepend the start point as the missing corner.
+    if len(corners) == 2 and is_closed:
+        corners = [0] + corners
+
+    # Handle 4-detected-corner case: the start/end overlap may produce a spurious
+    # 4th corner; drop the last one if it's very close to the first.
+    if len(corners) == 4 and is_closed:
+        dist_closure = np.hypot(*(points[corners[0]] - points[corners[-1]]))
+        if dist_closure < 25.0:
+            corners = corners[:3]
+
+    if len(corners) != TRIANGLE_CORNER_COUNT:
+        if SHAPE_DEBUG:
+            print(f"[Triangle] Rejected: corners={len(corners)} (need {TRIANGLE_CORNER_COUNT})", flush=True)
+        return {'is_valid': False}
+
+    corner_pts = points[corners]
+
+    # Validate that interior angles are within a reasonable range for a triangle
+    # (any triangle: all interior angles sum to 180°, each between ~20° and ~140°)
+    v = np.vstack([corner_pts, corner_pts[0]])
+    side_vecs = np.diff(v, axis=0)
+    side_norms = np.hypot(side_vecs[:, 0], side_vecs[:, 1])
+
+    if np.any(side_norms < 1e-4):
+        return {'is_valid': False}
+
+    unit_sides = side_vecs / side_norms[:, None]
+    interior_angles_deg = []
+    for i in range(3):
+        # Interior angle at corner i: angle between the incoming and outgoing edges
+        dot = np.clip(np.dot(-unit_sides[i - 1], unit_sides[i]), -1.0, 1.0)
+        interior_angles_deg.append(float(np.degrees(np.arccos(dot))))
+
+    if SHAPE_DEBUG:
+        print(f"[Triangle] interior_angles={[f'{a:.1f}' for a in interior_angles_deg]}, "
+              f"bbox={w:.0f}x{h:.0f}", flush=True)
+
+    # Each interior angle must be at least 20° and at most 140° for a valid triangle
+    if not all(20.0 <= ang <= 140.0 for ang in interior_angles_deg):
+        if SHAPE_DEBUG:
+            print(f"[Triangle] Rejected: degenerate interior angles", flush=True)
+        return {'is_valid': False}
+
+    return {
+        'is_valid': True,
+        'bbox': (float(min_xy[0]), float(min_xy[1]), w, h),
+        'corners': corner_pts
+    }
+
+
 def classify_stroke_precheck(points: np.ndarray) -> tuple[bool, dict]:
     """
     Pre-check pure function: rejects micro/short strokes as handwriting before running
@@ -683,8 +807,17 @@ def smooth_handwriting(points: np.ndarray,
 
 def classify_stroke(points: np.ndarray) -> tuple[str, float, dict]:
     """
-    Classifies an input stroke across all 7 supported shape types or 'handwriting'.
+    Classifies an input stroke across all 8 supported shape types or 'handwriting'.
     Pure function — zero Qt dependencies.
+
+    Classification order (highest priority first):
+      1. Circle / Ellipse  — closed smooth loops
+      2. Rectangle / Square — 4 sharp corners near 90°
+      2b. Triangle           — 3 sharp corners (closed loop)
+      3. Cloud              — closed organic curvature oscillation
+      4. Arrow              — shaft line + endpoint V-flare
+      5. Straight Line      — linear PCA
+      6. Handwriting        — fallback
     """
     is_candidate, metrics = classify_stroke_precheck(points)
     if not is_candidate:
@@ -719,7 +852,7 @@ def classify_stroke(points: np.ndarray) -> tuple[str, float, dict]:
                 print(f"[Classify] ELLIPSE — rmse={circle_fit['rmse']:.2f}, ratio_diff={diff_ratio:.3f}", flush=True)
             return ('shape', 0.91, {'shape_type': 'ellipse', 'fit': ellipse_fit})
 
-    # 2. Rectangle / Square Check (4 Corners near 90° — MUST run BEFORE cloud)
+    # 2. Rectangle / Square Check (4 Corners near 90° — MUST run BEFORE cloud AND triangle)
     rect_fit = fit_rectangle_and_square(pts_eval)
     if rect_fit['is_valid']:
         shape_type = rect_fit['shape_type']
@@ -727,6 +860,16 @@ def classify_stroke(points: np.ndarray) -> tuple[str, float, dict]:
             corners = detect_corners(pts_eval)
             print(f"[Classify] {shape_type.upper()} — corners_found={len(corners)}, bbox={rect_fit.get('bbox')}", flush=True)
         return ('shape', 0.92, {'shape_type': shape_type, 'fit': rect_fit})
+
+    # 2b. Triangle Check (3 Corners — closed loop, runs after rectangle so 4-corner
+    #     shapes are never misclassified here, and before cloud so triangles don't
+    #     accidentally pass the curvature-oscillation gate)
+    if is_closed:
+        tri_fit = fit_triangle(pts_eval)
+        if tri_fit['is_valid']:
+            if SHAPE_DEBUG:
+                print(f"[Classify] TRIANGLE — bbox={tri_fit.get('bbox')}", flush=True)
+            return ('shape', 0.91, {'shape_type': 'triangle', 'fit': tri_fit})
 
     # 3. Cloud Check (Closed organic bump oscillation)
     cloud_fit = fit_cloud(pts_eval)

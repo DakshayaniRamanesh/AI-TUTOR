@@ -1119,19 +1119,30 @@ class MainWindow(QMainWindow):
         else:
             self.reference_panel.show_panel(self)
 
+    def _sync_grid_btn_ui(self, mode: str):
+        if mode == "ruled":
+            self.btn_grid_mode.setText(" Ruled")
+            self.btn_grid_mode.setIcon(qta.icon('fa5s.grip-lines', color='#475569'))
+        elif mode == "dotted":
+            self.btn_grid_mode.setText(" Dotted")
+            self.btn_grid_mode.setIcon(qta.icon('fa5s.braille', color='#475569'))
+        elif mode == "math_ruled":
+            self.btn_grid_mode.setText(" Math Ruled")
+            self.btn_grid_mode.setIcon(qta.icon('fa5s.border-all', color='#475569'))
+        else:
+            self.btn_grid_mode.setText(" Blank")
+            self.btn_grid_mode.setIcon(qta.icon('fa5s.square', color='#475569'))
+
     def _toggle_grid_mode(self):
         if self.scene.background_mode == "blank":
             self.scene.set_background_mode("ruled")
-            self.btn_grid_mode.setText(" Ruled")
-            self.btn_grid_mode.setIcon(qta.icon('fa5s.grip-lines', color='#475569'))
         elif self.scene.background_mode == "ruled":
             self.scene.set_background_mode("dotted")
-            self.btn_grid_mode.setText(" Dotted")
-            self.btn_grid_mode.setIcon(qta.icon('fa5s.braille', color='#475569'))
+        elif self.scene.background_mode == "dotted":
+            self.scene.set_background_mode("math_ruled")
         else:
             self.scene.set_background_mode("blank")
-            self.btn_grid_mode.setText(" Blank")
-            self.btn_grid_mode.setIcon(qta.icon('fa5s.square', color='#475569'))
+        self._sync_grid_btn_ui(self.scene.background_mode)
 
     def _on_zoom_changed(self, zoom_factor: float):
         self.lbl_zoom.setText(f"{int(zoom_factor * 100)}%")
@@ -1301,6 +1312,7 @@ class MainWindow(QMainWindow):
                 video_requested_callback=self._on_generate_video_requested,
                 solve_requested_callback=self._on_stem_question_asked
             )
+            self._sync_grid_btn_ui(self.scene.background_mode)
             
             self.main_stack.setCurrentIndex(0)
             self.sidebar_list.setCurrentRow(0)

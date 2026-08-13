@@ -194,5 +194,19 @@ SHAPE_METADATA: Dict[str, Dict[str, Any]] = {
             {"name": "bottom_right", "index": 4, "cursor": "SizeFDiagCursor"},
             {"name": "bottom_left", "index": 6, "cursor": "SizeBDiagCursor"}
         ]
+    },
+    "triangle": {
+        "display_name": "Triangle / Polygon",
+        "fields": [
+            {"key": "width", "label": "Width", "min": 1.0, "step": 1.0},
+            {"key": "height", "label": "Height", "min": 1.0, "step": 1.0},
+            {"key": "num_sides", "label": "Number of Sides", "min": 3.0, "step": 1.0}
+        ],
+        "handles": [
+            {"name": "top_left", "index": 0, "cursor": "SizeFDiagCursor"},
+            {"name": "top_right", "index": 2, "cursor": "SizeBDiagCursor"},
+            {"name": "bottom_right", "index": 4, "cursor": "SizeFDiagCursor"},
+            {"name": "bottom_left", "index": 6, "cursor": "SizeBDiagCursor"}
+        ]
     }
 }

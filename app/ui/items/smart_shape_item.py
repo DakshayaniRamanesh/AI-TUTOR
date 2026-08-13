@@ -15,7 +15,7 @@ from PyQt6.QtCore import Qt, QRectF, QPointF, QLineF
 
 from .base_item import BaseGraphicsItemMixin
 from ..shape_metadata import SHAPE_METADATA, convert_px_to_unit, convert_unit_to_px
-from ..stroke_processor import generate_arrowhead_polygon, generate_cloud_path_points
+from ..stroke_processor import generate_arrowhead_polygon, generate_cloud_path_points, generate_regular_ngon
 
 
 class SmartShapeItem(QGraphicsPathItem, BaseGraphicsItemMixin):
@@ -119,6 +119,14 @@ class SmartShapeItem(QGraphicsPathItem, BaseGraphicsItemMixin):
             self.setPos(cx, cy)
             self.dimensions_px = {"width": float(w), "height": float(h)}
 
+        elif st == "triangle":
+            bbox = self.fit_data.get("bbox", (0, 0, 100, 100))
+            x, y, w, h = bbox
+            cx = x + w / 2.0
+            cy = y + h / 2.0
+            self.setPos(cx, cy)
+            self.dimensions_px = {"width": float(w), "height": float(h), "num_sides": 3.0}
+
     def get_dimensions_px(self) -> Dict[str, float]:
         """Returns dictionary of shape dimensions in canvas pixels."""
         return dict(self.dimensions_px)
@@ -212,6 +220,23 @@ class SmartShapeItem(QGraphicsPathItem, BaseGraphicsItemMixin):
                 path.closeSubpath()
             else:
                 path.addEllipse(QRectF(-w / 2.0, -h / 2.0, w, h))
+
+        elif st == "triangle":
+            w = max(1.0, self.dimensions_px.get("width", 100.0))
+            h = max(1.0, self.dimensions_px.get("height", 100.0))
+            n = int(round(self.dimensions_px.get("num_sides", 3.0)))
+            n = max(3, n)
+
+            rx = w / 2.0
+            ry = h / 2.0
+            angle_offset = -math.pi / 2.0
+            poly_pts = []
+            for i in range(n):
+                theta = angle_offset + 2.0 * math.pi * i / n
+                poly_pts.append(QPointF(rx * math.cos(theta), ry * math.sin(theta)))
+
+            polygon = QPolygonF(poly_pts)
+            path.addPolygon(polygon)
 
         self.setPath(path)
 
