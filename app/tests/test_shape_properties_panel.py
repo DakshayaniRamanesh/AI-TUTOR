@@ -56,3 +56,39 @@ def test_shape_properties_panel_toggle_popup():
     # Simulate second click (close)
     panel.btn_more.click()
     assert not panel.popup_proxy.isVisible(), "Popup proxy should hide after second click"
+
+
+def test_triangle_num_sides_integer_field_and_path_closure():
+    """
+    Verifies Bug 1 & Bug 2 fixes:
+    1. Triangle path is properly closed (elementCount == 4 for 3 vertices + closeSubpath).
+    2. 'num_sides' property widget uses 0 decimals, no unit conversion, displays 3, and updates polygon on increment.
+    """
+    scene = CanvasScene()
+    shape = SmartShapeItem(
+        shape_type="triangle",
+        fit_data={"bbox": (0, 0, 100, 100)}
+    )
+    scene.addItem(shape)
+    scene.activate_shape(shape)
+
+    # 1. Verify path is closed
+    path = shape.path()
+    assert path.elementCount() == 4  # moveTo + 2 lineTo + closeSubpath/lineTo
+
+    panel = scene._active_properties_panel
+    popup_widget = panel._popup_card
+
+    # 2. Verify num_sides field control
+    assert "num_sides" in popup_widget.field_controls
+    qc = popup_widget.field_controls["num_sides"]
+    assert qc.spin.decimals() == 0, "num_sides field must use 0 decimals"
+    assert qc.spin.value() == 3.0, "num_sides field must display 3 for triangle"
+    assert not qc.unit_convert, "num_sides field must not apply spatial unit conversion"
+
+    # 3. Increment sides to 5 (pentagon)
+    qc._increment()
+    assert shape.dimensions_px["num_sides"] == 4.0
+    qc._increment()
+    assert shape.dimensions_px["num_sides"] == 5.0
+    assert shape.path().elementCount() == 6  # 5 sides closed polygon

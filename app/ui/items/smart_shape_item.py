@@ -230,13 +230,20 @@ class SmartShapeItem(QGraphicsPathItem, BaseGraphicsItemMixin):
             rx = w / 2.0
             ry = h / 2.0
             angle_offset = -math.pi / 2.0
-            poly_pts = []
+            
+            raw_verts = []
             for i in range(n):
                 theta = angle_offset + 2.0 * math.pi * i / n
-                poly_pts.append(QPointF(rx * math.cos(theta), ry * math.sin(theta)))
+                raw_verts.append((rx * math.cos(theta), ry * math.sin(theta)))
 
-            polygon = QPolygonF(poly_pts)
-            path.addPolygon(polygon)
+            # Sort vertices by polar angle around centroid (0,0) for clean perimeter ordering
+            raw_verts.sort(key=lambda pt: math.atan2(pt[1], pt[0]))
+
+            # Construct clean closed polygon subpath
+            path.moveTo(QPointF(raw_verts[0][0], raw_verts[0][1]))
+            for pt in raw_verts[1:]:
+                path.lineTo(QPointF(pt[0], pt[1]))
+            path.closeSubpath()
 
         self.setPath(path)
 

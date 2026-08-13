@@ -610,7 +610,7 @@ def fit_cloud(points: np.ndarray) -> dict:
 
 
 def generate_regular_ngon(cx: float, cy: float, radius: float, n: int,
-                          angle_offset_rad: float = 0.0) -> list[tuple[float, float]]:
+                          angle_offset_rad: float = -math.pi / 2.0) -> list[tuple[float, float]]:
     """
     Pure geometric function generating vertex coordinates for a regular n-sided polygon
     inscribed within a circle of the given radius, centred at (cx, cy).
@@ -628,13 +628,16 @@ def generate_regular_ngon(cx: float, cy: float, radius: float, n: int,
                           the first vertex at the top, giving an upright triangle/pentagon).
 
     Returns:
-        List of (x, y) vertex tuples in counter-clockwise order.
+        List of (x, y) vertex tuples in counter-clockwise order around centroid.
     """
     n = max(3, int(round(n)))
     vertices = []
     for i in range(n):
         theta = angle_offset_rad + 2.0 * math.pi * i / n
         vertices.append((cx + radius * math.cos(theta), cy + radius * math.sin(theta)))
+
+    # Sort vertices by angle around center (cx, cy) to guarantee perimeter ordering
+    vertices.sort(key=lambda pt: math.atan2(pt[1] - cy, pt[0] - cx))
     return vertices
 
 
@@ -682,7 +685,7 @@ def fit_triangle(points: np.ndarray) -> dict:
     # 4th corner; drop the last one if it's very close to the first.
     if len(corners) == 4 and is_closed:
         dist_closure = np.hypot(*(points[corners[0]] - points[corners[-1]]))
-        if dist_closure < 25.0:
+        if dist_closure < max(25.0, bbox_diag * 0.15):
             corners = corners[:3]
 
     if len(corners) != TRIANGLE_CORNER_COUNT:
@@ -691,6 +694,13 @@ def fit_triangle(points: np.ndarray) -> dict:
         return {'is_valid': False}
 
     corner_pts = points[corners]
+
+    # Order corners around centroid to prevent perimeter cross-overs / zigzags
+    cx = float(np.mean(corner_pts[:, 0]))
+    cy = float(np.mean(corner_pts[:, 1]))
+    corner_list = [tuple(p) for p in corner_pts]
+    corner_list.sort(key=lambda pt: math.atan2(pt[1] - cy, pt[0] - cx))
+    corner_pts = np.array(corner_list)
 
     # Validate that interior angles are within a reasonable range for a triangle
     # (any triangle: all interior angles sum to 180°, each between ~20° and ~140°)
@@ -717,6 +727,12 @@ def fit_triangle(points: np.ndarray) -> dict:
         if SHAPE_DEBUG:
             print(f"[Triangle] Rejected: degenerate interior angles", flush=True)
         return {'is_valid': False}
+
+    return {
+        'is_valid': True,
+        'bbox': (float(min_xy[0]), float(min_xy[1]), w, h),
+        'corners': corner_pts
+    }
 
     return {
         'is_valid': True,

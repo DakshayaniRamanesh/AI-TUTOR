@@ -200,7 +200,7 @@ SHAPE_METADATA: Dict[str, Dict[str, Any]] = {
         "fields": [
             {"key": "width", "label": "Width", "min": 1.0, "step": 1.0},
             {"key": "height", "label": "Height", "min": 1.0, "step": 1.0},
-            {"key": "num_sides", "label": "Number of Sides", "min": 3.0, "step": 1.0}
+            {"key": "num_sides", "label": "Number of Sides", "min": 3.0, "max": 12.0, "step": 1.0, "is_int": True, "unit_convert": False}
         ],
         "handles": [
             {"name": "top_left", "index": 0, "cursor": "SizeFDiagCursor"},

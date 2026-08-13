@@ -39,10 +39,14 @@ class QuantityControl(QWidget):
     Touch-friendly numeric field with flanking [-] and [+] buttons around a central spinbox.
     """
 
-    def __init__(self, key: str, label_text: str, step: float = 1.0, value_changed_cb=None, parent=None):
+    def __init__(self, key: str, label_text: str, step: float = 1.0, min_val: float = 0.1, max_val: float = 9999.0, is_int: bool = False, value_changed_cb=None, parent=None):
         super().__init__(parent)
         self.key = key
         self.step = step
+        self.min_val = min_val
+        self.max_val = max_val
+        self.is_int = is_int
+        self.unit_convert = True
         self.value_changed_cb = value_changed_cb
         self._lock = False
 
@@ -85,9 +89,12 @@ class QuantityControl(QWidget):
         self.spin = QDoubleSpinBox()
         self.spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.spin.setRange(0.1, 9999.0)
+        self.spin.setRange(min_val, max_val)
         self.spin.setSingleStep(step)
-        self.spin.setDecimals(2)
+        if is_int:
+            self.spin.setDecimals(0)
+        else:
+            self.spin.setDecimals(2)
         self.spin.setFixedSize(64, 26)
         self.spin.setStyleSheet("""
             QDoubleSpinBox {
@@ -131,11 +138,15 @@ class QuantityControl(QWidget):
         layout.addWidget(self.btn_plus)
 
     def _decrement(self):
-        new_val = max(0.1, self.spin.value() - self.step)
+        new_val = max(self.min_val, self.spin.value() - self.step)
+        if self.is_int:
+            new_val = float(round(new_val))
         self.spin.setValue(new_val)
 
     def _increment(self):
-        new_val = self.spin.value() + self.step
+        new_val = min(self.max_val, self.spin.value() + self.step)
+        if self.is_int:
+            new_val = float(round(new_val))
         self.spin.setValue(new_val)
 
     def _on_spin_changed(self, val: float):
@@ -258,13 +269,21 @@ class ShapePropertiesWidget(QFrame):
             key = f_info["key"]
             label = f_info["label"]
             step = f_info.get("step", 1.0)
+            min_val = f_info.get("min", 0.1)
+            max_val = f_info.get("max", 9999.0)
+            is_int = f_info.get("is_int", False)
+            unit_convert = f_info.get("unit_convert", True)
 
             qc = QuantityControl(
                 key=key,
                 label_text=label,
                 step=step,
+                min_val=min_val,
+                max_val=max_val,
+                is_int=is_int,
                 value_changed_cb=self._on_value_changed
             )
+            qc.unit_convert = unit_convert
             self.field_controls[key] = qc
             main_layout.addWidget(qc)
 
@@ -288,9 +307,14 @@ class ShapePropertiesWidget(QFrame):
 
         self._updating_lock = True
         try:
-            val_px = convert_unit_to_px(val_unit, self.active_unit)
+            qc = self.field_controls.get(key)
+            if qc and not getattr(qc, "unit_convert", True):
+                val_px = float(round(val_unit)) if getattr(qc, "is_int", False) else val_unit
+            else:
+                val_px = convert_unit_to_px(val_unit, self.active_unit)
+
             if SHAPE_DEBUG:
-                print(f"[PropertiesPanel] Field '{key}' changed to {val_unit} {self.active_unit} -> {val_px:.2f}px applied to target item", flush=True)
+                print(f"[PropertiesPanel] Field '{key}' changed to {val_unit} -> {val_px:.2f}px applied to target item", flush=True)
 
             cur_dims = self.target_item.get_dimensions_px()
             cur_dims[key] = val_px
@@ -308,8 +332,11 @@ class ShapePropertiesWidget(QFrame):
             dims_px = self.target_item.get_dimensions_px()
             for key, qc in self.field_controls.items():
                 px_val = dims_px.get(key, 0.0)
-                unit_val = convert_px_to_unit(px_val, self.active_unit)
-                qc.setValue(unit_val)
+                if getattr(qc, "unit_convert", True):
+                    display_val = convert_px_to_unit(px_val, self.active_unit)
+                else:
+                    display_val = px_val
+                qc.setValue(display_val)
         finally:
             self._updating_lock = False
 
