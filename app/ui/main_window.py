@@ -391,16 +391,16 @@ class MainWindow(QMainWindow):
 
         # Git Notes VCS View Panel
         self.git_notes_panel = GitNotesPanel(self.main_stack)
-        self.main_stack.addWidget(self.git_notes_panel) # Index 2
+        self.main_stack.addWidget(self.git_notes_panel) # Index 3
 
         # Shared Collaboration Hub View Panel
         self.shared_panel = SharedPanel(self.main_stack)
-        self.main_stack.addWidget(self.shared_panel) # Index 3
+        self.main_stack.addWidget(self.shared_panel) # Index 4
 
         # Obsidian Knowledge Graph View Panel
         self.obsidian_graph_panel = ObsidianGraphPanel(self.main_stack)
         self.obsidian_graph_panel.open_notebook_requested.connect(self._on_load_notebook_requested)
-        self.main_stack.addWidget(self.obsidian_graph_panel) # Index 4
+        self.main_stack.addWidget(self.obsidian_graph_panel) # Index 5
 
         cc_layout.addWidget(self.main_stack)
         self.splitter.addWidget(self.canvas_container)
@@ -546,7 +546,7 @@ class MainWindow(QMainWindow):
             (qta.icon('fa5s.th-large',    color='#94a3b8'), "Boards",         0),
             (qta.icon('fa5s.book',         color='#94a3b8'), "Notebooks",      1),
             (qta.icon('fa5s.code-branch',  color='#94a3b8'), "Git VCS",        3),
-            (qta.icon('fa5s.project-diagram', color='#94a3b8'), "Knowledge Graph", 4),
+            (qta.icon('fa5s.project-diagram', color='#94a3b8'), "Knowledge Graph", 5),
             (qta.icon('fa5s.star',         color='#94a3b8'), "Favourites",     2),
             (qta.icon('fa5s.download',     color='#94a3b8'), f"Downloads",     2),
         ]
@@ -1201,10 +1201,10 @@ class MainWindow(QMainWindow):
             self.main_stack.setCurrentIndex(1)
         elif tooltip == "Git VCS":
             self.git_notes_panel.refresh_all()
-            self.main_stack.setCurrentIndex(2)
+            self.main_stack.setCurrentIndex(3)
         elif tooltip == "Knowledge Graph":
             self.obsidian_graph_panel.load_graph()
-            self.main_stack.setCurrentIndex(4)
+            self.main_stack.setCurrentIndex(5)
         elif tooltip == "Favourites":
             self.placeholder_panel.set_title("Favourites")
             self.main_stack.setCurrentIndex(2)
