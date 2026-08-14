@@ -24,11 +24,11 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
     api_key = os.getenv("GOOGLE_API_KEY")
 
     if b64_image and api_key:
-        models = ["models/gemini-flash-latest", "models/gemini-flash-lite-latest"]
+        models = ["gemini-flash-lite-latest", "gemma-4-26b-a4b-it", "gemini-flash-latest"]
         prompt = (
-            "You are an expert handwritten OCR transcription system.\n"
-            "Transcribe the handwritten math equation, chemical formula, chemical structure (e.g. Benzene ring), or question shown in this canvas image.\n"
-            "Output ONLY the clean transcribed equation, formula (e.g. 'Formula for benzene C6H6' or 'x^2 + 5x + 6 = 0'), or topic. No conversational filler."
+            "You are an expert OCR transcription engine.\n"
+            "Transcribe the handwritten text, formula, question, or diagram topic shown in this canvas image.\n"
+            "Output ONLY the clean transcribed question, formula, or sketch request (e.g. 'sketch cross section of heart and mark the parts' or 'formula for benzene C6H6'). No conversation."
         )
         payload = {
             "contents": [
@@ -47,14 +47,13 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
         }
         for model in models:
             try:
-                api_url = f"https://generativelanguage.googleapis.com/v1beta/{model}:generateContent?key={api_key}"
-                resp = requests.post(api_url, json=payload, timeout=3.5)
+                api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+                resp = requests.post(api_url, json=payload, timeout=4.0)
                 if resp.status_code == 200:
                     text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                     if text:
                         return text
-            except Exception as e:
-                print(f"[OCR] Vision Notice: {e}")
+            except Exception:
                 continue
 
     return ""

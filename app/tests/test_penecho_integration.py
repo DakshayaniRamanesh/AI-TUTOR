@@ -134,8 +134,8 @@ def test_mixed_text_parser():
     assert "math" in token_types
 
     html = mixed_tokens_to_html(tokens)
-    assert "<b>bold world</b>" in html
-    assert "<code" in html
+    assert "bold world" in html
+    assert "code inline" in html
     assert "x<sup>2</sup>" in html or "α" in html or "r<sup>2</sup>" in html
 
 

@@ -273,7 +273,7 @@ def parse_mixed_text(source: str) -> List[Dict[str, Any]]:
 
 def mixed_tokens_to_html(tokens: List[Dict[str, Any]]) -> str:
     """
-    Converts tokens into styled HTML for rich display in QTextDocument.
+    Converts tokens into natural handwritten ink HTML for QTextDocument.
     """
     html_parts = []
     for tok in tokens:
@@ -285,19 +285,22 @@ def mixed_tokens_to_html(tokens: List[Dict[str, Any]]) -> str:
             style = tok.get("style", "bold")
             content = tok.get("content", "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             if style == "bold":
-                html_parts.append(f"<b>{content}</b>")
+                html_parts.append(f"<b style='font-weight: 700; color: #0f172a;'>{content}</b>")
             elif style == "italic":
                 html_parts.append(f"<i>{content}</i>")
         elif ttype == "code":
             content = tok.get("content", "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            html_parts.append(f"<code style='background-color: #f1f5f9; color: #e11d48; padding: 2px 4px; border-radius: 4px;'>{content}</code>")
+            html_parts.append(f"<span style='font-family: monospace; color: #2563eb;'>{content}</span>")
         elif ttype == "math":
             tex = tok.get("tex", "")
             # Convert known symbols to unicode
             rendered_tex = tex
             for k, v in TEX_UNICODE_MAP.items():
                 rendered_tex = rendered_tex.replace(k, v)
-            # Clean up fractions & subscripts for standard rich text
+            # Clean up TeX text macros & formatting
+            rendered_tex = re.sub(r"\\text\{([^}]+)\}", r"\1", rendered_tex)
+            rendered_tex = re.sub(r"\\mathrm\{([^}]+)\}", r"\1", rendered_tex)
+            rendered_tex = re.sub(r"\\mathbf\{([^}]+)\}", r"<b>\1</b>", rendered_tex)
             rendered_tex = re.sub(r"\\frac\{([^}]+)\}\{([^}]+)\}", r"(\1 / \2)", rendered_tex)
             rendered_tex = re.sub(r"\\sqrt\{([^}]+)\}", r"√(\1)", rendered_tex)
             rendered_tex = re.sub(r"_\{([^}]+)\}", r"<sub>\1</sub>", rendered_tex)
@@ -307,9 +310,9 @@ def mixed_tokens_to_html(tokens: List[Dict[str, Any]]) -> str:
             
             is_display = tok.get("display", False)
             if is_display:
-                html_parts.append(f"<div style='text-align: center; font-style: italic; color: #2563eb; margin: 8px 0; font-family: \"Cambria Math\", \"Times New Roman\", serif;'>{rendered_tex}</div>")
+                html_parts.append(f"<div style='text-align: center; color: #1d4ed8; margin: 6px 0; font-family: \"Segoe Print\", \"Segoe Script\", \"Cambria Math\", cursive;'>{rendered_tex}</div>")
             else:
-                html_parts.append(f"<span style='font-style: italic; color: #2563eb; font-family: \"Cambria Math\", \"Times New Roman\", serif;'>{rendered_tex}</span>")
+                html_parts.append(f"<span style='color: #1d4ed8; font-family: \"Segoe Print\", \"Segoe Script\", \"Cambria Math\", cursive;'>{rendered_tex}</span>")
         elif ttype == "literal-rest":
             escaped = tok.get("raw", "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
             html_parts.append(escaped)
@@ -319,11 +322,11 @@ def mixed_tokens_to_html(tokens: List[Dict[str, Any]]) -> str:
 
 class PenechoMixedTextItem(QGraphicsItem):
     """
-    QGraphicsItem that renders mixed Markdown and LaTeX mathematical text inside
-    an elegant card container. Supports interactive editing via double-click.
+    QGraphicsItem that renders handwritten ink responses and equations directly on the canvas.
+    Renders with authentic handwritten typography with transparent background.
     """
 
-    def __init__(self, raw_text: str = "", font_size: int = 15, width: float = 320.0, parent=None):
+    def __init__(self, raw_text: str = "", font_size: int = 17, width: float = 340.0, is_ink_mode: bool = True, parent=None):
         super().__init__(parent)
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
@@ -331,12 +334,10 @@ class PenechoMixedTextItem(QGraphicsItem):
             QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setAcceptHoverEvents(True)
-        self._raw_text = raw_text or "Type Markdown & LaTeX: **$E = mc^2$**"
+        self._raw_text = raw_text or "Type text: **E = mc²**"
         self._font_size = font_size
         self._card_width = max(180.0, width)
-        self._card_min_height = 80.0
-        self._bg_color = QColor("#ffffff")
-        self._border_color = QColor("#e2e8f0")
+        self._is_ink_mode = is_ink_mode
         self._text_color = QColor("#1e293b")
 
         self._doc = QTextDocument()
@@ -346,47 +347,38 @@ class PenechoMixedTextItem(QGraphicsItem):
         tokens = parse_mixed_text(self._raw_text)
         html_body = mixed_tokens_to_html(tokens)
         html = f"""
-        <div style='font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                    font-size: {self._font_size}px; line-height: 1.5; color: {self._text_color.name()};'>
+        <div style='font-family: "Segoe Print", "Ink Free", "Caveat", "Segoe Script", "Comic Sans MS", cursive, sans-serif;
+                    font-size: {self._font_size}px; line-height: 1.6; color: {self._text_color.name()};'>
             {html_body}
         </div>
         """
-        self._doc.setDefaultFont(QFont("-apple-system", self._font_size))
-        self._doc.setTextWidth(self._card_width - 28)
+        font = QFont("Segoe Print", self._font_size)
+        font.setStyleHint(QFont.StyleHint.Cursive)
+        self._doc.setDefaultFont(font)
+        self._doc.setTextWidth(self._card_width)
         self._doc.setHtml(html)
 
     def boundingRect(self) -> QRectF:
         doc_height = self._doc.size().height()
-        height = max(self._card_min_height, doc_height + 28)
-        return QRectF(0, 0, self._card_width, height)
+        return QRectF(0, 0, self._card_width, max(40.0, doc_height + 10))
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
 
         rect = self.boundingRect()
 
-        # Background card with rounded corners
-        path = QPainterPath()
-        path.addRoundedRect(rect, 12, 12)
+        # When selected or hovered, show subtle natural dashed ink guide
+        if self.isSelected():
+            path = QPainterPath()
+            path.addRoundedRect(rect.adjusted(-4, -4, 4, 4), 6, 6)
+            painter.setPen(QPen(QColor(59, 130, 246, 160), 1.2, Qt.PenStyle.DashLine))
+            painter.setBrush(QBrush(QColor(59, 130, 246, 12)))
+            painter.drawPath(path)
 
-        painter.setPen(QPen(QColor("#3b82f6") if self.isSelected() else self._border_color, 1.5))
-        painter.setBrush(QBrush(self._bg_color))
-        painter.drawPath(path)
-
-        # Draw header badge
-        badge_rect = QRectF(14, 10, 80, 16)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor("#eff6ff")))
-        painter.drawRoundedRect(badge_rect, 4, 4)
-        painter.setPen(QPen(QColor("#3b82f6")))
-        badge_font = QFont("Arial", 8, QFont.Weight.Bold)
-        painter.setFont(badge_font)
-        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, "LaTeX / MD")
-
-        # Render document content
-        painter.translate(14, 30)
-        self._doc.drawContents(painter, QRectF(0, 0, self._card_width - 28, rect.height() - 34))
+        # Render handwritten document content directly on canvas
+        self._doc.drawContents(painter, QRectF(0, 0, self._card_width, rect.height()))
 
         painter.restore()
 

@@ -878,10 +878,8 @@ class CanvasScene(QGraphicsScene):
         b64_img = self._render_strokes_base64(valid_strokes)
         from ..backend.ocr.handwriting_ocr import recognize_handwriting
         text = recognize_handwriting(b64_image=b64_img, stroke_count=len(valid_strokes))
-        if not text:
-            text = "Formula for benzene C6H6 structure & explanation"
-
-        self.auto_ai_requested.emit(text, target_pos)
+        if text:
+            self.auto_ai_requested.emit(text, target_pos)
 
     def trigger_ai_on_dirty_ink(self, prompt: str = ""):
         """Explicitly triggers PenEcho AI on the latest ink strokes or selection."""
@@ -894,12 +892,10 @@ class CanvasScene(QGraphicsScene):
             target_pos = QPointF(200, 200)
 
         query = prompt
-        if not query:
-            if valid_strokes:
-                b64_img = self._render_strokes_base64(valid_strokes)
-                from ..backend.ocr.handwriting_ocr import recognize_handwriting
-                query = recognize_handwriting(b64_image=b64_img, stroke_count=len(valid_strokes))
-            if not query:
-                query = "Formula for benzene C6H6 structure & explanation"
+        if not query and valid_strokes:
+            b64_img = self._render_strokes_base64(valid_strokes)
+            from ..backend.ocr.handwriting_ocr import recognize_handwriting
+            query = recognize_handwriting(b64_image=b64_img, stroke_count=len(valid_strokes))
 
-        self.auto_ai_requested.emit(query, target_pos)
+        if query:
+            self.auto_ai_requested.emit(query, target_pos)

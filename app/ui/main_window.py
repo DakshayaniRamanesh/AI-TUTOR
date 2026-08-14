@@ -885,7 +885,8 @@ class MainWindow(QMainWindow):
         def _on_finished(payload_dict, pos, msg):
             draft_item = create_draft_from_payload(payload_dict)
             draft_item.setPos(pos)
-            self.scene.addItem(draft_item)
+            if draft_item.scene() is None:
+                self.scene.addItem(draft_item)
             self.magic_orb.set_state("draft", msg)
             if worker in self._solver_workers:
                 self._solver_workers.remove(worker)

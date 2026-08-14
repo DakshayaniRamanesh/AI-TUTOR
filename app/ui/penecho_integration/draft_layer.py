@@ -178,7 +178,8 @@ class PenechoDraftLayerItem(QGraphicsItem):
         self.inner_item.setScale(final_scale)
 
         scene.removeItem(self)
-        scene.addItem(self.inner_item)
+        if self.inner_item.scene() is None:
+            scene.addItem(self.inner_item)
         if hasattr(scene, "scene_changed"):
             scene.scene_changed.emit()
 
