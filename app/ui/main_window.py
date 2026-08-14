@@ -40,6 +40,7 @@ from .views.progress_dialog import ProgressDialog
 from .theme_manager import ThemeManager
 from .widgets.latex_editor_widget import LatexEditorWidget
 from .widgets.speedometer_progress_widget import SpeedometerProgressWidget
+from .widgets.magic_orb_widget import MagicOrbWidget
 
 
 from ..backend.math_engine.stem_solver import solve_stem_question
@@ -247,7 +248,10 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Alt+H"), self).activated.connect(lambda: self.floating_toolbar.btn_highlighter.click())
         QShortcut(QKeySequence("E"), self).activated.connect(lambda: self.floating_toolbar.btn_eraser.click())
         QShortcut(QKeySequence("S"), self).activated.connect(lambda: self.floating_toolbar.btn_shapes.click())
+        QShortcut(QKeySequence("L"), self).activated.connect(lambda: self.floating_toolbar.btn_lasso.click())
         QShortcut(QKeySequence("T"), self).activated.connect(lambda: self.floating_toolbar.action_triggered.emit("text"))
+        # PenEcho Magic Trigger
+        QShortcut(QKeySequence("Ctrl+Space"), self).activated.connect(self._on_magic_orb_triggered)
         # Export
         QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(lambda: self._convert_to_latex())
 
@@ -334,6 +338,7 @@ class MainWindow(QMainWindow):
         # Scene and View
         self.scene = CanvasScene(self)
         self.scene.ink_written_detected.connect(self._on_ink_written_detected)
+        self.scene.auto_ai_requested.connect(self._on_auto_ai_requested)
         # Connect scene_changed to the debounced autosave
         self.scene.scene_changed.connect(self._on_scene_changed)
         self.view = CanvasView(self.scene, self)
@@ -853,8 +858,56 @@ class MainWindow(QMainWindow):
         self.ask_bar.pdf_requested.connect(self._open_pdf_dialog)
         pl.addWidget(self.ask_bar, stretch=1)
 
+        # ── PenEcho Magic Orb HUD ──
+        sep2 = QFrame(pill)
+        sep2.setFrameShape(QFrame.Shape.VLine)
+        sep2.setFixedHeight(18)
+        sep2.setStyleSheet("color: #e2e8f0;")
+        pl.addSpacing(4)
+        pl.addWidget(sep2)
+        pl.addSpacing(4)
+
+        self.magic_orb = MagicOrbWidget(pill)
+        self.magic_orb.trigger_ai_requested.connect(self._on_magic_orb_triggered)
+        self.magic_orb.auto_ai_toggled.connect(self._on_auto_ai_toggled)
+        self.magic_orb.delay_changed.connect(self._on_auto_ai_delay_changed)
+        pl.addWidget(self.magic_orb)
+
         outer.addWidget(pill)
         return hud
+
+    def _on_auto_ai_requested(self, query: str, target_pos: QPointF):
+        from .penecho_integration.ai_canvas_bridge import AICanvasWorker, create_draft_from_payload
+        self.magic_orb.set_state("thinking", "Analyzing...")
+
+        worker = AICanvasWorker(query_text=query, target_pos=target_pos, parent=self)
+
+        def _on_finished(payload_dict, pos, msg):
+            draft_item = create_draft_from_payload(payload_dict)
+            draft_item.setPos(pos)
+            self.scene.addItem(draft_item)
+            self.magic_orb.set_state("draft", msg)
+            if worker in self._solver_workers:
+                self._solver_workers.remove(worker)
+
+        def _on_error(err):
+            self.magic_orb.set_state("error")
+            if worker in self._solver_workers:
+                self._solver_workers.remove(worker)
+
+        worker.finished.connect(_on_finished)
+        worker.error.connect(_on_error)
+        self._solver_workers.append(worker)
+        worker.start()
+
+    def _on_magic_orb_triggered(self):
+        self.scene.trigger_ai_on_dirty_ink()
+
+    def _on_auto_ai_toggled(self, enabled: bool):
+        self.scene.auto_ai_enabled = enabled
+
+    def _on_auto_ai_delay_changed(self, delay: float):
+        self.scene.auto_ai_delay_sec = delay
 
     def _on_pen_popup_color_changed(self, color_hex: str):
         if self.scene.active_tool == "highlighter":
@@ -963,6 +1016,29 @@ class MainWindow(QMainWindow):
         menu.addAction(act_table)
         
         menu.addSeparator()
+
+        # ── PenEcho Extended Canvas Actions ──
+        act_anim = QAction("🎬 Insert Animated Scene (PenEcho)", self)
+        act_anim.triggered.connect(self._add_penecho_animation)
+        menu.addAction(act_anim)
+
+        act_mixed = QAction("📐 Insert LaTeX / Markdown Card (PenEcho)", self)
+        act_mixed.triggered.connect(self._add_penecho_mixed_text)
+        menu.addAction(act_mixed)
+
+        act_curve = QAction("🌀 Insert Mathematical Curve (PenEcho)", self)
+        act_curve.triggered.connect(self._add_penecho_summon_curve)
+        menu.addAction(act_curve)
+
+        act_draw = QAction("🎨 Insert Multi-Primitive Drawing Demo (PenEcho)", self)
+        act_draw.triggered.connect(self._add_penecho_drawing_demo)
+        menu.addAction(act_draw)
+
+        act_export_png = QAction("🖼️ Export Cropped Canvas PNG", self)
+        act_export_png.triggered.connect(self._export_canvas_image)
+        menu.addAction(act_export_png)
+
+        menu.addSeparator()
         
         act_grid = QAction("Toggle Grid/Blank", self)
         act_grid.triggered.connect(self._toggle_grid_mode)
@@ -977,6 +1053,86 @@ class MainWindow(QMainWindow):
         pos = btn.mapToGlobal(btn.rect().topLeft())
         pos.setY(pos.y() - menu.sizeHint().height() - 10)
         menu.exec(pos)
+
+    def _add_penecho_animation(self):
+        from .penecho_integration import PenechoAnimationItem
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        demo_scene = {
+            "title": "Planetary Orbit & Wave",
+            "w": 380,
+            "h": 280,
+            "durationMs": 5000,
+            "objects": [
+                {"id": "sun", "type": "circle", "cx": 190, "cy": 140, "r": 28, "fill": "#f59e0b", "stroke": "#d97706", "lineWidth": 3},
+                {"id": "planet", "type": "circle", "cx": 190, "cy": 140, "r": 14, "fill": "#3b82f6", "stroke": "#1d4ed8", "lineWidth": 2},
+                {"id": "moon", "type": "circle", "cx": 190, "cy": 140, "r": 6, "fill": "#10b981", "stroke": "#047857", "lineWidth": 1.5},
+                {"id": "label", "type": "text", "x": 14, "y": 26, "text": "Gravity Orbit Demo", "fontSize": 14, "fill": "#94a3b8"}
+            ],
+            "motions": [
+                {"type": "spin", "target": "sun", "periodMs": 6000, "clockwise": True},
+                {"type": "orbit", "target": "planet", "center": [190, 140], "rx": 110, "ry": 60, "periodMs": 4000, "clockwise": True},
+                {"type": "orbit", "target": "moon", "center": "planet", "rx": 28, "ry": 28, "periodMs": 1200, "clockwise": True},
+                {"type": "pulse", "target": "sun", "from": 0.9, "to": 1.1, "periodMs": 2500}
+            ]
+        }
+        item = PenechoAnimationItem(demo_scene)
+        item.setPos(center_pos)
+        self.scene.addItem(item)
+        self.scene.scene_changed.emit()
+
+    def _add_penecho_mixed_text(self):
+        from .penecho_integration import PenechoMixedTextItem
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        text = "### Quantum Harmonic Oscillator\nEnergy levels are quantized:\n$$E_n = \\hbar \\omega \\left(n + \\frac{1}{2}\\right)$$\nwhere $n = 0, 1, 2, \\dots$ and $\\omega = \\sqrt{\\frac{k}{m}}$."
+        item = PenechoMixedTextItem(raw_text=text, font_size=15, width=340.0)
+        item.setPos(center_pos)
+        self.scene.addItem(item)
+        self.scene.scene_changed.emit()
+
+    def _add_penecho_summon_curve(self):
+        from .penecho_integration import PenechoSummonItem
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        item = PenechoSummonItem(curve_type="lemniscate", size=240.0)
+        item.setPos(center_pos)
+        self.scene.addItem(item)
+        self.scene.scene_changed.emit()
+
+    def _add_penecho_drawing_demo(self):
+        from .penecho_integration import PenechoDrawItem
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        demo_cmd = {
+            "origin": [0, 0],
+            "types": ["rect", "smooth", "arc", "circle", "line"],
+            "items": [
+                [0, 0, 180, 120],
+                [20, 60, 60, 20, 120, 100, 160, 60],
+                [90, 60, 40, 40, 0, 180],
+                [90, 60, 12],
+                [20, 140, 160, 140]
+            ],
+            "width": 3.0,
+            "tension": 50.0,
+            "color": "#2563eb",
+            "fill_color": "rgba(59, 130, 246, 0.15)",
+            "closed": [0],
+            "fill": [0],
+            "arrows": [4]
+        }
+        item = PenechoDrawItem(demo_cmd)
+        item.setPos(center_pos)
+        self.scene.addItem(item)
+        self.scene.scene_changed.emit()
+
+    def _export_canvas_image(self):
+        from PyQt6.QtWidgets import QFileDialog
+        from .penecho_integration import export_canvas_to_image
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Cropped Canvas Image", "canvas_export.png", "Images (*.png *.jpg)")
+        if file_path:
+            success = export_canvas_to_image(self.scene, file_path, margin_px=40.0, scale_factor=2.0)
+            if success:
+                self._set_save_status("Exported PNG ✓")
+            else:
+                QMessageBox.warning(self, "Export Failed", "Could not export canvas image.")
 
     def _on_insert_image(self):
         from PyQt6.QtWidgets import QFileDialog

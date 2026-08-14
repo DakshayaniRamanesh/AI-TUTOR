@@ -142,16 +142,13 @@ def is_simple_math_query(q_raw: str) -> bool:
 
 def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
     """
-    Calls Google Gemini AI LLM model to get answer based on active mode (Classroom vs Study).
+    Calls Groq (Llama 3.3 70B) or Google Gemini AI LLM model to get answer based on active mode (Classroom vs Study).
     - Classroom Mode: Direct straight answer only, no elaboration or step-by-step breakdown.
-    - Study Mode: Concise hints AND elaborate step-by-step solution.
+    - Study Mode: Concise hints AND elaborate step-by-step solution with rich LaTeX & Markdown.
     """
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        return {}
+    groq_key = os.getenv("GROQ_API_KEY")
+    gemini_key = os.getenv("GOOGLE_API_KEY")
 
-    models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"]
-    
     if mode == "classroom":
         prompt = (
             f"You are Kestrel AI Tutor operating in CLASSROOM MODE.\n"
@@ -164,29 +161,39 @@ def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
         )
     else:
         prompt = (
-            f"You are Kestrel AI Tutor, a friendly study notebook assistant operating in STUDY MODE.\n"
-            f"For the student question below, provide:\n"
-            f"1. A CONCISE section with 2-3 short, 1-line hints/steps (keep this super brief!).\n"
-            f"2. An ELABORATE section with the complete, step-by-step detailed solution.\n\n"
+            f"You are Kestrel AI Tutor, an advanced STEM study notebook assistant operating in STUDY MODE.\n"
+            f"For the student question/formula below, provide a clear, accurate, and comprehensive explanation with formatted LaTeX math/chemical formulas (e.g. $C_6H_6$, $x^2$, etc.) and Markdown headers.\n\n"
             f"Question: {question}\n\n"
             f"Strictly format your response as:\n"
             f"[HINTS]\n"
-            f"• Step 1: ...\n"
-            f"• Step 2: ...\n\n"
+            f"• Key Point 1: ...\n"
+            f"• Key Point 2: ...\n\n"
             f"[FULL_SOLUTION]\n"
-            f"1. ▤ Core Concept & Overview\n"
+            f"### {question}\n\n"
+            f"**1. Core Concept & Overview**\n"
+            f"...\n\n"
+            f"**2. Formula, Structure & Proof**\n"
+            f"...\n\n"
+            f"**3. Key Properties & Calculations**\n"
             f"...\n"
         )
-        
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    for model in models:
+    # 1. Primary: Groq Llama 3.3 70B (Fast sub-second response)
+    if groq_key:
         try:
-            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            resp = requests.post(api_url, json=payload, timeout=2.5)
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {groq_key}"},
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 1200
+                },
+                timeout=4.0
+            )
             if resp.status_code == 200:
-                result_json = resp.json()
-                text = result_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+                text = resp.json()["choices"][0]["message"]["content"].strip()
                 if text:
                     text_pretty = to_pretty_math(text)
                     if mode == "classroom":
@@ -200,8 +207,36 @@ def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
                         lines = [l for l in text_pretty.split("\n") if l.strip()]
                         short_hints = "\n".join(lines[:3])
                         return {"hints": short_hints, "full_solution": text_pretty}
-        except Exception:
-            continue
+        except Exception as e:
+            print(f"[LLM] Groq Notice: {e}")
+
+    # 2. Secondary: Google Gemini models
+    if gemini_key:
+        models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash-latest"]
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        for model in models:
+            try:
+                api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
+                resp = requests.post(api_url, json=payload, timeout=3.5)
+                if resp.status_code == 200:
+                    result_json = resp.json()
+                    text = result_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    if text:
+                        text_pretty = to_pretty_math(text)
+                        if mode == "classroom":
+                            return {"hints": text_pretty, "full_solution": text_pretty, "is_direct_math": True}
+                        if "[HINTS]" in text_pretty and "[FULL_SOLUTION]" in text_pretty:
+                            parts = text_pretty.split("[FULL_SOLUTION]")
+                            hints = parts[0].replace("[HINTS]", "").strip()
+                            full_sol = parts[1].strip()
+                            return {"hints": hints, "full_solution": full_sol}
+                        else:
+                            lines = [l for l in text_pretty.split("\n") if l.strip()]
+                            short_hints = "\n".join(lines[:3])
+                            return {"hints": short_hints, "full_solution": text_pretty}
+            except Exception:
+                continue
+
     return {}
 
 def solve_stem_question(question: str, mode: str = "study") -> dict:

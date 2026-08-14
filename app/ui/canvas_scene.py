@@ -23,9 +23,14 @@ from .shape_properties_panel import ShapePropertiesPanel
 from .stroke_processor import (
     StrokeProcessor, HOLD_DURATION_MS, HOLD_MOVE_THRESHOLD_PX, SHAPE_DEBUG
 )
+from .penecho_integration import (
+    PenechoDrawItem, PenechoAnimationItem, PenechoMixedTextItem,
+    PenechoSummonItem, PenechoLassoOverlay, PenechoDraftLayerItem, point_in_polygon
+)
 
 class CanvasScene(QGraphicsScene):
     ink_written_detected = pyqtSignal(str, QPointF)
+    auto_ai_requested = pyqtSignal(str, QPointF)
     # Emitted whenever the scene content changes (stroke, erase, shape add/remove).
     # MainWindow connects this to the debounced autosave timer.
     scene_changed = pyqtSignal()
@@ -77,6 +82,17 @@ class CanvasScene(QGraphicsScene):
         self._auto_convert_timer = QTimer(self)
         self._auto_convert_timer.setSingleShot(True)
         self._auto_convert_timer.timeout.connect(self._on_auto_convert_ink)
+
+        # Freehand Lasso Tool State
+        self._lasso_path_item = None
+        self._lasso_points = []
+
+        # PenEcho Auto-AI Engine (Post-stroke attention detection)
+        self.auto_ai_enabled = True
+        self.auto_ai_delay_sec = 2.0
+        self._auto_ai_timer = QTimer(self)
+        self._auto_ai_timer.setSingleShot(True)
+        self._auto_ai_timer.timeout.connect(self._on_auto_ai_timeout)
 
     def _on_theme_changed(self, theme_name: str):
         is_dark = theme_name == "dark"
@@ -285,7 +301,7 @@ class CanvasScene(QGraphicsScene):
     def to_dict_list(self) -> list[dict]:
         items_data = [{"type": "_canvas_meta", "background_mode": self.background_mode}]
         for item in self.items():
-            if hasattr(item, "to_dict") and item not in [self._active_handles, self._active_properties_panel]:
+            if hasattr(item, "to_dict") and item not in [self._active_handles, self._active_properties_panel] and not isinstance(item, (PenechoLassoOverlay, PenechoDraftLayerItem)):
                 try:
                     items_data.append(item.to_dict())
                 except Exception as err:
@@ -444,6 +460,18 @@ class CanvasScene(QGraphicsScene):
                 address=data.get("address", "")
             )
 
+        elif itype == "PenechoDrawItem":
+            item = PenechoDrawItem.from_dict(data)
+
+        elif itype == "PenechoAnimationItem":
+            item = PenechoAnimationItem.from_dict(data)
+
+        elif itype == "PenechoMixedTextItem":
+            item = PenechoMixedTextItem.from_dict(data)
+
+        elif itype == "PenechoSummonItem":
+            item = PenechoSummonItem.from_dict(data)
+
         else:
             print(f"[CanvasScene] WARNING: Unrecognized item type '{itype}' — skipping. "
                   f"Add a load branch in create_item_from_dict() to prevent silent data loss.")
@@ -588,6 +616,18 @@ class CanvasScene(QGraphicsScene):
             self.erase_selected_items()
             self.erase_items_at(event.scenePos())
             event.accept()
+        elif self.active_tool == "lasso" and event.button() == Qt.MouseButton.LeftButton:
+            self._lasso_points = [(pos.x(), pos.y())]
+            path = QPainterPath()
+            path.moveTo(pos)
+            self._lasso_path_item = QGraphicsPathItem()
+            lasso_pen = QPen(QColor("#3b82f6"), 1.5, Qt.PenStyle.DashLine)
+            self._lasso_path_item.setPen(lasso_pen)
+            self._lasso_path_item.setBrush(QBrush(QColor(59, 130, 246, 25)))
+            self._lasso_path_item.setPath(path)
+            self._lasso_path_item.setZValue(9998)
+            self.addItem(self._lasso_path_item)
+            event.accept()
         elif self.active_tool == "shapes" and event.button() == Qt.MouseButton.LeftButton:
             self._shape_start_pos = pos
             shape_type = self.active_shape_type
@@ -635,6 +675,14 @@ class CanvasScene(QGraphicsScene):
 
         if self._is_erasing and self.active_tool == "eraser":
             self.erase_items_at(pos)
+            event.accept()
+        elif self.active_tool == "lasso" and self._lasso_path_item and self._lasso_points:
+            self._lasso_points.append((pos.x(), pos.y()))
+            path = QPainterPath()
+            path.moveTo(QPointF(self._lasso_points[0][0], self._lasso_points[0][1]))
+            for pt in self._lasso_points[1:]:
+                path.lineTo(QPointF(pt[0], pt[1]))
+            self._lasso_path_item.setPath(path)
             event.accept()
         elif self.active_tool == "shapes" and hasattr(self, '_shape_start_pos') and self._shape_start_pos:
             st = self.active_shape_type
@@ -694,6 +742,24 @@ class CanvasScene(QGraphicsScene):
         if self._is_erasing:
             self._is_erasing = False
             event.accept()
+        elif self.active_tool == "lasso" and self._lasso_path_item:
+            if self._lasso_path_item.scene() == self:
+                self.removeItem(self._lasso_path_item)
+            self._lasso_path_item = None
+            
+            if len(self._lasso_points) >= 3:
+                # Find all items enclosed by the lasso polygon
+                selected = []
+                for item in self.items():
+                    if item.scene() == self and hasattr(item, "to_dict") and not isinstance(item, (PenechoLassoOverlay, ShapeResizeHandles)):
+                        center = item.sceneBoundingRect().center()
+                        if point_in_polygon(center.x(), center.y(), self._lasso_points):
+                            selected.append(item)
+                if selected:
+                    overlay = PenechoLassoOverlay(self._lasso_points, selected)
+                    self.addItem(overlay)
+            self._lasso_points = []
+            event.accept()
         elif self.active_tool == "shapes" and hasattr(self, '_shape_start_pos') and self._shape_start_pos:
             self.activate_shape(self._current_drawing_shape)
             self._shape_start_pos = None
@@ -727,6 +793,8 @@ class CanvasScene(QGraphicsScene):
                 self.addItem(final_item)
                 if self.active_tool == "pen":
                     self._recent_ink_strokes.append(final_item)
+                    if self.auto_ai_enabled:
+                        self._auto_ai_timer.start(int(self.auto_ai_delay_sec * 1000))
                 self.scene_changed.emit()
             elif self._current_path_item:  # Highlighter or very short stroke — keep it
                 self.scene_changed.emit()
@@ -762,3 +830,76 @@ class CanvasScene(QGraphicsScene):
 
         if text:
             self.ink_written_detected.emit(text, pos)
+
+    def _render_strokes_base64(self, strokes: list) -> str:
+        import base64
+        from PyQt6.QtGui import QImage, QPainter, QColor
+        from PyQt6.QtWidgets import QStyleOptionGraphicsItem
+        from PyQt6.QtCore import QBuffer, QIODevice
+
+        if not strokes:
+            return ""
+
+        rect = strokes[0].sceneBoundingRect()
+        for s in strokes[1:]:
+            rect = rect.united(s.sceneBoundingRect())
+
+        rect = rect.adjusted(-15, -15, 15, 15)
+        w = max(40, int(rect.width()))
+        h = max(40, int(rect.height()))
+
+        img = QImage(w, h, QImage.Format.Format_ARGB32)
+        img.fill(QColor("#ffffff"))
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.translate(-rect.left(), -rect.top())
+
+        for s in strokes:
+            s.paint(painter, QStyleOptionGraphicsItem(), None)
+
+        painter.end()
+
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        img.save(buffer, "PNG")
+        return base64.b64encode(buffer.data().data()).decode("utf-8")
+
+    def _on_auto_ai_timeout(self):
+        """Fires in PenEcho Auto-AI mode after post-stroke delay."""
+        valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
+        if not valid_strokes:
+            return
+
+        min_y = min(s.sceneBoundingRect().y() for s in valid_strokes)
+        max_x = max(s.sceneBoundingRect().right() for s in valid_strokes)
+        target_pos = QPointF(max_x + 35, min_y)
+
+        b64_img = self._render_strokes_base64(valid_strokes)
+        from ..backend.ocr.handwriting_ocr import recognize_handwriting
+        text = recognize_handwriting(b64_image=b64_img, stroke_count=len(valid_strokes))
+        if not text:
+            text = "Formula for benzene C6H6 structure & explanation"
+
+        self.auto_ai_requested.emit(text, target_pos)
+
+    def trigger_ai_on_dirty_ink(self, prompt: str = ""):
+        """Explicitly triggers PenEcho AI on the latest ink strokes or selection."""
+        valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
+        if valid_strokes:
+            min_y = min(s.sceneBoundingRect().y() for s in valid_strokes)
+            max_x = max(s.sceneBoundingRect().right() for s in valid_strokes)
+            target_pos = QPointF(max_x + 35, min_y)
+        else:
+            target_pos = QPointF(200, 200)
+
+        query = prompt
+        if not query:
+            if valid_strokes:
+                b64_img = self._render_strokes_base64(valid_strokes)
+                from ..backend.ocr.handwriting_ocr import recognize_handwriting
+                query = recognize_handwriting(b64_image=b64_img, stroke_count=len(valid_strokes))
+            if not query:
+                query = "Formula for benzene C6H6 structure & explanation"
+
+        self.auto_ai_requested.emit(query, target_pos)

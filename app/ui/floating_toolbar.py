@@ -108,6 +108,12 @@ class FloatingToolbar(QWidget):
         self.btn_shapes.clicked.connect(lambda: self._set_tool("shapes"))
         layout.addWidget(self.btn_shapes)
 
+        # Lasso Selection (Penecho)
+        self.btn_lasso = self._make_btn('fa5s.object-ungroup', "Lasso Selection (L)")
+        self.btn_lasso.setCheckable(True)
+        self.btn_lasso.clicked.connect(lambda: self._set_tool("lasso"))
+        layout.addWidget(self.btn_lasso)
+
         self._add_separator(layout)
 
         # Text
@@ -147,6 +153,7 @@ class FloatingToolbar(QWidget):
             "highlighter": self.btn_highlighter,
             "eraser": self.btn_eraser,
             "shapes": self.btn_shapes,
+            "lasso": self.btn_lasso,
         }
 
         # Outer layout to center the container
@@ -196,7 +203,8 @@ class FloatingToolbar(QWidget):
                 "pen": "fa5s.pen",
                 "highlighter": "fa5s.highlighter",
                 "eraser": "fa5s.eraser",
-                "shapes": "fa5s.shapes"
+                "shapes": "fa5s.shapes",
+                "lasso": "fa5s.object-ungroup"
             }
             c = "#ffffff" if name == tool_name else "#475569"
             btn.setIcon(qta.icon(icon_map[name], color=c))
