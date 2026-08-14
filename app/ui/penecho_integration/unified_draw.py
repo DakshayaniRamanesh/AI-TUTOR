@@ -12,6 +12,7 @@ Provides:
 """
 
 import math
+import re
 from typing import Dict, List, Any, Optional, Set, Tuple
 from PyQt6.QtWidgets import QGraphicsItem, QStyleOptionGraphicsItem, QWidget
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPainterPath, QPolygonF
@@ -250,6 +251,26 @@ def normalize_drawing_command(command: Dict[str, Any], canvas_size: int = 100000
     }
 
 
+def _parse_color(val: Any, default: str = "#1c1c1e") -> QColor:
+    if isinstance(val, QColor):
+        return val
+    if not val or not isinstance(val, str):
+        return QColor(default)
+    s = val.strip()
+    if s.lower() in ("transparent", "none", ""):
+        return QColor(0, 0, 0, 0)
+    rgba_m = re.match(r'rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d\.]+))?\s*\)', s, re.IGNORECASE)
+    if rgba_m:
+        r, g, b = int(rgba_m.group(1)), int(rgba_m.group(2)), int(rgba_m.group(3))
+        a = float(rgba_m.group(4)) if rgba_m.group(4) is not None else 1.0
+        alpha_int = max(0, min(255, int(a * 255 if a <= 1.0 else a)))
+        return QColor(r, g, b, alpha_int)
+    c = QColor.fromString(s) if hasattr(QColor, "fromString") else QColor(s)
+    if c.isValid():
+        return c
+    return QColor(default)
+
+
 class PenechoDrawItem(QGraphicsItem):
     """
     QGraphicsItem that renders a Penecho Unified Drawing Protocol composite structure.
@@ -266,8 +287,8 @@ class PenechoDrawItem(QGraphicsItem):
         self.setAcceptHoverEvents(True)
         self._command_data = command
         self._normalized = normalize_drawing_command(command) or {}
-        self._pen_color = QColor(self._normalized.get("color", "#1c1c1e"))
-        self._fill_color = QColor(self._normalized.get("fill_color", "rgba(59, 130, 246, 0.15)"))
+        self._pen_color = _parse_color(self._normalized.get("color", "#1c1c1e"), default="#1c1c1e")
+        self._fill_color = _parse_color(self._normalized.get("fill_color", "transparent"), default="transparent")
         self._stroke_width = float(self._normalized.get("width", 3.0))
 
     def boundingRect(self) -> QRectF:

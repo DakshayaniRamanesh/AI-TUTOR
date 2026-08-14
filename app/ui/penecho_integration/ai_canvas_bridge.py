@@ -94,14 +94,12 @@ class AICanvasWorker(QThread):
                 draw_cmd = self._generate_diagram_payload(self.query_text)
                 if draw_cmd:
                     is_benz = "benzene" in self.query_text.lower() or "c6h6" in self.query_text.lower()
-                    caption = "$$\\text{C}_6\\text{H}_6$$\n**Benzene** ($78.11\\text{ g/mol}$)" if is_benz else ""
                     payload = {
                         "kind": "diagram",
-                        "title": "Benzene Structure" if is_benz else "Vector Diagram",
-                        "data": draw_cmd,
-                        "caption": caption
+                        "title": "Benzene C₆H₆" if is_benz else "Vector Diagram",
+                        "data": draw_cmd
                     }
-                    self.finished.emit(payload, self.target_pos, "Generated Benzene Structure Draft" if is_benz else "Generated Vector Drawing Draft")
+                    self.finished.emit(payload, self.target_pos, "Generated Handwritten Benzene C₆H₆" if is_benz else "Generated Vector Drawing Draft")
                     return
 
             # 3. Default STEM / Math Solver -> Mixed LaTeX & Markdown Card
@@ -230,21 +228,47 @@ class AICanvasWorker(QThread):
         elif "benzene" in prompt_lower or "c6h6" in prompt_lower or "aromatic" in prompt_lower:
             return {
                 "origin": [0, 0],
-                "types": ["smooth", "circle", "line", "line", "line", "line", "line", "line"],
-                "items": [
-                    [100, 30, 160, 65, 160, 135, 100, 170, 40, 135, 40, 65],
-                    [100, 100, 30],
-                    [100, 30, 100, 10],
-                    [160, 65, 180, 55],
-                    [160, 135, 180, 145],
-                    [100, 170, 100, 190],
-                    [40, 135, 20, 145],
-                    [40, 65, 20, 55]
+                "types": [
+                    # 1-6: Outer Hexagon ring strokes
+                    "line", "line", "line", "line", "line", "line",
+                    # 7-9: Alternating conjugated Kekulé double bonds
+                    "line", "line", "line",
+                    # 10: Handwritten 'C'
+                    "smooth",
+                    # 11: Handwritten subscript '₆'
+                    "smooth",
+                    # 12-14: Handwritten 'H' (left upright, right upright, crossbar)
+                    "line", "line", "line",
+                    # 15: Handwritten subscript '₆'
+                    "smooth"
                 ],
-                "width": 3.0,
-                "color": "#2563eb",
-                "fill_color": "rgba(37, 99, 235, 0.08)",
-                "closed": [0],
-                "fill": [0]
+                "items": [
+                    # Outer Hexagon Ring
+                    [100, 30, 155, 62],
+                    [155, 62, 155, 126],
+                    [155, 126, 100, 158],
+                    [100, 158, 45, 126],
+                    [45, 126, 45, 62],
+                    [45, 62, 100, 30],
+                    # Conjugated Alternating Double Bonds
+                    [144, 70, 144, 118],
+                    [95, 147, 56, 124],
+                    [56, 64, 95, 41],
+                    # Handwritten Formula: C₆H₆
+                    # Letter 'C'
+                    [62, 192, 48, 195, 40, 207, 40, 222, 50, 233, 65, 235],
+                    # Subscript '6'
+                    [78, 218, 70, 225, 70, 238, 80, 238, 80, 228, 70, 228],
+                    # Letter 'H'
+                    [96, 192, 96, 235],
+                    [116, 192, 116, 235],
+                    [96, 213, 116, 213],
+                    # Subscript '6'
+                    [130, 218, 122, 225, 122, 238, 132, 238, 132, 228, 122, 228]
+                ],
+                "width": 2.8,
+                "color": "#1e293b",
+                "fill_color": "transparent",
+                "fill": []
             }
         return None
