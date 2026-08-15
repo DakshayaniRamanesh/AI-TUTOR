@@ -15,10 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 LOCAL_SERVER_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 MODAL_ENDPOINT_URL = os.getenv("MODAL_URL", "https://dakshayaniramanesh--manim-app-generate.modal.run")
 
-def request_video_generation(selected_text: str, pdf_path: str = None) -> str:
-    """
-    Submits a video generation request to the Manim AI pipeline.
-    """
+def request_video_generation(selected_text: str, pdf_path: str = None, page_range: str = "", emphasis_note: str = "", output_type: str = "video", subject_id: str = "") -> str:
     job_id = f"job_{uuid.uuid4().hex[:8]}"
     
     # 1. Try local server
@@ -29,7 +26,13 @@ def request_video_generation(selected_text: str, pdf_path: str = None) -> str:
             
         resp = requests.post(
             f"{LOCAL_SERVER_URL}/generate",
-            data={"prompt": selected_text},
+            data={
+                "prompt": selected_text,
+                "page_range": page_range,          
+                "emphasis_note": emphasis_note,  
+                "output_type": output_type,
+                "subject_id": subject_id
+            },
             files=files,
             timeout=2
         )

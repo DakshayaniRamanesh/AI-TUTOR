@@ -49,6 +49,11 @@ class VideoJob:
     user_prompt: str
     document_text: str = ""          # plain text extracted from PDF by DocumentEmbedder
 
+    page_range: Optional[str] = None        
+    emphasis_note: Optional[str] = None
+    output_type: str = "video"              
+    subject_id: Optional[str] = None
+
     # Optional fields with defaults
     pdf_path: str = ""               # temp file path for PDF bytes
     status: JobStatus = JobStatus.PENDING

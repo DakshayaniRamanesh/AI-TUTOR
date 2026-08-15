@@ -175,7 +175,7 @@ class PdfViewerWidget(QWidget):
     """
     close_requested = pyqtSignal()
     reply_clicked = pyqtSignal(str, int, str) # selected_text, page_num, surrounding_context
-    latex_video_requested = pyqtSignal(str) # latex_file_path
+    latex_video_requested = pyqtSignal(str,str,str,str) # latex_file_path
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -260,7 +260,33 @@ class PdfViewerWidget(QWidget):
         self.btn_generate_video = QPushButton("🎬 Generate Animation Video", header)
         self.btn_generate_video.setStyleSheet("background-color: #34c759; color: white; border: none;")
         self.btn_generate_video.setVisible(False)
-        self.btn_generate_video.clicked.connect(lambda: self.latex_video_requested.emit(self.latex_file_path))
+        self.btn_generate_video.clicked.connect(self._on_generate_clicked)
+
+    from PyQt6.QtWidgets import QInputDialog
+    
+    def _on_generate_clicked(self):
+        # 1. Output Type
+        output_type, ok1 = QInputDialog.getItem(
+            self, "Output Type", "Do you want Notes or a Video?",
+            ["video", "notes"], 0, False
+        )
+        if not ok1: return
+        
+        # 2. Page Range
+        page_range, ok2 = QInputDialog.getText(
+            self, "Target Section", "Enter page range (e.g. '15-20', or leave blank for full document):"
+        )
+        if not ok2: return
+        
+        # 3. Emphasis Note
+        emphasis, ok3 = QInputDialog.getText(
+            self, "Emphasis Note", "Any specific instructions? (e.g. 'Focus on the definition of vectors', or leave blank)"
+        )
+        if not ok3: return
+        
+        # Emit all of it to the main window
+        self.latex_video_requested.emit(self.latex_file_path, page_range.strip(), emphasis.strip(), output_type)
+
 
         self.video_progress_bar = QProgressBar(header)
         self.video_progress_bar.setRange(0, 100)

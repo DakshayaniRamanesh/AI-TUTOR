@@ -32,6 +32,8 @@ class Subject(Base):
     notebooks = relationship("Notebook", back_populates="subject", cascade="all, delete-orphan")
     materials = relationship("Material", back_populates="subject", cascade="all, delete-orphan")
     videos = relationship("Video", back_populates="subject", cascade="all, delete-orphan")
+    concept_nodes = relationship("ConceptNode", cascade="all, delete-orphan")
+    concept_edges = relationship("ConceptEdge", cascade="all, delete-orphan")
 
 
 class Notebook(Base):
@@ -65,6 +67,22 @@ class Video(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     subject = relationship("Subject", back_populates="videos")
+
+class ConceptNode(Base):
+    __tablename__ = "concept_nodes"
+    id = Column(String, primary_key=True)
+    subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
+    name = Column(String, nullable=False)
+    category = Column(String, nullable=False, default="concept")
+    description = Column(String)
+
+class ConceptEdge(Base):
+    __tablename__ = "concept_edges"
+    id = Column(String, primary_key=True)
+    subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
+    source_name = Column(String, nullable=False)
+    target_name = Column(String, nullable=False)
+    relationship_desc = Column(String)
 
 # 3. Create tables if they don't exist
 Base.metadata.create_all(bind=engine)

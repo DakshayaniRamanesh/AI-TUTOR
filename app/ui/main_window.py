@@ -84,7 +84,7 @@ class MacTitleBar(QWidget):
         tl_layout.setContentsMargins(0, 0, 0, 0)
         tl_layout.setSpacing(8)
 
-        # 🔴 Red - Close
+    
         self.btn_close = QPushButton("×", tl_box)
         self.btn_close.setFixedSize(13, 13)
         self.btn_close.setToolTip("Close Application")
@@ -371,6 +371,7 @@ class MainWindow(QMainWindow):
         self.eraser_popup.hide()
         self.eraser_popup.size_changed.connect(self._on_eraser_popup_size_changed)
 
+        self._canvas_wrapper = canvas_wrapper
         self.main_stack.addWidget(canvas_wrapper) # Index 0
 
         self.home_view = HomeView(self.main_stack)
@@ -378,14 +379,24 @@ class MainWindow(QMainWindow):
         self.subject_detail_view = SubjectDetailView(self.main_stack)
 
         # Connect Navigation Signals
-        self.home_view.open_blank_notebook.connect(lambda: self.main_stack.setCurrentWidget(canvas_wrapper))
-        self.home_view.open_my_subjects.connect(lambda: self.main_stack.setCurrentWidget(self.subjects_list_view))
+        def _open_blank():
+            self.subject_detail_view.current_subject_id = None
+            self.main_stack.setCurrentWidget(canvas_wrapper)
+            
+        self.home_view.open_blank_notebook.connect(_open_blank)
+        def _open_subjects_list():
+            self.subjects_list_view.refresh_subjects()
+            self.main_stack.setCurrentWidget(self.subjects_list_view)
+
+        self.home_view.open_my_subjects.connect(_open_subjects_list)
         
         self.subjects_list_view.go_back.connect(lambda: self.main_stack.setCurrentWidget(self.home_view))
         self.subjects_list_view.open_subject_detail.connect(self._on_open_subject_detail)
 
-        self.subject_detail_view.go_back.connect(lambda: self.main_stack.setCurrentWidget(self.subjects_list_view))
+        self.subject_detail_view.go_back.connect(_open_subjects_list)
+
         self.subject_detail_view.open_notebook.connect(self._on_load_notebook_requested)
+        self.subject_detail_view.open_pdf_in_viewer.connect(self._on_subject_pdf_requested)
 
         self.main_stack.addWidget(self.home_view)
         self.main_stack.addWidget(self.subjects_list_view)
@@ -432,6 +443,40 @@ class MainWindow(QMainWindow):
         """Loads the requested subject from the DB and switches the view."""
         self.subject_detail_view.load_subject(subject_id)
         self.main_stack.setCurrentWidget(self.subject_detail_view)
+
+    def _on_subject_pdf_requested(self, file_path: str):
+        """Opens a PDF from the subject dashboard inside the whiteboard's PDF viewer tab."""
+        print(f"[MainWindow] _on_subject_pdf_requested called with: {file_path}")
+        self.main_stack.setCurrentWidget(self._canvas_wrapper)
+        
+        # Try the full RAG-powered load first
+        try:
+            self._load_pdf_into_split_screen(file_path)
+        except Exception as e:
+            print(f"[MainWindow] Full PDF load failed, falling back to viewer-only: {e}")
+            # Fallback: just load the viewer widget without RAG
+            try:
+                success = self.pdf_viewer_widget.load_pdf(file_path)
+                if success:
+                    fname = os.path.basename(file_path)
+                    self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {fname}")
+                else:
+                    QMessageBox.warning(self, "PDF Error", f"Could not load PDF:\n{file_path}")
+            except Exception as e2:
+                QMessageBox.warning(self, "PDF Error", f"Could not load PDF:\n{e2}")
+
+    def _on_canvas_back_clicked(self):
+        """Routes the user back to the correct screen when leaving the canvas."""
+        # If they were looking at a specific subject, take them back to that subject's dashboard
+        if hasattr(self, 'subject_detail_view') and self.subject_detail_view.current_subject_id:
+            self.main_stack.setCurrentWidget(self.subject_detail_view)
+        # Otherwise, they opened a blank scratchpad, so take them Home
+        elif hasattr(self, 'home_view'):
+            self.main_stack.setCurrentWidget(self.home_view)
+        else:
+            # Fallback just in case
+            self.main_stack.setCurrentIndex(0)
+
 
     def _apply_global_styles(self):
         c = ThemeManager.instance().get_colors()
@@ -676,8 +721,8 @@ class MainWindow(QMainWindow):
         layout.setSpacing(4)
 
         # Back + Title
-        btn_back = self._make_toolbar_btn('fa5s.chevron-left', "", tb, '#3b82f6', "Back to Boards")
-        btn_back.clicked.connect(lambda: self.main_stack.setCurrentIndex(0))
+        btn_back = self._make_toolbar_btn('fa5s.chevron-left', "", tb, '#3b82f6', "Back to Menu")
+        btn_back.clicked.connect(self._on_canvas_back_clicked)
         layout.addWidget(btn_back)
 
         self.title_edit = QLineEdit(self.current_board.title, tb)
@@ -1055,20 +1100,23 @@ class MainWindow(QMainWindow):
             success_rag = self.pdf_rag_mgr.load_pdf(file_path)
             success_view = self.pdf_viewer_widget.load_pdf(file_path)
 
-            if success_rag and success_view:
+            if success_view:
                 fname = os.path.basename(file_path)
                 self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {fname}")
                 self.ask_bar.set_pdf_mode(True, filename=fname)
 
-                summary = self.pdf_rag_mgr.generate_grounded_summary()
-                center_pos = self.view.mapToScene(self.view.viewport().rect().center())
-                bubble = AnswerBubble(
-                    title=f"PDF Summary: {fname[:20]}",
-                    full_text=summary,
-                    question=f"Summarize document: {fname}"
-                )
-                bubble.setPos(center_pos)
-                self.scene.addItem(bubble)
+                if success_rag:
+                    summary = self.pdf_rag_mgr.generate_grounded_summary()
+                    center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+                    bubble = AnswerBubble(
+                        title=f"PDF Summary: {fname[:20]}",
+                        full_text=summary,
+                        question=f"Summarize document: {fname}"
+                    )
+                    bubble.setPos(center_pos)
+                    self.scene.addItem(bubble)
+                else:
+                    print(f"[MainWindow] RAG failed for {fname}, but viewer loaded.")
             else:
                 QMessageBox.warning(self, "PDF Error", "Could not load the selected PDF document.")
         except Exception as err:
@@ -1190,23 +1238,23 @@ class MainWindow(QMainWindow):
         tooltip = getattr(btn, '_nav_tooltip', '')
         if tooltip == "Boards":
             self.folder_tree.setVisible(False)
-            self.main_stack.setCurrentIndex(0)
+            self.main_stack.setCurrentWidget(self.home_view)
         elif tooltip == "Notebooks":
             self._refresh_folder_tree()
             self.notebooks_panel.refresh()
-            self.main_stack.setCurrentIndex(1)
+            self.main_stack.setCurrentWidget(self.notebooks_panel)
         elif tooltip == "Git VCS":
             self.git_notes_panel.refresh_all()
-            self.main_stack.setCurrentIndex(2)
+            self.main_stack.setCurrentWidget(self.git_notes_panel)
         elif tooltip == "Knowledge Graph":
             self.obsidian_graph_panel.load_graph()
-            self.main_stack.setCurrentIndex(4)
+            self.main_stack.setCurrentWidget(self.obsidian_graph_panel)
         elif tooltip == "Favourites":
             self.placeholder_panel.set_title("Favourites")
-            self.main_stack.setCurrentIndex(2)
+            self.main_stack.setCurrentWidget(self.placeholder_panel)
         else:
             self.placeholder_panel.set_title(tooltip)
-            self.main_stack.setCurrentIndex(2)
+            self.main_stack.setCurrentWidget(self.placeholder_panel)
 
     def _refresh_folder_tree(self):
         from ..storage.notebook_storage import NotebookStorage
@@ -1307,15 +1355,13 @@ class MainWindow(QMainWindow):
                 solve_requested_callback=self._on_stem_question_asked
             )
             
-            self.main_stack.setCurrentIndex(0)
-            self.sidebar_list.setCurrentRow(0)
+            self.main_stack.setCurrentWidget(self._canvas_wrapper)
         except Exception as err:
             QMessageBox.warning(self, "Load Failed", f"Could not load notebook:\n{err}")
 
     def _on_notebook_git_requested(self, notebook_id: str):
-        self.sidebar_list.setCurrentRow(2) # "⎇ Git Notes VCS"
         self.git_notes_panel.open_notebook_vcs(notebook_id)
-        self.main_stack.setCurrentIndex(2)
+        self.main_stack.setCurrentWidget(self.git_notes_panel)
 
     def _on_new_notebook_requested(self):
         """Legacy create_notebook_requested signal (now the panel handles new notebooks inline)."""
@@ -1408,15 +1454,30 @@ class MainWindow(QMainWindow):
             bubble.setPos(pos)
             self.scene.addItem(bubble)
 
-    def _on_latex_video_requested(self, pdf_path: str):
-        job_id = request_video_generation(selected_text="Explain this document in an animated lesson.", pdf_path=pdf_path)
+    def _on_latex_video_requested(self, pdf_path: str, page_range: str, emphasis: str, out_type: str):
+        
+        current_subject = None
+        if hasattr(self, 'subject_detail_view') and self.subject_detail_view.current_subject_id:
+            current_subject = self.subject_detail_view.current_subject_id     
+
+        job_id = request_video_generation(
+            selected_text="Explain this document.", 
+            pdf_path=pdf_path,
+            page_range=page_range,         
+            emphasis_note=emphasis,       
+            output_type=out_type,
+            subject_id=current_subject or ""
+        )
+        
+        title = "Markdown: Study Notes" if out_type == "notes" else "Manim: Video Lesson"
         center_pos = self.view.mapToScene(self.view.viewport().rect().center())
-        v_item = VideoFloatItem(job_id=job_id, title="Manim: LaTeX Document Lesson", video_url_or_path="")
+        v_item = VideoFloatItem(job_id=job_id, title=title, video_url_or_path="")
         v_item.setPos(center_pos.x() + 300, center_pos.y())
         self.scene.addItem(v_item)
         
         self.pdf_viewer_widget.video_generation_started()
         v_item.player_widget.worker.status_updated.connect(self._on_latex_video_progress)
+
 
     def _on_latex_video_progress(self, job_id, stage, progress):
         self.pdf_viewer_widget.update_video_progress(stage, progress)

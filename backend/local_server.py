@@ -60,7 +60,11 @@ def run_job_background(job: VideoJob):
 async def generate(
     background_tasks: BackgroundTasks,
     prompt: str = Form(...),
-    pdf: UploadFile = File(None)
+    pdf: UploadFile = File(None),
+    page_range: str = Form(""),
+    emphasis_note: str = Form(""),
+    output_type: str = Form("video"),
+    subject_id: str = Form("")
 ):
     job_id = f"job_{uuid.uuid4().hex[:8]}"
     pdf_path = ""
@@ -77,9 +81,13 @@ async def generate(
         pdf_path=pdf_path,
         user_prompt=prompt,
         document_text="",
+        # NEW fields for Feature 1
+        page_range=page_range if page_range else None,
+        emphasis_note=emphasis_note if emphasis_note else None,
+        output_type=output_type,
+        subject_id=subject_id if subject_id else None
     )
     jobs_store[job_id] = job
-
     background_tasks.add_task(run_job_background, job)
 
     return {
