@@ -28,6 +28,7 @@ from backend.video_generation.agents.validator_agent import ValidatorAgent
 from backend.video_generation.agents.codegen_agent import CodeGenAgent
 from backend.video_generation.agents.renderer_agent import RendererAgent
 from backend.video_generation.agents.uploader_agent import UploaderAgent
+from backend.video_generation.agents.notes_agent import NotesGeneratorAgent
 from backend.ci.pipeline import CIPipelineHarness
 
 
@@ -38,6 +39,10 @@ def _make_embed_node(agent: DocumentEmbedderAgent):
         return agent.run(state)
     return embed
 
+def _make_notes_node(agent: NotesGeneratorAgent):
+    def notes(state: VideoJob) -> VideoJob:
+        return agent.run(state)
+    return notes
 
 def _make_story_node(agent: StoryAgent):
     def story(state: VideoJob) -> VideoJob:
@@ -88,6 +93,10 @@ def _make_upload_node(agent: UploaderAgent):
 
 
 # ── Conditional edge functions ─────────────────────────────────────────────────
+def _route_post_embed(state: VideoJob) -> str:
+    if getattr(state, "output_type", "video") == "notes":
+        return "notes_generator"
+    return "story"
 
 def _route_validate(state: VideoJob) -> str:
     if state.needs_revision:
@@ -118,12 +127,13 @@ def build_graph(rag_store: Optional[QdrantRAGStore] = None):
     ci_harness = CIPipelineHarness()
     renderer_agent = RendererAgent()
     uploader_agent = UploaderAgent()
+    notes_agent = NotesGeneratorAgent() 
 
     if not LANGGRAPH_AVAILABLE:
         print("[VideoGenerationPipeline] LangGraph not installed. Using FallbackPipeline.")
         return _FallbackPipeline(
             embedder, story_agent, validator_agent,
-            codegen_agent, ci_harness, renderer_agent, uploader_agent,
+            codegen_agent, ci_harness, renderer_agent, uploader_agent, notes_agent 
         )
 
     graph = StateGraph(VideoJob)
@@ -135,9 +145,14 @@ def build_graph(rag_store: Optional[QdrantRAGStore] = None):
     graph.add_node("ci", _make_ci_node(ci_harness))
     graph.add_node("render", _make_render_node(renderer_agent))
     graph.add_node("upload", _make_upload_node(uploader_agent))
+    graph.add_node("notes_generator", _make_notes_node(notes_agent)) 
 
     graph.set_entry_point("embed")
-    graph.add_edge("embed", "story")
+    graph.add_conditional_edges(
+        "embed",
+        _route_post_embed,
+        {"notes_generator": "notes_generator", "story": "story"},
+    )
     graph.add_edge("story", "validate")
     graph.add_conditional_edges(
         "validate",
@@ -162,7 +177,7 @@ class _FallbackPipeline:
     """Runs the same agent sequence without LangGraph for local dev/testing."""
 
     def __init__(self, embedder, story_agent, validator_agent,
-                 codegen_agent, ci_harness, renderer_agent, uploader_agent):
+                 codegen_agent, ci_harness, renderer_agent, uploader_agent, notes_agent):
         self.embedder = embedder
         self.story_agent = story_agent
         self.validator_agent = validator_agent
@@ -170,12 +185,20 @@ class _FallbackPipeline:
         self.ci_harness = ci_harness
         self.renderer_agent = renderer_agent
         self.uploader_agent = uploader_agent
+        self.notes_agent = notes_agent
 
     def invoke(self, state: VideoJob) -> VideoJob:
         state.status = JobStatus.PROCESSING
 
         state = self.embedder.run(state)
         if state.status == JobStatus.ERROR:
+            return state
+
+        # NEW: Fallback pipeline routing
+        if getattr(state, "output_type", "video") == "notes":
+            # If the user wants notes, we just run the notes agent and exit!
+            state = self.notes_agent.run(state)
+            state.status = JobStatus.DONE
             return state
 
         # Story + Validation loop
@@ -223,6 +246,7 @@ class VideoGenerationPipeline:
 
     def __init__(self, rag_store: Optional[QdrantRAGStore] = None):
         self._graph = build_graph(rag_store)
+       
 
     def run_pipeline(self, job: VideoJob) -> VideoJob:
         if hasattr(self._graph, "invoke"):

@@ -178,10 +178,7 @@ class FolderCardWidget(QFrame):
         menu.addSeparator()
         act_delete = menu.addAction("🗑️ Delete")
 
-        if isinstance(pos, type(self.rect().bottomLeft())):
-            global_pos = self.mapToGlobal(pos)
-        else:
-            global_pos = self.mapToGlobal(pos)
+        global_pos = self.mapToGlobal(pos)
 
         action = menu.exec(global_pos)
         if action == act_open:

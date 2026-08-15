@@ -8,10 +8,14 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QListWidget,
     QListWidgetItem, QPushButton, QLineEdit, QLabel, QFrame,
     QSplitter, QStackedWidget, QFileDialog, QInputDialog, QMessageBox,
-    QGraphicsDropShadowEffect, QMenu, QComboBox, QTabWidget, QTabBar
+    QGraphicsDropShadowEffect, QMenu, QComboBox, QTabWidget, QTabBar, QApplication
 )
-from PyQt6.QtCore import Qt, QSize, QEvent, QPoint, QBuffer, QIODevice
-from PyQt6.QtGui import QFont, QColor, QAction, QPixmap
+from PyQt6.QtCore import Qt, QSize, QEvent, QPoint, QBuffer, QIODevice, QTimer, QUrl
+from PyQt6.QtGui import QFont, QColor, QAction, QPixmap, QShortcut, QKeySequence, QPainter
+import base64
+import requests
+import traceback
+import re
 import qtawesome as qta
 
 from .canvas_scene import CanvasScene
@@ -34,14 +38,20 @@ from .views.notebooks_panel import NotebooksPanel
 from .views.git_notes_panel import GitNotesPanel
 from .views.shared_panel import SharedPanel
 from .views.obsidian_graph_panel import ObsidianGraphPanel
+from .views.home_view import HomeView
+from .views.subjects_list import SubjectsListView
+from .views.subject_detail_view import SubjectDetailView
 from .views.placeholder_panel import PlaceholderPanel
 from .views.settings_dialog import SettingsDialog
 from .views.progress_dialog import ProgressDialog
+from .floating_toolbar import FloatingToolbar
+from .pen_properties_popup import PenPropertiesPopup
+from .shapes_popup import ShapesPopup
+from .eraser_popup import EraserPopup
 from .theme_manager import ThemeManager
 from .widgets.latex_editor_widget import LatexEditorWidget
 from .widgets.speedometer_progress_widget import SpeedometerProgressWidget
 from .widgets.magic_orb_widget import MagicOrbWidget
-
 
 from ..backend.math_engine.stem_solver import solve_stem_question
 from ..backend.workspace.pdf_rag_manager import PdfRAGManager
@@ -75,7 +85,7 @@ class MacTitleBar(QWidget):
         tl_layout.setContentsMargins(0, 0, 0, 0)
         tl_layout.setSpacing(8)
 
-        # 🔴 Red - Close
+    
         self.btn_close = QPushButton("×", tl_box)
         self.btn_close.setFixedSize(13, 13)
         self.btn_close.setToolTip("Close Application")
@@ -217,7 +227,6 @@ class MainWindow(QMainWindow):
         # ID of the currently open notebook. None = demo/unsaved canvas.
         self._current_notebook_id: str | None = None
         # Single-shot debounce timer: fires _do_autosave after user pauses editing.
-        from PyQt6.QtCore import QTimer
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.timeout.connect(self._do_autosave)
@@ -236,12 +245,8 @@ class MainWindow(QMainWindow):
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
 
     def _setup_shortcuts(self):
-        from PyQt6.QtGui import QShortcut, QKeySequence
-        # Undo
         QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(lambda: self.floating_toolbar.action_triggered.emit("undo"))
-        # Save
         QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._on_toolbar_save)
-        # Tools
         QShortcut(QKeySequence("V"), self).activated.connect(lambda: self.floating_toolbar.btn_select.click())
         QShortcut(QKeySequence("H"), self).activated.connect(lambda: self.floating_toolbar.btn_pan.click())
         QShortcut(QKeySequence("P"), self).activated.connect(lambda: self.floating_toolbar.btn_pen.click())
@@ -253,7 +258,7 @@ class MainWindow(QMainWindow):
         # PenEcho Magic Trigger
         QShortcut(QKeySequence("Ctrl+Space"), self).activated.connect(self._on_magic_orb_triggered)
         # Export
-        QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(lambda: self._convert_to_latex())
+        QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(self._convert_to_latex)
 
     def _init_ui(self):
         # Outer Translucent Container
@@ -311,7 +316,6 @@ class MainWindow(QMainWindow):
         canvas_wrapper.installEventFilter(self)
         self._canvas_wrapper = canvas_wrapper
 
-        from PyQt6.QtWidgets import QTabWidget
         self.canvas_tabs = QTabWidget(canvas_wrapper)
         self.canvas_tabs.setTabsClosable(True)
         self.canvas_tabs.setStyleSheet("""
@@ -354,33 +358,60 @@ class MainWindow(QMainWindow):
         self.hud_overlay = self._create_hud_overlay()
         cw_layout.addWidget(self.hud_overlay)
 
-        # After cw_layout.addWidget(self.canvas_tabs) — around line 295
-
-        from .floating_toolbar import FloatingToolbar
-        from .pen_properties_popup import PenPropertiesPopup
-
         self.floating_toolbar = FloatingToolbar(canvas_wrapper)
         self.floating_toolbar.tool_changed.connect(self._on_floating_tool_changed)
         self.floating_toolbar.action_triggered.connect(self._on_floating_action)
         self.floating_toolbar.show()
         self.floating_toolbar.raise_()
-        
+
         self.pen_popup = PenPropertiesPopup(canvas_wrapper)
         self.pen_popup.hide()
         self.pen_popup.color_changed.connect(self._on_pen_popup_color_changed)
         self.pen_popup.thickness_changed.connect(self._on_pen_popup_thickness_changed)
 
-        from .shapes_popup import ShapesPopup
         self.shapes_popup = ShapesPopup(canvas_wrapper)
         self.shapes_popup.hide()
         self.shapes_popup.shape_selected.connect(self._on_shapes_popup_selected)
 
-        from .eraser_popup import EraserPopup
         self.eraser_popup = EraserPopup(canvas_wrapper)
         self.eraser_popup.hide()
         self.eraser_popup.size_changed.connect(self._on_eraser_popup_size_changed)
 
+        self._canvas_wrapper = canvas_wrapper
         self.main_stack.addWidget(canvas_wrapper) # Index 0
+
+        self.home_view = HomeView(self.main_stack)
+        self.subjects_list_view = SubjectsListView(self.main_stack)
+        self.subject_detail_view = SubjectDetailView(self.main_stack)
+
+        # Connect Navigation Signals
+        def _open_blank():
+            self.subject_detail_view.current_subject_id = None
+            self.main_stack.setCurrentWidget(canvas_wrapper)
+            
+        self.home_view.open_blank_notebook.connect(_open_blank)
+        def _open_subjects_list():
+            self.subjects_list_view.refresh_subjects()
+            self.main_stack.setCurrentWidget(self.subjects_list_view)
+
+        self.home_view.open_my_subjects.connect(_open_subjects_list)
+        
+        self.subjects_list_view.go_back.connect(lambda: self.main_stack.setCurrentWidget(self.home_view))
+        self.subjects_list_view.open_subject_detail.connect(self._on_open_subject_detail)
+
+        self.subject_detail_view.go_back.connect(_open_subjects_list)
+
+        self.subject_detail_view.open_notebook.connect(self._on_load_notebook_requested)
+        self.subject_detail_view.open_pdf_in_viewer.connect(self._on_subject_pdf_requested)
+
+        self.main_stack.addWidget(self.home_view)
+        self.main_stack.addWidget(self.subjects_list_view)
+        self.main_stack.addWidget(self.subject_detail_view)
+        
+        # Make Home the default startup screen instead of the blank canvas
+        self.main_stack.setCurrentWidget(self.home_view)
+        # ------------------------------------
+
 
         # Notebooks View Panel
         self.notebooks_panel = NotebooksPanel(self.main_stack)
@@ -414,7 +445,44 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(self.splitter)
         self.outer_layout.addWidget(self.central_card)
 
-        self._populate_demo_canvas()
+    def _on_open_subject_detail(self, subject_id: str):
+        """Loads the requested subject from the DB and switches the view."""
+        self.subject_detail_view.load_subject(subject_id)
+        self.main_stack.setCurrentWidget(self.subject_detail_view)
+
+    def _on_subject_pdf_requested(self, file_path: str):
+        """Opens a PDF from the subject dashboard inside the whiteboard's PDF viewer tab."""
+        print(f"[MainWindow] _on_subject_pdf_requested called with: {file_path}")
+        self.main_stack.setCurrentWidget(self._canvas_wrapper)
+        
+        # Try the full RAG-powered load first
+        try:
+            self._load_pdf_into_split_screen(file_path)
+        except Exception as e:
+            print(f"[MainWindow] Full PDF load failed, falling back to viewer-only: {e}")
+            # Fallback: just load the viewer widget without RAG
+            try:
+                success = self.pdf_viewer_widget.load_pdf(file_path)
+                if success:
+                    fname = os.path.basename(file_path)
+                    self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {fname}")
+                else:
+                    QMessageBox.warning(self, "PDF Error", f"Could not load PDF:\n{file_path}")
+            except Exception as e2:
+                QMessageBox.warning(self, "PDF Error", f"Could not load PDF:\n{e2}")
+
+    def _on_canvas_back_clicked(self):
+        """Routes the user back to the correct screen when leaving the canvas."""
+        # If they were looking at a specific subject, take them back to that subject's dashboard
+        if hasattr(self, 'subject_detail_view') and self.subject_detail_view.current_subject_id:
+            self.main_stack.setCurrentWidget(self.subject_detail_view)
+        # Otherwise, they opened a blank scratchpad, so take them Home
+        elif hasattr(self, 'home_view'):
+            self.main_stack.setCurrentWidget(self.home_view)
+        else:
+            # Fallback just in case
+            self.main_stack.setCurrentIndex(0)
+
 
     def _apply_global_styles(self):
         c = ThemeManager.instance().get_colors()
@@ -659,8 +727,8 @@ class MainWindow(QMainWindow):
         layout.setSpacing(4)
 
         # Back + Title
-        btn_back = self._make_toolbar_btn('fa5s.chevron-left', "", tb, '#3b82f6', "Back to Boards")
-        btn_back.clicked.connect(lambda: self.main_stack.setCurrentIndex(0))
+        btn_back = self._make_toolbar_btn('fa5s.chevron-left', "", tb, '#3b82f6', "Back to Menu")
+        btn_back.clicked.connect(self._on_canvas_back_clicked)
         layout.addWidget(btn_back)
 
         self.title_edit = QLineEdit(self.current_board.title, tb)
@@ -989,8 +1057,6 @@ class MainWindow(QMainWindow):
             self._show_overflow_menu()
             
     def _show_overflow_menu(self):
-        from PyQt6.QtWidgets import QMenu
-        from PyQt6.QtGui import QAction
         menu = QMenu(self)
         
         # Add actions to menu
@@ -1136,9 +1202,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Export Failed", "Could not export canvas image.")
 
     def _on_insert_image(self):
-        from PyQt6.QtWidgets import QFileDialog
         from .items.image_item import ImageItem
-        from PyQt6.QtGui import QPixmap
         file_path, _ = QFileDialog.getOpenFileName(self, "Insert Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if file_path:
             self.scene.active_tool = "select"
@@ -1153,8 +1217,8 @@ class MainWindow(QMainWindow):
                 self.scene.scene_changed.emit()
 
     def _add_text_box(self):
-        self.scene.active_tool = "select"
         from .items.text_box_item import TextBoxItem
+        self.scene.active_tool = "select"
         item = TextBoxItem(text="Type here...")
         item.setPos(self.view.mapToScene(self.view.viewport().rect().center()))
         self.scene.addItem(item)
@@ -1180,48 +1244,41 @@ class MainWindow(QMainWindow):
         if file_path:
             self._load_pdf_into_split_screen(file_path)
 
+    def _show_or_update_tab(self, widget, title: str):
+        """Adds widget as a tab if not present, or updates its title if already present."""
+        idx = self.canvas_tabs.indexOf(widget)
+        if idx == -1:
+            self.canvas_tabs.addTab(widget, title)
+        else:
+            self.canvas_tabs.setTabText(idx, title)
+        self.canvas_tabs.setCurrentWidget(widget)
+
     def _load_pdf_into_split_screen(self, file_path: str):
         try:
             success_rag = self.pdf_rag_mgr.load_pdf(file_path)
             success_view = self.pdf_viewer_widget.load_pdf(file_path)
 
-            if success_rag and success_view:
+            if success_view:
                 fname = os.path.basename(file_path)
-                
-                if self.canvas_tabs.indexOf(self.pdf_viewer_widget) == -1:
-                    self.canvas_tabs.addTab(self.pdf_viewer_widget, f"📄 {fname}")
-                else:
-                    idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
-                    self.canvas_tabs.setTabText(idx, f"📄 {fname}")
-                self.canvas_tabs.setCurrentWidget(self.pdf_viewer_widget)
-                
-                fname = os.path.basename(file_path)
+                self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {fname}")
                 self.ask_bar.set_pdf_mode(True, filename=fname)
 
-                # Generate initial Grounded Document Summary directly onto canvas paper
-                summary = self.pdf_rag_mgr.generate_grounded_summary()
-                center_pos = self.view.mapToScene(self.view.viewport().rect().center())
-                bubble = AnswerBubble(
-                    title=f"PDF Summary: {fname[:20]}",
-                    full_text=summary,
-                    question=f"Summarize document: {fname}"
-                )
-                bubble.setPos(center_pos)
-                self.scene.addItem(bubble)
+                if success_rag:
+                    summary = self.pdf_rag_mgr.generate_grounded_summary()
+                    center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+                    bubble = AnswerBubble(
+                        title=f"PDF Summary: {fname[:20]}",
+                        full_text=summary,
+                        question=f"Summarize document: {fname}"
+                    )
+                    bubble.setPos(center_pos)
+                    self.scene.addItem(bubble)
+                else:
+                    print(f"[MainWindow] RAG failed for {fname}, but viewer loaded.")
             else:
                 QMessageBox.warning(self, "PDF Error", "Could not load the selected PDF document.")
         except Exception as err:
             QMessageBox.warning(self, "PDF Exception", f"Error opening PDF:\n{err}")
-
-    def _close_pdf_split_screen(self):
-        idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
-        if idx != -1:
-            self.canvas_tabs.removeTab(idx)
-        self.ask_bar.set_pdf_mode(False)
-        
-    def _on_canvas_tab_closed(self, index):
-        if self.canvas_tabs.widget(index) == self.pdf_viewer_widget:
-            self._close_pdf_split_screen()
 
     def _on_pdf_reply_clicked(self, selected_text: str, page_num: int, surrounding_context: str):
         """
@@ -1328,7 +1385,6 @@ class MainWindow(QMainWindow):
         else:
             self.folder_tree.setVisible(False)
             item_text = self.sidebar_list.item(row).text() if self.sidebar_list.count() > row else ""
-            import re
             clean_title = re.sub(r'^[^\w\s]+', '', item_text).split('(')[0].strip() if item_text else "Section"
             self.placeholder_panel.set_title(clean_title)
             self.main_stack.setCurrentIndex(2)
@@ -1351,23 +1407,23 @@ class MainWindow(QMainWindow):
         tooltip = getattr(btn, '_nav_tooltip', '')
         if tooltip == "Boards":
             self.folder_tree.setVisible(False)
-            self.main_stack.setCurrentIndex(0)
+            self.main_stack.setCurrentWidget(self.home_view)
         elif tooltip == "Notebooks":
             self._refresh_folder_tree()
             self.notebooks_panel.refresh()
-            self.main_stack.setCurrentIndex(1)
+            self.main_stack.setCurrentWidget(self.notebooks_panel)
         elif tooltip == "Git VCS":
             self.git_notes_panel.refresh_all()
-            self.main_stack.setCurrentIndex(3)
+            self.main_stack.setCurrentWidget(self.git_notes_panel)
         elif tooltip == "Knowledge Graph":
             self.obsidian_graph_panel.load_graph()
-            self.main_stack.setCurrentIndex(5)
+            self.main_stack.setCurrentWidget(self.obsidian_graph_panel)
         elif tooltip == "Favourites":
             self.placeholder_panel.set_title("Favourites")
-            self.main_stack.setCurrentIndex(2)
+            self.main_stack.setCurrentWidget(self.placeholder_panel)
         else:
             self.placeholder_panel.set_title(tooltip)
-            self.main_stack.setCurrentIndex(2)
+            self.main_stack.setCurrentWidget(self.placeholder_panel)
 
     def _refresh_folder_tree(self):
         from ..storage.notebook_storage import NotebookStorage
@@ -1406,7 +1462,6 @@ class MainWindow(QMainWindow):
                 self.current_board.title = meta["name"]
                 self.title_edit.setText(meta["name"])
             except Exception as err:
-                import traceback
                 traceback.print_exc()
                 QMessageBox.warning(self, "Save Failed", f"Could not create notebook:\n{err}")
                 return
@@ -1437,7 +1492,6 @@ class MainWindow(QMainWindow):
                 self.notebooks_panel.refresh()
             self._set_save_status("Saved ✓", clear_after_ms=2000)
         except Exception as err:
-            import traceback
             traceback.print_exc()
             self._set_save_status("Save failed!")
             if manual:
@@ -1471,15 +1525,13 @@ class MainWindow(QMainWindow):
             )
             self._sync_grid_btn_ui(self.scene.background_mode)
             
-            self.main_stack.setCurrentIndex(0)
-            self.sidebar_list.setCurrentRow(0)
+            self.main_stack.setCurrentWidget(self._canvas_wrapper)
         except Exception as err:
             QMessageBox.warning(self, "Load Failed", f"Could not load notebook:\n{err}")
 
     def _on_notebook_git_requested(self, notebook_id: str):
-        self.sidebar_list.setCurrentRow(2) # "⎇ Git Notes VCS"
         self.git_notes_panel.open_notebook_vcs(notebook_id)
-        self.main_stack.setCurrentIndex(2)
+        self.main_stack.setCurrentWidget(self.git_notes_panel)
 
     def _on_new_notebook_requested(self):
         """Legacy create_notebook_requested signal (now the panel handles new notebooks inline)."""
@@ -1487,7 +1539,6 @@ class MainWindow(QMainWindow):
 
     def _on_toolbar_paste(self):
         self.scene.active_tool = "select"
-        from PyQt6.QtWidgets import QApplication
         from ..backend.workspace.link_utils import is_valid_url, fetch_url_metadata
         from ..backend.workspace.summarizer_client import UrlSummarizerWorker
 
@@ -1550,12 +1601,6 @@ class MainWindow(QMainWindow):
         self.scene.addItem(item)
         self.scene.scene_changed.emit()
 
-    def _add_group(self):
-        self.scene.active_tool = "select"
-        item = GroupSelection(title="Grouped Notes & Reviews")
-        item.setPos(self.view.mapToScene(self.view.viewport().rect().center()))
-        self.scene.addItem(item)
-
     def _on_insert_reference_table(self, data: dict):
         self.scene.active_tool = "select"
         item = TableItem(headers=data["headers"], rows=data["rows"])
@@ -1579,15 +1624,30 @@ class MainWindow(QMainWindow):
             bubble.setPos(pos)
             self.scene.addItem(bubble)
 
-    def _on_latex_video_requested(self, pdf_path: str):
-        job_id = request_video_generation(selected_text="Explain this document in an animated lesson.", pdf_path=pdf_path)
+    def _on_latex_video_requested(self, pdf_path: str, page_range: str, emphasis: str, out_type: str):
+        
+        current_subject = None
+        if hasattr(self, 'subject_detail_view') and self.subject_detail_view.current_subject_id:
+            current_subject = self.subject_detail_view.current_subject_id     
+
+        job_id = request_video_generation(
+            selected_text="Explain this document.", 
+            pdf_path=pdf_path,
+            page_range=page_range,         
+            emphasis_note=emphasis,       
+            output_type=out_type,
+            subject_id=current_subject or ""
+        )
+        
+        title = "Markdown: Study Notes" if out_type == "notes" else "Manim: Video Lesson"
         center_pos = self.view.mapToScene(self.view.viewport().rect().center())
-        v_item = VideoFloatItem(job_id=job_id, title="Manim: LaTeX Document Lesson", video_url_or_path="")
+        v_item = VideoFloatItem(job_id=job_id, title=title, video_url_or_path="")
         v_item.setPos(center_pos.x() + 300, center_pos.y())
         self.scene.addItem(v_item)
         
         self.pdf_viewer_widget.video_generation_started()
         v_item.player_widget.worker.status_updated.connect(self._on_latex_video_progress)
+
 
     def _on_latex_video_progress(self, job_id, stage, progress):
         self.pdf_viewer_widget.update_video_progress(stage, progress)
@@ -1643,71 +1703,63 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _convert_to_latex(self):
-        items = self.scene.selectedItems()
-        if not items:
-            items = self.scene.items()
-            if not items:
-                QMessageBox.warning(self, "No Content", "There is nothing on the canvas to convert.")
-                return
-        
-        if self.scene.selectedItems():
-            rect = self.scene.selectedItems()[0].sceneBoundingRect()
-            for item in self.scene.selectedItems()[1:]:
+        selected = self.scene.selectedItems()
+        if not selected and not self.scene.items():
+            QMessageBox.warning(self, "No Content", "There is nothing on the canvas to convert.")
+            return
+
+        if selected:
+            rect = selected[0].sceneBoundingRect()
+            for item in selected[1:]:
                 rect = rect.united(item.sceneBoundingRect())
         else:
             rect = self.scene.itemsBoundingRect()
 
         if rect.isEmpty():
             return
-            
+
         rect.adjust(-20, -20, 20, 20)
-        
-        # Max scale down if image too large to avoid huge memory/API payload
+
         size = rect.size().toSize()
-        scale_factor = 1.0
         if size.width() > 2000 or size.height() > 2000:
             scale_factor = 2000.0 / max(size.width(), size.height())
             size = (rect.size() * scale_factor).toSize()
 
+        from PyQt6.QtCore import QRectF
         pixmap = QPixmap(size)
         pixmap.fill(Qt.GlobalColor.white)
-        
-        import PyQt6.QtGui as QtGui
-        import PyQt6.QtCore as QtCore
-        painter = QtGui.QPainter(pixmap)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        
-        # Draw the scene area to the pixmap
-        target_rect = QtCore.QRectF(pixmap.rect())
-        self.scene.render(painter, target=target_rect, source=rect)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.scene.render(painter, target=QRectF(pixmap.rect()), source=rect)
         painter.end()
 
         buffer = QBuffer()
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)
         pixmap.save(buffer, "PNG")
         image_b64 = buffer.data().toBase64().data().decode()
-        
+
         template_type = self.latex_combo.currentText()
         current_mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
         action = self.classroom_action_combo.currentText()
-        
+
         try:
             job_id = request_latex_generation(image_b64, template_type, current_mode, action)
         except Exception as e:
-            QMessageBox.warning(self, "API Connection Error", f"Could not connect to the backend server.\nPlease ensure you are running the backend local server (`python backend/local_server.py`).\n\nError: {e}")
+            QMessageBox.warning(self, "API Connection Error",
+                f"Could not connect to the backend server.\n"
+                f"Please ensure you are running the backend local server.\n\nError: {e}")
             return
-        
-        # Speedometer Live Progress Indicator (Non-popup top header indicator)
+
         if hasattr(self, 'speedometer_widget'):
             self.speedometer_widget.start_task(f"Generating {template_type}...")
-        
+
         self.latex_worker = LatexPollWorker(job_id, self)
         self.latex_worker.status_updated.connect(self._on_latex_status_updated)
         self.latex_worker.latex_ready.connect(self._on_latex_ready)
         self.latex_worker.pdf_ready.connect(self._on_latex_pdf_ready)
         self.latex_worker.pdf_failed.connect(self._on_latex_failed)
         self.latex_worker.start()
-        
+
         self.ask_bar.input_field.setPlaceholderText(f"Converting to {template_type}...")
 
     def _toggle_theme(self):
@@ -1724,6 +1776,7 @@ class MainWindow(QMainWindow):
         idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
         if idx != -1:
             self.canvas_tabs.removeTab(idx)
+        self.ask_bar.set_pdf_mode(False)
         self.canvas_tabs.setCurrentWidget(self.view)
 
     def _on_canvas_tab_closed(self, index: int):
@@ -1741,21 +1794,15 @@ class MainWindow(QMainWindow):
             self.btn_view_pdf.setVisible(True)
 
     def _open_in_app_pdf_viewer(self):
-        if not hasattr(self, 'last_compiled_pdf_path') or not self.last_compiled_pdf_path or not os.path.exists(self.last_compiled_pdf_path):
-            QMessageBox.information(self, "No PDF Available", "No compiled PDF file is available to view yet.\nPlease export your LaTeX document as a PDF first.")
+        if not getattr(self, 'last_compiled_pdf_path', None) or not os.path.exists(self.last_compiled_pdf_path):
+            QMessageBox.information(self, "No PDF Available",
+                "No compiled PDF file is available to view yet.\nPlease export your LaTeX document as a PDF first.")
             return
 
         self.pdf_viewer_widget.load_pdf(self.last_compiled_pdf_path)
         fname = os.path.basename(self.last_compiled_pdf_path)
         tab_title = f"📄 PDF: {fname[:16]}..." if len(fname) > 18 else f"📄 PDF: {fname}"
-
-        if self.canvas_tabs.indexOf(self.pdf_viewer_widget) == -1:
-            self.canvas_tabs.addTab(self.pdf_viewer_widget, tab_title)
-        else:
-            idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
-            self.canvas_tabs.setTabText(idx, tab_title)
-
-        self.canvas_tabs.setCurrentWidget(self.pdf_viewer_widget)
+        self._show_or_update_tab(self.pdf_viewer_widget, tab_title)
 
     def _on_latex_ready(self, job_id, latex_code):
         if hasattr(self, 'speedometer_widget'):
@@ -1764,15 +1811,7 @@ class MainWindow(QMainWindow):
 
         notebook_title = self.current_board.title or "LaTeX_Document"
         self.latex_editor_widget.set_latex_code(latex_code, title=f"LaTeX: {notebook_title}")
-
-        tab_title = "📝 Editable LaTeX"
-        if self.canvas_tabs.indexOf(self.latex_editor_widget) == -1:
-            self.canvas_tabs.addTab(self.latex_editor_widget, tab_title)
-        else:
-            idx = self.canvas_tabs.indexOf(self.latex_editor_widget)
-            self.canvas_tabs.setTabText(idx, tab_title)
-
-        self.canvas_tabs.setCurrentWidget(self.latex_editor_widget)
+        self._show_or_update_tab(self.latex_editor_widget, "📝 Editable LaTeX")
 
     def _on_latex_status_updated(self, job_id, stage, progress):
         if hasattr(self, 'speedometer_widget'):
@@ -1783,34 +1822,22 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
             self.progress_dialog.finish_success()
         self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-        
-        import os
-        import base64
-        from PyQt6.QtGui import QDesktopServices
-        from PyQt6.QtCore import QUrl
-        
-        # 1. Gather the notebook context (Title, Mode, and Action)
+
         notebook_title = self.current_board.title or "Untitled_Notebook"
         mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
         action = self.classroom_action_combo.currentText() if hasattr(self, 'classroom_action_combo') else "Action"
-        
-        # 2. Sanitize the notebook title to make it a safe filename
         safe_title = "".join(c for c in notebook_title if c.isalnum() or c in " _-").strip()
         filename = f"{safe_title}_{mode}_{action}.pdf".replace(" ", "_")
-        
-        # 3. Create a dedicated export folder inside storage_data
+
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         export_dir = os.path.join(base_dir, "storage_data", "latex_exports")
         os.makedirs(export_dir, exist_ok=True)
-        
         save_path = os.path.join(export_dir, filename)
-        
-        # 4. Save the PDF to the hard drive
+
         if pdf_b64:
             with open(save_path, "wb") as f:
                 f.write(base64.b64decode(pdf_b64))
         else:
-            import requests
             try:
                 r = requests.get(pdf_url)
                 with open(save_path, "wb") as f:
@@ -1818,26 +1845,12 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "Download Error", f"Failed to download generated PDF:\n{e}")
                 return
-                
-        # 5. Load the PDF into the internal viewer
+
         self.pdf_viewer_widget.load_latex_pdf(save_path)
-        
-        # 6. Add the PDF Viewer as a new Tab (if it isn't already added)
-        if self.canvas_tabs.indexOf(self.pdf_viewer_widget) == -1:
-            self.canvas_tabs.addTab(self.pdf_viewer_widget, f"📄 {filename}")
-        else:
-            # Update the tab title if it already exists
-            idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
-            self.canvas_tabs.setTabText(idx, f"📄 {filename}")
-            
-        # 7. Switch the view automatically to the new PDF tab!
-        self.canvas_tabs.setCurrentWidget(self.pdf_viewer_widget)
+        self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {filename}")
 
     def _on_latex_failed(self, job_id, error_msg):
         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
             self.progress_dialog.finish_error(error_msg)
         self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
         QMessageBox.warning(self, "LaTeX Error", f"LaTeX generation failed:\n{error_msg}")
-
-    def _populate_demo_canvas(self):
-        pass

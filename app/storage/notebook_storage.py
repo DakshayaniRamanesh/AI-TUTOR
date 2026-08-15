@@ -12,6 +12,7 @@ Notebook index entry:
 import os
 import json
 import time
+import traceback
 
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 BOARDS_DIR = os.path.join(_BASE_DIR, "storage_data", "boards")
@@ -241,7 +242,6 @@ class NotebookStorage:
         Raises on write failure (caller should handle and surface to user).
         """
         cls._ensure_dirs()
-        import traceback
         now_str = time.strftime("%Y-%m-%d %H:%M:%S")
 
         file_path = os.path.join(BOARDS_DIR, f"{notebook_id}.json")

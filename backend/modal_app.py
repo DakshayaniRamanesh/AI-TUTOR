@@ -1,8 +1,10 @@
 import os
 import uuid
 import tempfile
+import base64
 from typing import Dict, Any
 import modal
+from fastapi import Request
 
 # Modal Container Image — matches spec exactly
 # - manim==0.20.1, boto3==1.35.99 (pin: 1.36.0 breaks DO Spaces)
@@ -127,22 +129,22 @@ def _process_annotation_job(job_id: str, annotations_raw: list) -> Dict[str, Any
         version=existing.get("version", 1),
     )
 
-    parsed: list[AnnotationEvent] = []
-    for ann in annotations_raw:
-        raw_paths = ann.get("paths", [])
-        parsed_paths = []
-        for p in raw_paths:
-            parsed_paths.append(PathData(
-                points=[(pt[0], pt[1]) for pt in p.get("points", [])],
-                stroke_color=p.get("stroke_color", "#ef4444"),
-                stroke_width=p.get("stroke_width", 3),
-            ))
-        parsed.append(AnnotationEvent(
+    parsed: list[AnnotationEvent] = [
+        AnnotationEvent(
             timestamp=ann.get("timestamp", 0.0),
             frame_image=ann.get("frame_image", ""),
-            paths=parsed_paths,
+            paths=[
+                PathData(
+                    points=[(pt[0], pt[1]) for pt in p.get("points", [])],
+                    stroke_color=p.get("stroke_color", "#ef4444"),
+                    stroke_width=p.get("stroke_width", 3),
+                )
+                for p in ann.get("paths", [])
+            ],
             comment=ann.get("comment", ""),
-        ))
+        )
+        for ann in annotations_raw
+    ]
 
     handler = AnnotationHandler(QdrantRAGStore())
     updated_job = handler.process_annotations(job, parsed)
@@ -174,17 +176,8 @@ def _process_latex_job(job_dict: Dict[str, Any]) -> Dict[str, Any]:
     pipeline = LatexGenerationPipeline()
     final_job = pipeline.run_pipeline(job)
 
-    # Read PDF as base64 to send it back via modal dict (or just rely on storage)
-    # Since modal functions don't easily serve files without a Volume, 
-    # we'll encode the PDF as base64 and return it, or the frontend can just get it if we upload it.
-    # Wait, the spec says "returns the URL/path". In Modal, local temp files are lost.
-    # Let's use AWS S3/DO Spaces to upload it, just like UploaderAgent does for videos, OR just base64 encode it in the DB.
-    # Since it's a PDF, base64 is usually small enough for modal.Dict (limit ~1MB or so).
-    # But wait, we can just save it as base64 inside the dict.
-    
     pdf_b64 = None
     if final_job.pdf_path and os.path.exists(final_job.pdf_path):
-        import base64
         with open(final_job.pdf_path, "rb") as f:
             pdf_b64 = base64.b64encode(f.read()).decode("utf-8")
 
@@ -199,7 +192,6 @@ def _process_latex_job(job_dict: Dict[str, Any]) -> Dict[str, Any]:
     latex_jobs_db[final_job.job_id] = result
     return result
 
-from fastapi import Request
 
 # ── HTTP Endpoints ─────────────────────────────────────────────────────────────
 
@@ -223,7 +215,6 @@ async def generate(request: Request) -> dict:
 
     job_id = body.get("job_id") or f"job_{uuid.uuid4().hex[:10]}"
     prompt = body.get("prompt", "Explain the document concepts.")
-    import base64
     pdf_b64 = body.get("pdf_bytes", "")
     pdf_bytes = base64.b64decode(pdf_b64) if pdf_b64 else b""
 
