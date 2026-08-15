@@ -2,6 +2,7 @@ import os
 import re
 import time
 import requests
+from typing import Optional, Dict, Any, List, Tuple
 from dotenv import load_dotenv
 import sympy as sp
 import numpy as np
