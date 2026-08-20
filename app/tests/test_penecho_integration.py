@@ -400,7 +400,7 @@ def test_magic_orb_widget(qt_app):
 
     orb = MagicOrbWidget()
     assert orb._state == "idle"
-    assert orb._is_auto_ai is True
+    assert orb._is_auto_ai is False
 
     orb.set_state("thinking", "Solving Problem...")
     assert orb._state == "thinking"
