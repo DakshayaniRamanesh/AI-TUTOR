@@ -31,7 +31,7 @@ class MagicOrbWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         self._state = "idle"  # "idle", "thinking", "draft", "error"
-        self._is_auto_ai = True
+        self._is_auto_ai = False  # Manual mode by default — Auto-AI is opt-in via the context menu
         self._auto_delay_sec = 2.0
         self._pulse_phase = 0.0
 

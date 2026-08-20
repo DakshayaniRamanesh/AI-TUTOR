@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QStackedWidget, QFileDialog, QInputDialog, QMessageBox,
     QGraphicsDropShadowEffect, QMenu, QComboBox, QTabWidget, QTabBar, QApplication
 )
-from PyQt6.QtCore import Qt, QSize, QEvent, QPoint, QPointF, QBuffer, QIODevice, QTimer, QUrl
+from PyQt6.QtCore import Qt, QSize, QEvent, QPoint, QPointF, QRectF, QRect, QBuffer, QIODevice, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFont, QColor, QAction, QPixmap, QShortcut, QKeySequence, QPainter
 import base64
 import requests

@@ -6,7 +6,7 @@ import math
 import time
 from PyQt6.QtWidgets import QGraphicsScene, QGraphicsPathItem, QGraphicsProxyWidget
 from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QPainter
-from PyQt6.QtCore import Qt, QRectF, QPointF, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QRectF, QPointF, QTimer, QThread, pyqtSignal
 
 from .theme_manager import ThemeManager
 from .items.ink_stroke import InkStroke
@@ -88,11 +88,15 @@ class CanvasScene(QGraphicsScene):
         self._lasso_points = []
 
         # PenEcho Auto-AI Engine (Post-stroke attention detection)
-        self.auto_ai_enabled = True
+        # Disabled by default — only the explicit "Ask AI" button (or the user opting
+        # into Auto-AI mode via the Magic Orb menu) should trigger a solve request.
+        self.auto_ai_enabled = False
         self.auto_ai_delay_sec = 2.0
         self._auto_ai_timer = QTimer(self)
         self._auto_ai_timer.setSingleShot(True)
         self._auto_ai_timer.timeout.connect(self._on_auto_ai_timeout)
+        # Keep references to background OCR workers to prevent premature GC
+        self._ocr_workers: list = []
 
     def _on_theme_changed(self, theme_name: str):
         is_dark = theme_name == "dark"
@@ -859,7 +863,13 @@ class CanvasScene(QGraphicsScene):
         return base64.b64encode(buffer.data().data()).decode("utf-8")
 
     def _on_auto_ai_timeout(self):
-        """Fires in PenEcho Auto-AI mode after post-stroke delay."""
+        """Fires in PenEcho Auto-AI mode after post-stroke delay.
+
+        The Gemini OCR call (recognize_handwriting) is a blocking network request
+        and MUST NOT run on the main thread — doing so freezes the canvas.
+        This method spawns a background QThread to do the OCR work and emits
+        auto_ai_requested only from the thread-finished callback on the main thread.
+        """
         valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
         if not valid_strokes:
             return
@@ -867,15 +877,45 @@ class CanvasScene(QGraphicsScene):
         min_y = min(s.sceneBoundingRect().y() for s in valid_strokes)
         max_x = max(s.sceneBoundingRect().right() for s in valid_strokes)
         target_pos = QPointF(max_x + 35, min_y)
-
         b64_img = self._render_strokes_base64(valid_strokes)
-        from ..backend.ocr.handwriting_ocr import recognize_handwriting
-        text = recognize_handwriting(b64_image=b64_img, stroke_count=len(valid_strokes))
-        if text:
+        stroke_count = len(valid_strokes)
+
+        class _OCRWorker(QThread):
+            ocr_done = pyqtSignal(str)
+
+            def __init__(self, b64, count, parent=None):
+                super().__init__(parent)
+                self._b64 = b64
+                self._count = count
+
+            def run(self):
+                try:
+                    from ..backend.ocr.handwriting_ocr import recognize_handwriting
+                    text = recognize_handwriting(b64_image=self._b64, stroke_count=self._count)
+                    if text:
+                        self.ocr_done.emit(text)
+                except Exception as exc:
+                    print(f"[AutoAI OCR] Error: {exc}")
+
+        worker = _OCRWorker(b64_img, stroke_count, parent=self)
+        self._ocr_workers.append(worker)
+
+        def _on_done(text):
             self.auto_ai_requested.emit(text, target_pos)
+            if worker in self._ocr_workers:
+                self._ocr_workers.remove(worker)
+
+        worker.ocr_done.connect(_on_done)
+        worker.finished.connect(lambda: self._ocr_workers.remove(worker) if worker in self._ocr_workers else None)
+        worker.start()
 
     def trigger_ai_on_dirty_ink(self, prompt: str = ""):
-        """Explicitly triggers PenEcho AI on the latest ink strokes or selection."""
+        """Explicitly triggers PenEcho AI on the latest ink strokes or selection.
+
+        This is the ONLY intended entry point for the explicit \"Ask AI\" button.
+        If a prompt is already known it is used directly; otherwise the Gemini
+        Vision OCR call runs in a background QThread so the canvas never freezes.
+        """
         valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
         if valid_strokes:
             min_y = min(s.sceneBoundingRect().y() for s in valid_strokes)
@@ -884,11 +924,42 @@ class CanvasScene(QGraphicsScene):
         else:
             target_pos = QPointF(200, 200)
 
-        query = prompt
-        if not query and valid_strokes:
-            b64_img = self._render_strokes_base64(valid_strokes)
-            from ..backend.ocr.handwriting_ocr import recognize_handwriting
-            query = recognize_handwriting(b64_image=b64_img, stroke_count=len(valid_strokes))
+        # If a prompt is already provided, fire immediately without OCR
+        if prompt:
+            self.auto_ai_requested.emit(prompt, target_pos)
+            return
 
-        if query:
-            self.auto_ai_requested.emit(query, target_pos)
+        if not valid_strokes:
+            return
+
+        b64_img = self._render_strokes_base64(valid_strokes)
+        stroke_count = len(valid_strokes)
+
+        class _OCRWorker(QThread):
+            ocr_done = pyqtSignal(str)
+
+            def __init__(self, b64, count, parent=None):
+                super().__init__(parent)
+                self._b64 = b64
+                self._count = count
+
+            def run(self):
+                try:
+                    from ..backend.ocr.handwriting_ocr import recognize_handwriting
+                    text = recognize_handwriting(b64_image=self._b64, stroke_count=self._count)
+                    if text:
+                        self.ocr_done.emit(text)
+                except Exception as exc:
+                    print(f"[TriggerAI OCR] Error: {exc}")
+
+        worker = _OCRWorker(b64_img, stroke_count, parent=self)
+        self._ocr_workers.append(worker)
+
+        def _on_done(text):
+            self.auto_ai_requested.emit(text, target_pos)
+            if worker in self._ocr_workers:
+                self._ocr_workers.remove(worker)
+
+        worker.ocr_done.connect(_on_done)
+        worker.finished.connect(lambda: self._ocr_workers.remove(worker) if worker in self._ocr_workers else None)
+        worker.start()

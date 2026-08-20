@@ -6,26 +6,100 @@ Provides:
 - PenechoDraftLayerItem: Wraps AI-generated content (solutions, LaTeX cards, animation scenes,
   vector drawings) inside an editable unconfirmed draft overlay with Accept (✓), Discard (✕),
   Move, and Resize controls.
-- Committing (Accept) permanently bakes content into CanvasScene.
+- Committing (Accept) permanently bakes content into CanvasScene with NO residual AI styling.
 - Discarding cleanly removes the draft without modifying existing canvas content.
+
+Containment guarantee
+---------------------
+While in the pending (not-yet-accepted) state, the inner item and ALL of its descendants
+have ItemIsMovable and ItemIsSelectable stripped away.  The wrapper itself is the only
+movable unit — dragging it moves the whole group as one locked piece.  There is no way
+to drag sub-items out of the container independently while it is pending.
+
+On Accept: flags are restored on the inner item tree before it is reparented to the scene,
+           so accepted content immediately becomes freely editable canvas content.
+On Discard: removeItem(self) cascades to all parented children — nothing can survive.
+
+Visual behaviour
+----------------
+Default (no hover):  Plain — no background fill, no border, no label, no buttons.
+                     The inner content blends naturally with other canvas items.
+On hover:            A subtle, rounded hairline outline appears around the bounding box.
+                     The ✓ (accept) and ✕ (discard) circles reveal themselves.
+                     A small resize handle appears at the bottom-right corner.
+Mouse leave:         All hover decorations vanish; back to plain appearance.
 """
 
 import math
-from typing import List, Optional
-from PyQt6.QtWidgets import QGraphicsItem, QStyleOptionGraphicsItem, QWidget
+from typing import Optional
+from PyQt6.QtWidgets import QGraphicsItem, QGraphicsItemGroup, QStyleOptionGraphicsItem, QWidget
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPainterPath, QFont
-from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, QRectF, QPointF
+
+
+# Flags that must be stripped while content is pending
+_LOCK_FLAGS = (
+    QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
+    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+)
+# Full interactive flag set to restore on accept
+_FREE_FLAGS = (
+    QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
+    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
+    QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+)
+
+
+def _collect_descendants(item: QGraphicsItem) -> list:
+    """Recursively collect item and all of its QGraphicsItem children/grandchildren."""
+    result = [item]
+    for child in item.childItems():
+        result.extend(_collect_descendants(child))
+    return result
+
+
+def _lock_item_tree(item: QGraphicsItem) -> None:
+    """Remove movable/selectable flags from item and all its descendants."""
+    for node in _collect_descendants(item):
+        node.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        node.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+
+
+def _unlock_item_tree(item: QGraphicsItem) -> None:
+    """Restore movable/selectable/geometry flags on item and all its descendants."""
+    for node in _collect_descendants(item):
+        node.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        node.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        node.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
 
 
 class PenechoDraftLayerItem(QGraphicsItem):
     """
     PenEcho-style Unconfirmed Draft Layer.
-    Wraps candidate AI responses on the canvas with interactive Accept/Discard affordances.
+
+    Wraps candidate AI responses on the canvas with hover-only Accept/Discard affordances.
+    Default appearance is identical to plain canvas content (no coloured box, no labels).
+    All sub-items are locked (non-movable, non-selectable) until accepted or discarded.
     """
+
+    # ── Geometry constants ────────────────────────────────────────────────
+    _PAD          = 20.0   # padding around inner_item
+    _HEADER_H     = 28.0   # reserved above inner_item for hover buttons
+    _BTN_R        = 11.0   # button circle radius
+    _BTN_HIT_R    = 14.0   # hit-test radius (slightly larger for usability)
+    _RESIZE_R     =  6.0   # resize handle radius
+    _RESIZE_HIT_R = 12.0   # resize hit-test radius
+
+    # ── Hover colours ─────────────────────────────────────────────────────
+    _HOVER_BORDER = QColor(120, 120, 130, 110)  # understated grey outline
+    _ACCEPT_CLR   = QColor("#10b981")
+    _DISCARD_CLR  = QColor("#ef4444")
+    _RESIZE_CLR   = QColor("#94a3b8")
+    _BTN_TEXT_CLR = QColor("#ffffff")
 
     def __init__(self, inner_item: QGraphicsItem, title: str = "AI Draft", parent=None):
         super().__init__(parent)
-        self.setZValue(5000) # Float above standard canvas content
+        self.setZValue(5000)
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
@@ -34,96 +108,119 @@ class PenechoDraftLayerItem(QGraphicsItem):
         self.setAcceptHoverEvents(True)
 
         self.inner_item = inner_item
-        self.inner_item.setParentItem(self)
+        self.inner_item.setParentItem(self)   # establishes the parent-child link
         self.inner_item.setPos(0, 0)
         self._title = title
 
-        self._pad = 20.0
-        self._header_height = 28.0
+        # Lock all descendants so they cannot be dragged out of the container
+        # independently while in the pending state.
+        _lock_item_tree(self.inner_item)
+
+        self._hovered: bool = False
         self._active_action: Optional[str] = None
         self._drag_start_pos: Optional[QPointF] = None
-        self._initial_scale = 1.0
+
+    # ── Geometry ──────────────────────────────────────────────────────────
 
     def boundingRect(self) -> QRectF:
         inner_rect = self.inner_item.boundingRect()
-        w = inner_rect.width() + self._pad * 2
-        h = inner_rect.height() + self._pad * 2 + self._header_height
-        return QRectF(-self._pad, -self._pad - self._header_height, w, h)
+        w = inner_rect.width() + self._PAD * 2
+        h = inner_rect.height() + self._PAD * 2 + self._HEADER_H
+        return QRectF(-self._PAD, -self._PAD - self._HEADER_H, w, h)
+
+    # ── Button/handle positions (derived from boundingRect) ───────────────
+
+    def _btn_positions(self):
+        """Returns (acc_x, acc_y, disc_x, disc_y, res_x, res_y) in item coords."""
+        r = self.boundingRect()
+        x, y, w, h = r.x(), r.y(), r.width(), r.height()
+        acc_x  = x + w - self._BTN_R - 6
+        acc_y  = y + self._HEADER_H / 2
+        disc_x = acc_x - self._BTN_R * 2 - 8
+        disc_y = acc_y
+        res_x  = x + w
+        res_y  = y + h
+        return acc_x, acc_y, disc_x, disc_y, res_x, res_y
+
+    # ── Paint ─────────────────────────────────────────────────────────────
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None):
+        if not self._hovered:
+            # Default: completely invisible wrapper — inner_item paints itself
+            return
+
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         rect = self.boundingRect()
-        x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
 
-        # 1. Subtle Draft Backdrop & Animated Dashed Border
-        path = QPainterPath()
-        path.addRoundedRect(rect, 14, 14)
-        painter.setBrush(QBrush(QColor(59, 130, 246, 15)))
-        painter.setPen(QPen(QColor("#3b82f6"), 1.8, Qt.PenStyle.DashLine))
-        painter.drawPath(path)
+        # 1. Subtle hairline rounded outline (no fill)
+        outline = QPainterPath()
+        outline.addRoundedRect(rect, 10, 10)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(self._HOVER_BORDER, 1.2, Qt.PenStyle.SolidLine))
+        painter.drawPath(outline)
 
-        # 2. Header Tag Badge
-        badge_rect = QRectF(x + 12, y + 6, 95, 20)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor("#2563eb")))
-        painter.drawRoundedRect(badge_rect, 6, 6)
+        acc_x, acc_y, disc_x, disc_y, res_x, res_y = self._btn_positions()
 
-        painter.setPen(QPen(QColor("#ffffff")))
-        painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, f"✨ {self._title}")
-
-        # 3. Action Buttons
-        # Green Accept Button (Top Right)
-        btn_acc_x = x + w - 24
-        btn_acc_y = y + 16
-        painter.setBrush(QBrush(QColor("#10b981")))
-        painter.setPen(QPen(QColor("#ffffff"), 1.5))
-        painter.drawEllipse(QPointF(btn_acc_x, btn_acc_y), 11, 11)
+        # 2. Accept button (✓) — green, top right
+        painter.setBrush(QBrush(self._ACCEPT_CLR))
+        painter.setPen(QPen(self._BTN_TEXT_CLR, 1.5))
+        painter.drawEllipse(QPointF(acc_x, acc_y), self._BTN_R, self._BTN_R)
         painter.setFont(QFont("Arial", 9, QFont.Weight.Bold))
-        painter.drawText(QRectF(btn_acc_x - 11, btn_acc_y - 11, 22, 22), Qt.AlignmentFlag.AlignCenter, "✓")
+        painter.drawText(
+            QRectF(acc_x - self._BTN_R, acc_y - self._BTN_R, self._BTN_R * 2, self._BTN_R * 2),
+            Qt.AlignmentFlag.AlignCenter, "✓"
+        )
 
-        # Red Discard Button (Adjacent to Accept)
-        btn_disc_x = btn_acc_x - 30
-        btn_disc_y = btn_acc_y
-        painter.setBrush(QBrush(QColor("#ef4444")))
-        painter.setPen(QPen(QColor("#ffffff"), 1.5))
-        painter.drawEllipse(QPointF(btn_disc_x, btn_disc_y), 11, 11)
-        painter.drawText(QRectF(btn_disc_x - 11, btn_disc_y - 11, 22, 22), Qt.AlignmentFlag.AlignCenter, "✕")
+        # 3. Discard button (✕) — red, adjacent left
+        painter.setBrush(QBrush(self._DISCARD_CLR))
+        painter.setPen(QPen(self._BTN_TEXT_CLR, 1.5))
+        painter.drawEllipse(QPointF(disc_x, disc_y), self._BTN_R, self._BTN_R)
+        painter.drawText(
+            QRectF(disc_x - self._BTN_R, disc_y - self._BTN_R, self._BTN_R * 2, self._BTN_R * 2),
+            Qt.AlignmentFlag.AlignCenter, "✕"
+        )
 
-        # Resize Handle (Bottom Right corner)
-        res_x = x + w
-        res_y = y + h
-        painter.setBrush(QBrush(QColor("#3b82f6")))
-        painter.setPen(QPen(QColor("#ffffff"), 1.0))
-        painter.drawEllipse(QPointF(res_x - 4, res_y - 4), 6, 6)
+        # 4. Resize handle — small grey dot at bottom-right corner
+        painter.setBrush(QBrush(self._RESIZE_CLR))
+        painter.setPen(QPen(self._BTN_TEXT_CLR, 1.0))
+        painter.drawEllipse(QPointF(res_x - 4, res_y - 4), self._RESIZE_R, self._RESIZE_R)
 
         painter.restore()
 
+    # ── Hover ─────────────────────────────────────────────────────────────
+
+    def hoverEnterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    # ── Mouse interaction ─────────────────────────────────────────────────
+
     def mousePressEvent(self, event):
         pos = event.pos()
-        rect = self.boundingRect()
-        x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+        acc_x, acc_y, disc_x, disc_y, res_x, res_y = self._btn_positions()
 
-        btn_acc_x = x + w - 24
-        btn_acc_y = y + 16
-        btn_disc_x = btn_acc_x - 30
-        btn_disc_y = btn_acc_y
-
-        if math.hypot(pos.x() - btn_acc_x, pos.y() - btn_acc_y) <= 14:
+        # Accept button — only hittable while visible (hover)
+        if self._hovered and math.hypot(pos.x() - acc_x, pos.y() - acc_y) <= self._BTN_HIT_R:
             self.accept_draft()
             event.accept()
             return
 
-        if math.hypot(pos.x() - btn_disc_x, pos.y() - btn_disc_y) <= 14:
+        # Discard button
+        if self._hovered and math.hypot(pos.x() - disc_x, pos.y() - disc_y) <= self._BTN_HIT_R:
             self.discard_draft()
             event.accept()
             return
 
-        res_x = x + w
-        res_y = y + h
-        if math.hypot(pos.x() - res_x, pos.y() - res_y) <= 14:
+        # Resize handle
+        if self._hovered and math.hypot(pos.x() - (res_x - 4), pos.y() - (res_y - 4)) <= self._RESIZE_HIT_R:
             self._active_action = "resize"
             self._drag_start_pos = pos
             event.accept()
@@ -160,19 +257,25 @@ class PenechoDraftLayerItem(QGraphicsItem):
             return
         super().keyPressEvent(event)
 
+    # ── Accept / Discard ──────────────────────────────────────────────────
+
     def accept_draft(self):
         """
-        Confirms the draft: detaches the inner item from this wrapper,
-        adds it permanently to the scene at current global position, and removes draft overlay.
+        Confirms the draft: unlocks the inner item tree, detaches it from this wrapper,
+        adds it permanently to the scene at current global position, and removes the
+        draft overlay entirely — accepted content carries NO residual AI styling and
+        is immediately freely movable/editable like any other canvas item.
         """
         scene = self.scene()
         if not scene:
             return
-        
+
         final_scene_pos = self.scenePos()
         final_scale = self.scale()
 
-        # Detach inner item
+        # Restore full interactivity BEFORE reparenting so Qt sees correct flags
+        _unlock_item_tree(self.inner_item)
+
         self.inner_item.setParentItem(None)
         self.inner_item.setPos(final_scene_pos)
         self.inner_item.setScale(final_scale)
@@ -185,7 +288,9 @@ class PenechoDraftLayerItem(QGraphicsItem):
 
     def discard_draft(self):
         """
-        Rejects and deletes the draft candidate without affecting existing canvas content.
+        Rejects and deletes the draft candidate.
+        Removing self from the scene cascades to ALL parented children — nothing survives.
+        There is no way to have a sub-item escape and remain on the canvas after discard.
         """
         scene = self.scene()
         if scene:
