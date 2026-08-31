@@ -150,8 +150,49 @@ class SubjectsListView(QWidget):
         c_layout.setContentsMargins(14, 12, 14, 12)
         c_layout.setSpacing(6)
 
+        # Subject-specific metadata mapping matching Figma reference
+        META_MAP = {
+            "Combined Mathematics": {
+                "tag": "A/L COMBINED MATHEMATICS • UNITS 01-05",
+                "symbol": "∑",
+                "desc": "Pure Maths (Algebra, Calculus, Vectors, Complex Numbers) and Applied Mechanics (Dynamics, Statics, SHM).",
+                "extra_stats": "42 AI proofs"
+            },
+            "Physics": {
+                "tag": "A/L PHYSICS • UNITS 01-11",
+                "symbol": "Ψ",
+                "desc": "Mechanics, Waves & Oscillations, Thermal Physics, Gravitational & Electrostatic Fields, Electronics & Quantum.",
+                "extra_stats": "12 past papers"
+            },
+            "Chemistry": {
+                "tag": "A/L CHEMISTRY • UNITS 01-14",
+                "symbol": "Δ",
+                "desc": "Atomic Structure, Chemical Bonding, Reaction Kinetics, Equilibrium, Organic Mechanisms & Aromatic Chemistry.",
+                "extra_stats": "36 syntheses"
+            },
+            "Semester 1 Notebooks": {
+                "tag": "SEMESTER 1 • UNITS 01-06",
+                "symbol": "∫",
+                "desc": "Foundational units across Combined Mathematics, Physics, and Chemistry covering first-term coursework and assessments.",
+                "extra_stats": "20 AI proofs"
+            },
+            "Semester 1 Revision": {
+                "tag": "SEMESTER 1 • REVISION SET",
+                "symbol": "✓",
+                "desc": "Consolidated revision boards, past paper walkthroughs, and quick-reference summaries for Semester 1 content.",
+                "extra_stats": "15 past papers"
+            },
+        }
+
+        meta = META_MAP.get(subject.name, {
+            "tag": f"CURRICULUM UNIT • {subject.name.upper()}",
+            "symbol": "∑",
+            "desc": f"Structured workspace for {subject.name} derivations, proofs & study notes.",
+            "extra_stats": f"{len(subject.materials)} PDFs"
+        })
+
         # Micro Header Tag
-        lbl_tag = QLabel("CURRICULUM UNIT", card)
+        lbl_tag = QLabel(meta["tag"], card)
         lbl_tag.setStyleSheet(f"""
             font-family: {MONO_FONT};
             font-size: 10px;
@@ -162,8 +203,8 @@ class SubjectsListView(QWidget):
         """)
         c_layout.addWidget(lbl_tag)
 
-        # Subject Title
-        lbl_name = QLabel(f"∑ {subject.name}", card)
+        # Subject Title with symbol
+        lbl_name = QLabel(f"{meta['symbol']} {subject.name}", card)
         lbl_name.setStyleSheet(f"""
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: 16px;
@@ -173,12 +214,9 @@ class SubjectsListView(QWidget):
         """)
         c_layout.addWidget(lbl_name)
 
-        # Description / Counts
+        # Description / Syllabus summary
         nb_count = len(subject.notebooks)
-        mat_count = len(subject.materials)
-        vid_count = len(subject.videos)
-
-        lbl_desc = QLabel(f"Structured workspace for {subject.name} derivations, proofs & study notes.", card)
+        lbl_desc = QLabel(meta["desc"], card)
         lbl_desc.setWordWrap(True)
         lbl_desc.setStyleSheet(f"""
             font-size: 12px;
@@ -192,7 +230,8 @@ class SubjectsListView(QWidget):
 
         # Footer stats row
         footer_layout = QHBoxLayout()
-        lbl_stats = QLabel(f"{nb_count} boards  {mat_count} PDFs", card)
+        stats_text = f"{nb_count} boards  {meta['extra_stats']}"
+        lbl_stats = QLabel(stats_text, card)
         lbl_stats.setStyleSheet(f"""
             font-family: {MONO_FONT};
             font-size: 11px;

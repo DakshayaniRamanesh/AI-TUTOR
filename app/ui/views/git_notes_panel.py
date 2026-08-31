@@ -412,6 +412,35 @@ class GitNotesPanel(QWidget):
             }}
         """)
 
+        # Tab bar styling
+        tab_qss = f"""
+            QPushButton {{
+                background: transparent;
+                color: {c['text_secondary']};
+                border: none;
+                font-family: {MONO_FONT};
+                font-weight: 600;
+                font-size: 11px;
+                letter-spacing: 0.5px;
+                padding: 8px 14px;
+                border-bottom: 2px solid transparent;
+            }}
+            QPushButton:checked {{
+                color: {c['text_primary']};
+                border-bottom: 2px solid {c['accent']};
+            }}
+            QPushButton:hover:!checked {{
+                color: {c['text_primary']};
+            }}
+        """
+        self.btn_tab_editor.setStyleSheet(tab_qss)
+        self.btn_tab_diff.setStyleSheet(tab_qss)
+        self.btn_tab_graph.setStyleSheet(tab_qss)
+        self.btn_tab_history.setStyleSheet(tab_qss)
+
+        if hasattr(self, 'btn_commit'):
+            self.btn_commit.setStyleSheet(primary_button_qss(c))
+
     def switch_view_mode(self, index: int):
         self.btn_tab_editor.setChecked(index == 0)
         self.btn_tab_diff.setChecked(index == 1)

@@ -392,15 +392,21 @@ class MainWindow(QMainWindow):
         def _open_blank():
             self.subject_detail_view.current_subject_id = None
             self.main_stack.setCurrentWidget(canvas_wrapper)
+            self._set_sidebar_active_button("canvas")
             
         self.home_view.open_blank_notebook.connect(_open_blank)
         def _open_subjects_list():
             self.subjects_list_view.refresh_subjects()
             self.main_stack.setCurrentWidget(self.subjects_list_view)
+            self._set_sidebar_active_button("notebooks")
 
         self.home_view.open_my_subjects.connect(_open_subjects_list)
         
-        self.subjects_list_view.go_back.connect(lambda: self.main_stack.setCurrentWidget(self.home_view))
+        def _go_home():
+            self.main_stack.setCurrentWidget(self.home_view)
+            self._set_sidebar_active_button("home")
+
+        self.subjects_list_view.go_back.connect(_go_home)
         self.subjects_list_view.open_subject_detail.connect(self._on_open_subject_detail)
 
         self.subject_detail_view.go_back.connect(_open_subjects_list)
@@ -619,37 +625,35 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(6, 14, 6, 14)
         layout.setSpacing(4)
 
-        # Nav icon buttons — Remix Icons thin-stroke outline set
+        # Nav icon buttons — Remix Icons thin-stroke outline set matching Figma reference exactly
         nav_items = [
-            (qta.icon('ri.grid-line',       color=ic), "Boards",          0),
-            (qta.icon('ri.book-2-line',     color=ic), "Notebooks",       1),
-            (qta.icon('ri.git-branch-line', color=ic), "Git VCS",         3),
-            (qta.icon('ri.share-line',      color=ic), "Knowledge Graph", 5),
-            (qta.icon('ri.star-line',       color=ic), "Favourites",      2),
-            (qta.icon('ri.download-line',   color=ic), "Downloads",       2),
+            ("ri.grid-line",       "Home",            "home"),
+            ("ri.pencil-line",     "Canvas",          "canvas"),
+            ("ri.bookmark-line",   "Notebooks",       "notebooks"),
+            ("ri.git-branch-line", "Version Control", "vcs"),
+            ("ri.share-line",      "Knowledge Graph", "graph"),
+            ("ri.star-line",       "Favourites",      "favourites"),
+            ("ri.download-line",   "Downloads",       "downloads"),
         ]
 
         self.sidebar_list = QListWidget()   # keep for _on_sidebar_changed compatibility
         self.sidebar_list.hide()
         self._sidebar_nav_buttons = []
-        # Store icon names so we can re-color on active state toggle
-        self._sidebar_icon_names = [
-            'ri.grid-line', 'ri.book-2-line', 'ri.git-branch-line',
-            'ri.share-line', 'ri.star-line', 'ri.download-line',
-        ]
+        self._sidebar_btn_map = {}
 
-        for idx, (icon_obj, tooltip, stack_idx) in enumerate(nav_items):
-            btn = QPushButton(icon_obj, "", sb)
+        for idx, (icon_name, tooltip, nav_key) in enumerate(nav_items):
+            btn = QPushButton(qta.icon(icon_name, color=ic), "", sb)
             btn.setFixedSize(40, 40)
             btn.setIconSize(QSize(18, 18))
             btn.setToolTip(tooltip)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn._stack_idx = stack_idx
             btn._nav_tooltip = tooltip
-            btn._icon_name = self._sidebar_icon_names[idx]
+            btn._nav_key = nav_key
+            btn._icon_name = icon_name
             btn.clicked.connect(lambda checked, b=btn: self._on_sidebar_nav_clicked(b))
             layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignHCenter)
             self._sidebar_nav_buttons.append(btn)
+            self._sidebar_btn_map[nav_key] = btn
 
         # Folder Tree (hidden, kept for compatibility)
         self.folder_tree = FolderTreeWidget(self)
@@ -668,7 +672,7 @@ class MainWindow(QMainWindow):
         btn_ref.clicked.connect(self._toggle_reference_panel)
         layout.addWidget(btn_ref, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # Highlight the first button as active
+        # Highlight the first button (Home) as active
         self._set_sidebar_active_button(self._sidebar_nav_buttons[0])
 
         return sb
@@ -1429,6 +1433,9 @@ class MainWindow(QMainWindow):
 
     def _set_sidebar_active_button(self, active_btn):
         """Highlights the active nav button with solid white fill & black icon (Figma ref)."""
+        if isinstance(active_btn, str):
+            active_btn = getattr(self, '_sidebar_btn_map', {}).get(active_btn)
+
         c = ThemeManager.instance().get_colors()
         for btn in getattr(self, '_sidebar_nav_buttons', []):
             icon_name = getattr(btn, '_icon_name', 'ri.grid-line')
@@ -1457,25 +1464,36 @@ class MainWindow(QMainWindow):
     def _on_sidebar_nav_clicked(self, btn):
         """Handles icon rail sidebar navigation clicks."""
         self._set_sidebar_active_button(btn)
-        tooltip = getattr(btn, '_nav_tooltip', '')
-        if tooltip == "Boards":
+        key = getattr(btn, '_nav_key', getattr(btn, '_nav_tooltip', ''))
+        if key in ("home", "Home", "Boards"):
             self.folder_tree.setVisible(False)
             self.main_stack.setCurrentWidget(self.home_view)
-        elif tooltip == "Notebooks":
-            self._refresh_folder_tree()
-            self.notebooks_panel.refresh()
-            self.main_stack.setCurrentWidget(self.notebooks_panel)
-        elif tooltip == "Git VCS":
+        elif key in ("canvas", "Canvas"):
+            self.folder_tree.setVisible(False)
+            self.main_stack.setCurrentWidget(self._canvas_wrapper)
+        elif key in ("notebooks", "Notebooks"):
+            self.folder_tree.setVisible(False)
+            self.subjects_list_view.refresh_subjects()
+            self.main_stack.setCurrentWidget(self.subjects_list_view)
+        elif key in ("vcs", "Version Control", "Git VCS"):
+            self.folder_tree.setVisible(False)
             self.git_notes_panel.refresh_all()
             self.main_stack.setCurrentWidget(self.git_notes_panel)
-        elif tooltip == "Knowledge Graph":
+        elif key in ("graph", "Knowledge Graph"):
+            self.folder_tree.setVisible(False)
             self.obsidian_graph_panel.load_graph()
             self.main_stack.setCurrentWidget(self.obsidian_graph_panel)
-        elif tooltip == "Favourites":
+        elif key in ("favourites", "Favourites"):
+            self.folder_tree.setVisible(False)
             self.placeholder_panel.set_title("Favourites")
             self.main_stack.setCurrentWidget(self.placeholder_panel)
+        elif key in ("downloads", "Downloads"):
+            self.folder_tree.setVisible(False)
+            self.placeholder_panel.set_title("Downloads")
+            self.main_stack.setCurrentWidget(self.placeholder_panel)
         else:
-            self.placeholder_panel.set_title(tooltip)
+            self.folder_tree.setVisible(False)
+            self.placeholder_panel.set_title(str(key))
             self.main_stack.setCurrentWidget(self.placeholder_panel)
 
     def _refresh_folder_tree(self):
@@ -1579,6 +1597,7 @@ class MainWindow(QMainWindow):
             self._sync_grid_btn_ui(self.scene.background_mode)
             
             self.main_stack.setCurrentWidget(self._canvas_wrapper)
+            self._set_sidebar_active_button("canvas")
         except Exception as err:
             QMessageBox.warning(self, "Load Failed", f"Could not load notebook:\n{err}")
 
