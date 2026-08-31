@@ -1,79 +1,90 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QGraphicsDropShadowEffect
+    QWidget, QHBoxLayout, QPushButton
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
-import qtawesome as qta
+from .theme_manager import ThemeManager
+
 
 class EraserPopup(QWidget):
-    size_changed = pyqtSignal(int) # 1=small, 2=medium, 3=large
+    size_changed = pyqtSignal(int)  # 1=small, 2=medium, 3=large
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet("""
-            EraserPopup {
-                background-color: #ffffff;
-                border-radius: 12px;
-                border: 1px solid #cbd5e1;
-            }
-            QPushButton {
-                background: transparent;
-                border: 1px solid transparent;
-                border-radius: 8px;
-                padding: 6px;
-            }
-            QPushButton:hover {
-                background-color: #f1f5f9;
-                border: 1px solid #e2e8f0;
-            }
-            QPushButton:pressed {
-                background-color: #e2e8f0;
-            }
-        """)
+        self.selected_size = 2
+        self._init_ui()
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._apply_theme(ThemeManager.instance().current_theme)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(15)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 30))
-        self.setGraphicsEffect(shadow)
+    def _init_ui(self):
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(6, 6, 6, 6)
+        self.layout.setSpacing(4)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(4)
-
-        sizes = [
-            (10, 1, 'Small Eraser'),
-            (20, 2, 'Medium Eraser'),
-            (30, 3, 'Large Eraser')
+        self.sizes = [
+            (8, 1, 'Small Eraser'),
+            (16, 2, 'Medium Eraser'),
+            (24, 3, 'Large Eraser')
         ]
         
         self.buttons = {}
-        for icon_size, size_id, tooltip in sizes:
-            # Create a circle icon to represent the eraser size
-            pixmap = QPixmap(32, 32)
+        for icon_size, size_id, tooltip in self.sizes:
+            btn = QPushButton("", self)
+            btn.setIconSize(QSize(28, 28))
+            btn.setFixedSize(32, 32)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(tooltip)
+            btn.clicked.connect(lambda checked, s=size_id: self._on_size_clicked(s))
+            self.layout.addWidget(btn)
+            self.buttons[size_id] = (btn, icon_size)
+            
+        self.setFixedSize(116, 44)
+
+    def _render_icons(self):
+        c = ThemeManager.instance().get_colors()
+        for size_id, (btn, icon_size) in self.buttons.items():
+            is_active = (size_id == self.selected_size)
+            pixmap = QPixmap(28, 28)
             pixmap.fill(Qt.GlobalColor.transparent)
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setBrush(QColor('#94a3b8'))
+            
+            circle_color = QColor(c['accent_text'] if is_active else c['text_secondary'])
+            painter.setBrush(circle_color)
             painter.setPen(Qt.PenStyle.NoPen)
-            center = 16
+            center = 14
             radius = icon_size / 2.0
             painter.drawEllipse(int(center - radius), int(center - radius), icon_size, icon_size)
             painter.end()
             
-            btn = QPushButton(QIcon(pixmap), "")
-            btn.setIconSize(QSize(32, 32))
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(tooltip)
-            btn.clicked.connect(lambda checked, s=size_id: self._on_size_clicked(s))
-            layout.addWidget(btn)
-            self.buttons[size_id] = btn
-            
-    def _on_size_clicked(self, size_id: int):
-        for s_id, btn in self.buttons.items():
-            if s_id == size_id:
-                btn.setStyleSheet("background-color: #e2e8f0; border: 1px solid #cbd5e1;")
+            btn.setIcon(QIcon(pixmap))
+            if is_active:
+                btn.setStyleSheet(f"background-color: {c['accent']}; border: none; border-radius: 2px;")
             else:
-                btn.setStyleSheet("")
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        border: none;
+                        border-radius: 2px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {c['panel_card_bg']};
+                    }}
+                """)
+
+    def _apply_theme(self, theme_name: str = "light"):
+        c = ThemeManager.instance().get_colors()
+        self.setStyleSheet(f"""
+            EraserPopup {{
+                background-color: {c['bg_card']};
+                border-radius: 4px;
+                border: 1px solid {c['border_color']};
+            }}
+        """)
+        self._render_icons()
+
+    def _on_size_clicked(self, size_id: int):
+        self.selected_size = size_id
+        self._render_icons()
         self.size_changed.emit(size_id)

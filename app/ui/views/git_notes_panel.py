@@ -36,7 +36,6 @@ class GitNotesPanel(QWidget):
         # Main Horizontal Splitter (Sidebar ~280px + Workspace)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setHandleWidth(1)
-        self.splitter.setStyleSheet("QSplitter::handle { background-color: #d1d1d6; }")
 
         # 1. Left Source Control Sidebar
         sidebar_widget = self._create_sidebar()
@@ -49,7 +48,9 @@ class GitNotesPanel(QWidget):
         self.splitter.setSizes([280, 1000])
         root_layout.addWidget(self.splitter)
 
-        self._apply_light_theme()
+        from ..theme_manager import ThemeManager
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._apply_theme(ThemeManager.instance().current_theme)
 
     def _create_sidebar(self) -> QWidget:
         sb = QWidget(self)
@@ -59,13 +60,16 @@ class GitNotesPanel(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
+        from ..theme_manager import ThemeManager
+        c = ThemeManager.instance().get_colors()
+
         # Branch Header & Selector
         branch_box = QWidget(sb)
         bb_layout = QHBoxLayout(branch_box)
         bb_layout.setContentsMargins(0, 0, 0, 0)
         
         lbl_branch_icon = QLabel(sb)
-        lbl_branch_icon.setPixmap(qta.icon('fa5s.code-branch', color='#28a745').pixmap(14, 14))
+        lbl_branch_icon.setPixmap(qta.icon('ri.git-branch-line', color=c['text_secondary']).pixmap(14, 14))
         bb_layout.addWidget(lbl_branch_icon)
 
         self.cb_branches = QComboBox(sb)
@@ -81,7 +85,7 @@ class GitNotesPanel(QWidget):
         # Section Divider
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("background-color: #d1d1d6;")
+        line.setStyleSheet(f"background-color: {c['border_color']};")
         layout.addWidget(line)
 
         # Source Control Staging Header
@@ -353,46 +357,59 @@ class GitNotesPanel(QWidget):
 
         return v
 
-    def _apply_light_theme(self):
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #ffffff;
-                color: #1c1c1e;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            }
-            QWidget#GitSidebar {
-                background-color: #f8f8fa;
-                border-right: 1px solid #d1d1d6;
-            }
-            QTreeWidget {
-                background-color: #ffffff;
-                border: 1px solid #d1d1d6;
-                border-radius: 6px;
-                color: #1c1c1e;
-            }
-            QTreeWidget::item {
+    def _apply_theme(self, theme_name: str = "light"):
+        from ..theme_manager import ThemeManager
+        from ..kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
+        c = ThemeManager.instance().get_colors()
+
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {c['bg_app']};
+                color: {c['text_primary']};
+                font-family: {MONO_FONT};
+            }}
+            QWidget#GitSidebar {{
+                background-color: {c['bg_card']};
+                border-right: 1px solid {c['border_color']};
+            }}
+            QSplitter::handle {{
+                background-color: {c['border_color']};
+            }}
+            QTreeWidget {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                color: {c['text_primary']};
+                font-family: {MONO_FONT};
+                font-size: 12px;
+            }}
+            QTreeWidget::item {{
                 padding: 4px;
-            }
-            QTreeWidget::item:selected {
-                background-color: #007aff;
-                color: white;
-            }
-            QPlainTextEdit, QTextEdit, QComboBox {
-                background-color: #ffffff;
-                border: 1px solid #d1d1d6;
-                border-radius: 6px;
-                color: #1c1c1e;
-            }
-            QPushButton {
-                background-color: #ffffff;
-                border: 1px solid #d1d1d6;
-                border-radius: 6px;
-                color: #1c1c1e;
+            }}
+            QTreeWidget::item:selected {{
+                background-color: {c['accent']};
+                color: {c['accent_text']};
+            }}
+            QPlainTextEdit, QTextEdit, QComboBox {{
+                background-color: {c['input_bg']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                color: {c['text_primary']};
+                font-family: {MONO_FONT};
+            }}
+            QPushButton {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                color: {c['text_primary']};
                 padding: 4px 8px;
-            }
-            QPushButton:hover {
-                background-color: #e5e5ea;
-            }
+                font-family: {MONO_FONT};
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                border-color: {c['accent']};
+                background-color: {c['panel_card_bg']};
+            }}
         """)
 
     def switch_view_mode(self, index: int):

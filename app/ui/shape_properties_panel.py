@@ -54,33 +54,35 @@ class QuantityControl(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
+        from .theme_manager import ThemeManager
+        from .kestrel_theme import MONO_FONT
+        c = ThemeManager.instance().get_colors()
+
         # Label
-        self.lbl = QLabel(f"{label_text}:")
-        self.lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #555555;")
+        self.lbl = QLabel(f"{label_text.upper()}:")
+        self.lbl.setStyleSheet(f"font-size: 10px; font-weight: 700; letter-spacing: 0.5px; font-family: {MONO_FONT}; color: {c['text_secondary']};")
         layout.addWidget(self.lbl)
 
         layout.addStretch()
 
         # Decrement Button [-]
         self.btn_minus = QPushButton("−")
-        self.btn_minus.setFixedSize(26, 26)
+        self.btn_minus.setFixedSize(24, 24)
         self.btn_minus.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_minus.setStyleSheet("""
-            QPushButton {
-                background-color: #f2f2f7;
-                border: 1px solid #d1d1d6;
-                border-radius: 6px;
-                font-size: 14px;
+        self.btn_minus.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['panel_card_bg']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                font-size: 13px;
                 font-weight: bold;
-                color: #333333;
-            }
-            QPushButton:hover {
-                background-color: #e5e5ea;
-                color: #007aff;
-            }
-            QPushButton:pressed {
-                background-color: #d1d1d6;
-            }
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {c['accent']};
+                color: {c['accent_text']};
+            }}
         """)
         self.btn_minus.clicked.connect(self._decrement)
         layout.addWidget(self.btn_minus)
@@ -95,44 +97,43 @@ class QuantityControl(QWidget):
             self.spin.setDecimals(0)
         else:
             self.spin.setDecimals(2)
-        self.spin.setFixedSize(64, 26)
-        self.spin.setStyleSheet("""
-            QDoubleSpinBox {
-                background-color: #ffffff;
-                border: 1px solid #c7c7cc;
-                border-radius: 6px;
-                font-size: 12px;
+        self.spin.setFixedSize(60, 24)
+        self.spin.setStyleSheet(f"""
+            QDoubleSpinBox {{
+                background-color: {c['input_bg']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                font-size: 11px;
                 font-weight: 600;
-                color: #1c1c1e;
-                padding: 2px 4px;
-            }
-            QDoubleSpinBox:focus {
-                border: 1.5px solid #007aff;
-            }
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+                padding: 1px 2px;
+            }}
+            QDoubleSpinBox:focus {{
+                border: 1px solid {c['accent']};
+            }}
         """)
         self.spin.valueChanged.connect(self._on_spin_changed)
         layout.addWidget(self.spin)
 
         # Increment Button [+]
         self.btn_plus = QPushButton("+")
-        self.btn_plus.setFixedSize(26, 26)
+        self.btn_plus.setFixedSize(24, 24)
         self.btn_plus.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_plus.setStyleSheet("""
-            QPushButton {
-                background-color: #f2f2f7;
-                border: 1px solid #d1d1d6;
-                border-radius: 6px;
-                font-size: 14px;
+        self.btn_plus.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['panel_card_bg']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                font-size: 13px;
                 font-weight: bold;
-                color: #333333;
-            }
-            QPushButton:hover {
-                background-color: #e5e5ea;
-                color: #007aff;
-            }
-            QPushButton:pressed {
-                background-color: #d1d1d6;
-            }
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {c['accent']};
+                color: {c['accent_text']};
+            }}
         """)
         self.btn_plus.clicked.connect(self._increment)
         layout.addWidget(self.btn_plus)
@@ -177,50 +178,48 @@ class ShapePropertiesWidget(QFrame):
         self.active_unit = DEFAULT_UNIT
         self._updating_lock = False
 
+        from .theme_manager import ThemeManager
+        from .kestrel_theme import MONO_FONT
+        c = ThemeManager.instance().get_colors()
+
         self.setObjectName("ShapePropertiesWidget")
-        self.setStyleSheet("""
-            QFrame#ShapePropertiesWidget {
-                background-color: #ffffff;
-                border: 1px solid #e0e0e5;
-                border-radius: 12px;
+        self.setStyleSheet(f"""
+            QFrame#ShapePropertiesWidget {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 4px;
                 padding: 8px;
-            }
-            QComboBox {
-                background-color: #f2f2f7;
-                border: 1px solid #c7c7cc;
-                border-radius: 6px;
-                padding: 2px 8px;
-                font-size: 12px;
+            }}
+            QComboBox {{
+                background-color: {c['input_bg']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                padding: 2px 6px;
+                font-size: 11px;
+                font-family: {MONO_FONT};
                 font-weight: 500;
-                color: #333333;
-                min-height: 24px;
-            }
-            QComboBox:hover {
-                background-color: #e5e5ea;
-            }
+                color: {c['text_primary']};
+                min-height: 22px;
+            }}
+            QComboBox:hover {{
+                border-color: {c['accent']};
+            }}
         """)
 
-        # # Add drop shadow (commented out for empirical verification)
-        # shadow = QGraphicsDropShadowEffect(self)
-        # shadow.setBlurRadius(16)
-        # shadow.setColor(QColor(0, 0, 0, 45))
-        # shadow.setOffset(0, 4)
-        # self.setGraphicsEffect(shadow)
-
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(8)
 
         # Header Row: Shape Title, Unit Dropdown & Close Button
         header_layout = QHBoxLayout()
-        header_layout.setSpacing(8)
+        header_layout.setSpacing(6)
 
         st = getattr(target_item, "stroke_type", "shape")
         meta = SHAPE_METADATA.get(st, {})
-        title_txt = meta.get("display_name", st.title())
+        title_txt = meta.get("display_name", st.upper())
 
-        title_lbl = QLabel(title_txt)
-        title_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #1c1c1e;")
+        title_lbl = QLabel(title_txt.upper())
+        title_lbl.setStyleSheet(f"font-size: 11px; font-weight: 700; font-family: {MONO_FONT}; letter-spacing: 1px; color: {c['text_primary']};")
         header_layout.addWidget(title_lbl)
 
         header_layout.addStretch()
@@ -231,23 +230,24 @@ class ShapePropertiesWidget(QFrame):
         self.unit_combo.currentTextChanged.connect(self._on_unit_changed)
         header_layout.addWidget(self.unit_combo)
 
-        # Close button '×'
+        # Close button '✕'
         btn_close = QPushButton("✕")
-        btn_close.setFixedSize(22, 22)
+        btn_close.setFixedSize(20, 20)
         btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_close.setStyleSheet("""
-            QPushButton {
+        btn_close.setStyleSheet(f"""
+            QPushButton {{
                 background-color: transparent;
                 border: none;
-                border-radius: 4px;
-                font-size: 11px;
+                border-radius: 2px;
+                font-size: 10px;
                 font-weight: bold;
-                color: #8e8e93;
-            }
-            QPushButton:hover {
-                background-color: #ff3b30;
-                color: white;
-            }
+                font-family: {MONO_FONT};
+                color: {c['text_secondary']};
+            }}
+            QPushButton:hover {{
+                background-color: {c['panel_card_bg']};
+                color: {c['text_primary']};
+            }}
         """)
         btn_close.clicked.connect(self._on_close_clicked)
         header_layout.addWidget(btn_close)
@@ -258,7 +258,7 @@ class ShapePropertiesWidget(QFrame):
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
-        sep.setStyleSheet("background-color: #e5e5ea; max-height: 1px; border: none;")
+        sep.setStyleSheet(f"background-color: {c['border_color']}; max-height: 1px; border: none;")
         main_layout.addWidget(sep)
 
         # Dimension Fields Layout
@@ -363,26 +363,25 @@ class ShapePropertiesPanel(QGraphicsProxyWidget):
         btn_layout = QHBoxLayout(self._btn_widget)
         btn_layout.setContentsMargins(0, 0, 0, 0)
 
+        from .theme_manager import ThemeManager
+        c = ThemeManager.instance().get_colors()
+
         self.btn_more = QPushButton("•••")
-        self.btn_more.setFixedSize(32, 26)
+        self.btn_more.setFixedSize(30, 24)
         self.btn_more.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_more.setStyleSheet("""
-            QPushButton {
-                background-color: #ffffff;
-                border: 1px solid #d1d1d6;
-                border-radius: 6px;
+        self.btn_more.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
                 font-weight: bold;
-                font-size: 13px;
-                color: #333333;
-            }
-            QPushButton:hover {
-                background-color: #007aff;
-                color: white;
-            }
-            QPushButton:pressed {
-                background-color: #005ec4;
-                color: white;
-            }
+                font-size: 11px;
+                color: {c['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {c['accent']};
+                color: {c['accent_text']};
+            }}
         """)
 
         if SHAPE_DEBUG:

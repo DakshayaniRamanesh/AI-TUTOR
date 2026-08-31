@@ -40,8 +40,12 @@ class SharedPanel(QWidget):
         h_layout = QHBoxLayout(header)
         h_layout.setContentsMargins(0, 0, 0, 0)
 
-        lbl_title = QLabel("☌ Shared Collaboration Hub", header)
-        lbl_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #1c1c1e;")
+        from ..theme_manager import ThemeManager
+        from ..kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
+        c = ThemeManager.instance().get_colors()
+
+        lbl_title = QLabel("SHARED COLLABORATION HUB", header)
+        lbl_title.setStyleSheet(f"font-size: 13px; font-weight: 800; font-family: {MONO_FONT}; letter-spacing: 1px; color: {c['text_primary']};")
         h_layout.addWidget(lbl_title)
 
         h_layout.addStretch()
@@ -53,30 +57,12 @@ class SharedPanel(QWidget):
         nb_layout.setContentsMargins(0, 0, 0, 0)
         nb_layout.setSpacing(8)
 
-        self.btn_tab_async = QPushButton("⟳ Asynchronous Contributions (Pull Requests)", nav_bar)
-        self.btn_tab_simul = QPushButton("⚡ Simultaneous Live Session & Link Sharing", nav_bar)
+        self.btn_tab_async = QPushButton("PULL REQUESTS / ASYNC", nav_bar)
+        self.btn_tab_simul = QPushButton("LIVE SESSIONS & SHARING", nav_bar)
 
         for btn in [self.btn_tab_async, self.btn_tab_simul]:
             btn.setCheckable(True)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #f2f2f7;
-                    color: #6e6e73;
-                    border: 1px solid #d1d1d6;
-                    border-radius: 8px;
-                    padding: 8px 16px;
-                    font-weight: 600;
-                    font-size: 13px;
-                }
-                QPushButton:checked {
-                    background-color: #007aff;
-                    color: white;
-                    border-color: #007aff;
-                }
-                QPushButton:hover:!checked {
-                    background-color: #e5e5ea;
-                }
-            """)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self.btn_tab_async.setChecked(True)
         self.btn_tab_async.clicked.connect(lambda: self.switch_tab(0))
@@ -100,7 +86,8 @@ class SharedPanel(QWidget):
         self.stack_pages.addWidget(self.page_simul)
 
         root_layout.addWidget(self.stack_pages, 1)
-        self._apply_theme()
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._apply_theme(ThemeManager.instance().current_theme)
 
     def _create_async_page(self) -> QWidget:
         w = QWidget(self)
@@ -464,3 +451,82 @@ class SharedPanel(QWidget):
             self.browser_conflict.setHtml(f"<p style='color:#28a745;'>State cleanly merged & committed into Git.</p>")
             self.active_conflict = None
             self.refresh_all()
+
+    def _apply_theme(self, theme_name: str = "light"):
+        from ..theme_manager import ThemeManager
+        from ..kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
+        c = ThemeManager.instance().get_colors()
+
+        self.setStyleSheet(f"""
+            QWidget {{ background-color: {c['bg_app']}; color: {c['text_primary']}; font-family: {MONO_FONT}; }}
+            QGroupBox {{
+                color: {c['text_secondary']};
+                font-family: {MONO_FONT};
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 1px;
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 4px;
+            }}
+            QListWidget {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                font-family: {MONO_FONT};
+                font-size: 12px;
+            }}
+            QListWidget::item:selected {{
+                background-color: {c['accent']};
+                color: {c['accent_text']};
+            }}
+            QLineEdit {{
+                background-color: {c['input_bg']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                font-family: {MONO_FONT};
+                font-size: 12px;
+                color: {c['text_primary']};
+            }}
+            QTextBrowser {{
+                background-color: {c['editor_bg']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+            }}
+        """)
+
+        tab_style = f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {c['text_secondary']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                padding: 6px 14px;
+                font-weight: 700;
+                font-family: {MONO_FONT};
+                font-size: 11px;
+                letter-spacing: 0.5px;
+            }}
+            QPushButton:checked {{
+                background-color: {c['accent']};
+                color: {c['accent_text']};
+                border-color: {c['accent']};
+            }}
+            QPushButton:hover:!checked {{
+                border-color: {c['accent']};
+                color: {c['text_primary']};
+            }}
+        """
+        self.btn_tab_async.setStyleSheet(tab_style)
+        self.btn_tab_simul.setStyleSheet(tab_style)
+        if hasattr(self, 'btn_merge_contrib'):
+            self.btn_merge_contrib.setStyleSheet(primary_button_qss(c))
+
