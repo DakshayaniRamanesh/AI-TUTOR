@@ -11,6 +11,20 @@ import shutil
 import re
 from typing import List, Dict, Any, Optional
 
+class GitError(Exception):
+    """Structured Git exception providing user-friendly and technical messages."""
+    def __init__(self, friendly_message: str, technical_details: str = "", command: str = ""):
+        super().__init__(friendly_message)
+        self.friendly_message = friendly_message
+        self.technical_details = technical_details
+        self.command = command
+
+    def __str__(self):
+        if self.technical_details:
+            return f"{self.friendly_message} (Details: {self.technical_details})"
+        return self.friendly_message
+
+
 class GitNotesManager:
     def __init__(self, repo_dir: Optional[str] = None):
         if not repo_dir:
@@ -35,8 +49,29 @@ class GitNotesManager:
                 errors="replace"
             )
             return res.stdout.strip()
+        except FileNotFoundError:
+            raise GitError(
+                "Git is not installed or not found on system PATH.",
+                technical_details="FileNotFoundError: 'git' command missing",
+                command="git " + " ".join(args)
+            )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Git command failed: git {' '.join(args)}\nError: {e.stderr.strip()}")
+            err_output = e.stderr.strip() or e.stdout.strip()
+            friendly = self._translate_error(args, err_output)
+            raise GitError(friendly, technical_details=err_output, command="git " + " ".join(args))
+
+    def _translate_error(self, args: List[str], raw_error: str) -> str:
+        """Translates raw git stderr into human-friendly explanations."""
+        cmd = args[0] if args else ""
+        if "nothing to commit" in raw_error.lower():
+            return "No changes detected to save."
+        if "pathspec" in raw_error.lower() and "did not match any file" in raw_error.lower():
+            return "The requested file or version was not found."
+        if "already exists" in raw_error.lower():
+            return "A copy or version with this name already exists."
+        if "conflict" in raw_error.lower():
+            return "Changes need review because conflicting edits were detected."
+        return f"Version control operation '{cmd}' failed: {raw_error}"
 
     def ensure_repo_exists(self):
         """Initializes git repository and seeds sample note files & board files if empty."""
@@ -358,3 +393,97 @@ print("State vector superposition:", psi)
             return [line.strip() for line in out.split("\n") if line.strip()]
         except Exception:
             return []
+
+    def sync_repo_boards_to_source(self):
+        """Syncs all board JSON files from git_notes_repo/boards/ back into storage_data/boards/."""
+        target_boards_dir = os.path.join(self.repo_dir, "boards")
+        if not os.path.exists(target_boards_dir):
+            return
+        os.makedirs(self.boards_source_dir, exist_ok=True)
+        for fname in os.listdir(target_boards_dir):
+            if fname.endswith(".json"):
+                src = os.path.join(target_boards_dir, fname)
+                dst = os.path.join(self.boards_source_dir, fname)
+                try:
+                    shutil.copy2(src, dst)
+                except Exception:
+                    pass
+
+    def get_commit_count(self) -> int:
+        """Returns total commit count on current branch."""
+        try:
+            out = self._run_git(["rev-list", "--count", "HEAD"])
+            return int(out.strip())
+        except Exception:
+            return 0
+
+    def show_file_at_commit(self, filename: str, commit_ref: str = "HEAD") -> str:
+        """Returns file text content at a specific commit/ref without checking it out."""
+        clean_name = filename.replace("\\", "/")
+        try:
+            return self._run_git(["show", f"{commit_ref}:{clean_name}"])
+        except Exception:
+            return ""
+
+    def has_uncommitted_changes(self) -> bool:
+        """Checks if working tree has any uncommitted or staged changes."""
+        try:
+            status = self._run_git(["status", "--porcelain"])
+            return bool(status.strip())
+        except Exception:
+            return False
+
+    def checkout_file(self, filename: str, commit_ref: str = "HEAD") -> bool:
+        """Checks out a specific file from a commit/ref into working directory."""
+        clean_name = filename.replace("\\", "/")
+        try:
+            self._run_git(["checkout", commit_ref, "--", clean_name])
+            if clean_name.startswith("boards/"):
+                # Also sync back to storage_data/boards
+                board_fname = os.path.basename(clean_name)
+                src = os.path.join(self.repo_dir, "boards", board_fname)
+                dst = os.path.join(self.boards_source_dir, board_fname)
+                if os.path.exists(src):
+                    shutil.copy2(src, dst)
+            return True
+        except Exception:
+            return False
+
+    def restore_working_tree_to_commit(self, commit_ref: str) -> bool:
+        """
+        Safely checks out all tracked files from target commit into the working tree
+        without changing the current branch HEAD.
+        """
+        try:
+            self._run_git(["checkout", commit_ref, "--", "."])
+            self.sync_repo_boards_to_source()
+            return True
+        except Exception as e:
+            print(f"[GitNotesManager] Restore error: {e}")
+            return False
+
+    def get_commit_files(self, commit_ref: str) -> List[Dict[str, str]]:
+        """Returns list of files modified/added/deleted in a specific commit."""
+        try:
+            out = self._run_git(["show", "--name-status", "--pretty=format:", commit_ref])
+            files = []
+            for line in out.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(maxsplit=1)
+                if len(parts) == 2:
+                    status_code, fname = parts
+                    files.append({
+                        "status": status_code,
+                        "filename": fname.replace("\\", "/"),
+                        "label": self._code_to_label(status_code)
+                    })
+            return files
+        except Exception:
+            return []
+
+
+# Architecture Alias: Kestrel UI -> VersionService -> GitAdapter -> Git
+GitAdapter = GitNotesManager
+

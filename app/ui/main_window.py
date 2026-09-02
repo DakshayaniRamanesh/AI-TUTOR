@@ -425,8 +425,9 @@ class MainWindow(QMainWindow):
         self.placeholder_panel = PlaceholderPanel(self.main_stack)
         self.main_stack.addWidget(self.placeholder_panel) # Index 2
 
-        # Git Notes VCS View Panel
+        # Version History View Panel (formerly GitNotesPanel)
         self.git_notes_panel = GitNotesPanel(self.main_stack)
+        self.git_notes_panel.version_restored.connect(self._on_version_history_restored)
         self.main_stack.addWidget(self.git_notes_panel) # Index 3
 
         # Shared Collaboration Hub View Panel
@@ -616,9 +617,9 @@ class MainWindow(QMainWindow):
 
         # Nav icon buttons — each stores its target main_stack index
         nav_items = [
-            (qta.icon('fa5s.th-large',    color='#94a3b8'), "Boards",         0),
-            (qta.icon('fa5s.book',         color='#94a3b8'), "Notebooks",      1),
-            (qta.icon('fa5s.code-branch',  color='#94a3b8'), "Git VCS",        3),
+            (qta.icon('fa5s.th-large',    color='#94a3b8'), "Boards",          0),
+            (qta.icon('fa5s.book',         color='#94a3b8'), "Notebooks",       1),
+            (qta.icon('fa5s.history',      color='#94a3b8'), "Version History", 3),
             (qta.icon('fa5s.project-diagram', color='#94a3b8'), "Knowledge Graph", 5),
             (qta.icon('fa5s.star',         color='#94a3b8'), "Favourites",     2),
             (qta.icon('fa5s.download',     color='#94a3b8'), f"Downloads",     2),
@@ -1412,7 +1413,7 @@ class MainWindow(QMainWindow):
             self._refresh_folder_tree()
             self.notebooks_panel.refresh()
             self.main_stack.setCurrentWidget(self.notebooks_panel)
-        elif tooltip == "Git VCS":
+        elif tooltip in ("Version History", "Git VCS"):
             self.git_notes_panel.refresh_all()
             self.main_stack.setCurrentWidget(self.git_notes_panel)
         elif tooltip == "Knowledge Graph":
@@ -1532,6 +1533,20 @@ class MainWindow(QMainWindow):
     def _on_notebook_git_requested(self, notebook_id: str):
         self.git_notes_panel.open_notebook_vcs(notebook_id)
         self.main_stack.setCurrentWidget(self.git_notes_panel)
+
+    def _on_version_history_restored(self, version_ref: str):
+        """Called when an earlier version is safely restored from Version History."""
+        try:
+            if self._current_notebook_id:
+                self._on_load_notebook_requested(self._current_notebook_id)
+            else:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                main_board = os.path.join(base_dir, "storage_data", "boards", "board_main.json")
+                if os.path.exists(main_board):
+                    self.current_board.load_from_json(main_board)
+                    self.scene.from_dict_list(self.current_board.to_dict_list())
+        except Exception as err:
+            print(f"[MainWindow] Post-restore reload warning: {err}")
 
     def _on_new_notebook_requested(self):
         """Legacy create_notebook_requested signal (now the panel handles new notebooks inline)."""
