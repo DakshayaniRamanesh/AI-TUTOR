@@ -1,11 +1,20 @@
-# Environment variables & secrets
+# =============================================================================
+# Kestrel .gitignore
+# =============================================================================
+
+# ── Environment Variables, Secrets & Credentials ──────────────────────────────
 .env
 .env.local
 .env.*.local
 *.env
 backend/.env
+*.pem
+*.key
+*.cert
+firebase_credentials*.json
+service_account*.json
 
-# Python Bytecode & Virtual Environments
+# ── Python Bytecode, Caches & Virtual Environments ───────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -18,13 +27,16 @@ env/
 ENV/
 venv313/
 
-# Kestrel App Storage & Downloads
+# ── Database & Local App Storage ──────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
 storage_data/
 downloads/
 qdrant_data/
 qdrant_storage/
 
-# Node.js / Frontend (legacy & dependencies)
+# ── Node.js / Frontend (legacy & dependencies) ────────────────────────────────
 node_modules/
 frontend/node_modules/
 .next/
@@ -34,30 +46,58 @@ build/
 dist/
 *.log
 
-# Manim & Generated Media Output
+# ── Manim, Generated Video & Audio Media ──────────────────────────────────────
 media/
 _manim_output/
 opengl_test/
+smoke_media/
+partial_movie_files/
+backend/workspace/videos/
 *.mp4
 *.avi
 *.mov
+*.webm
+*.mkv
 *.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
 
-# Temporary & Modal files
-.modal.toml
+# ── LaTeX & Document Engine Artifacts ─────────────────────────────────────────
+*.aux
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.xdv
+*.toc
+*.nav
+*.snm
+*.vrb
+_minted*
+
+# ── Test Artifacts & Temporary Files ──────────────────────────────────────────
 tmp/
 scratch/
 *.tmp
 *.bak
+*.swp
+*.swo
+*~
+test_*.txt
+test_scene.py
+backend/tests/scenario_results.json
 
-# Large binaries (download separately)
+# ── Large Binaries (download separately) ──────────────────────────────────────
 tectonic.exe
 tectonic
 get-pip.py
 
-# IDE & OS System Files
+# ── IDE, Editor & OS System Files ─────────────────────────────────────────────
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-
+.antigravity/
+.agents/
+.modal.toml
