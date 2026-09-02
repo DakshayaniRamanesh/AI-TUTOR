@@ -81,12 +81,17 @@ class SettingsDialog(QDialog):
         
         try:
             resp = requests.get(f"http://127.0.0.1:8000{endpoint}", timeout=10)
-            if resp.status_code == 200 and resp.json().get("status") == "ok":
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            if resp.status_code == 200 and data.get("status") == "ok":
                 status_lbl.setText("✅")
+                status_lbl.setToolTip(data.get("message", "Connected successfully"))
             else:
+                msg = data.get("message", f"HTTP {resp.status_code}: {resp.text}")
                 status_lbl.setText("❌")
-        except Exception:
+                status_lbl.setToolTip(msg)
+        except Exception as e:
             status_lbl.setText("❌")
+            status_lbl.setToolTip(f"Connection failed: {str(e)}")
         finally:
             button.setText("Test Connection")
             button.setEnabled(True)

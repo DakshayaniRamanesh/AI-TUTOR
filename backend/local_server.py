@@ -275,9 +275,9 @@ async def serve_pdf(filename: str):
 
 @app.get("/api/diagnostics/groq")
 async def test_groq():
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        return JSONResponse({"status": "error", "message": "Missing GROQ_API_KEY"}, status_code=400)
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key or api_key.startswith("your_"):
+        return JSONResponse({"status": "error", "message": "GROQ_API_KEY is not configured (placeholder detected in backend/.env)"}, status_code=400)
     try:
         from groq import Groq
         client = Groq(api_key=api_key)
@@ -292,15 +292,23 @@ async def test_groq():
 
 @app.get("/api/diagnostics/gemini")
 async def test_gemini():
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        return JSONResponse({"status": "error", "message": "Missing GOOGLE_API_KEY"}, status_code=400)
+    api_key = os.getenv("GOOGLE_API_KEY", "").strip()
+    if not api_key or api_key.startswith("your_"):
+        return JSONResponse({"status": "error", "message": "GOOGLE_API_KEY is not configured (placeholder detected in backend/.env)"}, status_code=400)
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-3.5-flash-lite')
-        resp = model.generate_content("Ping")
-        return {"status": "ok", "message": "Gemini connected"}
+        # Try available Gemini models
+        last_err = None
+        for m in ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.5-flash-lite']:
+            try:
+                model = genai.GenerativeModel(m)
+                resp = model.generate_content("Ping")
+                return {"status": "ok", "message": f"Gemini connected ({m})"}
+            except Exception as ex:
+                last_err = ex
+                continue
+        return JSONResponse({"status": "error", "message": str(last_err)}, status_code=500)
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
