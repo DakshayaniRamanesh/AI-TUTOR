@@ -275,6 +275,223 @@ class MainScene(Scene):
         self.play(Uncreate(pulse), run_time=0.6)
         self.wait(1.5)
 ''',
+
+    # ── Template 6: Graph / Function Plotter ──────────────────────────────────
+    # Best for: calculus, statistics, physics curves, any f(x) visualization
+    # Uses Axes.plot() — NO LaTeX. All labels are Text().
+    "graph_plotter": '''\
+from manim import *
+import numpy as np
+
+class MainScene(Scene):
+    def construct(self):
+        self.camera.background_color = "#0d1117"
+
+        title = Text("$topic", font_size=36, color=BLUE, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
+        self.play(Write(title), run_time=1.0)
+
+        # Axes setup
+        ax = Axes(
+            x_range=$x_range,
+            y_range=$y_range,
+            axis_config={"color": GRAY, "stroke_width": 2},
+            tips=False
+        ).scale(0.85).shift(DOWN * 0.3)
+
+        x_label = Text("$x_label", font_size=18, color=GRAY).next_to(ax.x_axis, DOWN, buff=0.15)
+        y_label = Text("$y_label", font_size=18, color=GRAY).next_to(ax.y_axis, LEFT, buff=0.15)
+
+        self.play(Create(ax), FadeIn(x_label), FadeIn(y_label), run_time=1.2)
+
+        # Primary curve
+        curve = ax.plot(lambda x: $func_expr, color=TEAL, stroke_width=3)
+        curve_label = Text("$func_label", font_size=20, color=TEAL)
+        curve_label.next_to(curve.get_end(), RIGHT, buff=0.2)
+
+        self.play(Create(curve), run_time=1.5)
+        self.play(FadeIn(curve_label))
+        self.wait(1)
+
+        # Key point annotation
+        key_x = $key_x
+        key_y_val = $key_y
+        dot = Dot(ax.c2p(key_x, key_y_val), color=YELLOW, radius=0.1)
+        annotation = Text("$key_annotation", font_size=18, color=YELLOW)
+        annotation.next_to(dot, UP, buff=0.25)
+        self.play(FadeIn(dot), Write(annotation), run_time=0.8)
+        self.wait(1.5)
+
+        # Summary
+        summary = Text("$summary", font_size=20, color=WHITE)
+        summary.to_edge(DOWN, buff=0.5)
+        self.play(FadeIn(summary))
+        self.wait(2)
+''',
+
+    # ── Template 7: Physics Diagram ───────────────────────────────────────────
+    # Best for: forces, vectors, motion, classical mechanics
+    # Uses Arrow vectors + Text labels — no LaTeX
+    "physics_diagram": '''\
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        self.camera.background_color = "#0d1117"
+
+        title = Text("$topic", font_size=36, color=BLUE, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
+        self.play(Write(title), run_time=1.0)
+
+        # Object / body
+        body = Rectangle(height=1.0, width=1.8, color=TEAL,
+                         fill_color="#0d2b35", fill_opacity=0.85)
+        body.shift(DOWN * 0.5)
+        body_label = Text("$object_label", font_size=20, color=TEAL)
+        body_label.move_to(body.get_center())
+        self.play(FadeIn(body), FadeIn(body_label), run_time=0.8)
+
+        # Force 1
+        arrow1 = Arrow(
+            body.get_right(), body.get_right() + RIGHT * 2.2,
+            color=RED, buff=0, stroke_width=5
+        )
+        label1 = Text("$force1_label", font_size=20, color=RED)
+        label1.next_to(arrow1, UP, buff=0.2)
+        self.play(GrowArrow(arrow1), FadeIn(label1), run_time=0.8)
+        self.wait(0.5)
+
+        # Force 2
+        arrow2 = Arrow(
+            body.get_top(), body.get_top() + UP * 2.0,
+            color=GREEN, buff=0, stroke_width=5
+        )
+        label2 = Text("$force2_label", font_size=20, color=GREEN)
+        label2.next_to(arrow2, RIGHT, buff=0.2)
+        self.play(GrowArrow(arrow2), FadeIn(label2), run_time=0.8)
+        self.wait(0.5)
+
+        # Equation / principle
+        principle = Text("$principle", font_size=26, color=YELLOW)
+        principle.next_to(body, DOWN, buff=0.8)
+        self.play(Write(principle), run_time=1.0)
+        self.wait(1.5)
+
+        # Summary card
+        self.play(*[FadeOut(m) for m in self.mobjects])
+        card = RoundedRectangle(corner_radius=0.2, height=2.0, width=10,
+                                color=BLUE, fill_color="#131b2e", fill_opacity=0.9)
+        summary = Text("$summary", font_size=20, color=WHITE)
+        summary.move_to(card.get_center())
+        self.play(FadeIn(card), Write(summary), run_time=1.2)
+        self.wait(2)
+''',
+
+    # ── Template 8: Algorithm Steps ───────────────────────────────────────────
+    # Best for: CS algorithms, sorting, searching, data structure operations
+    # Uses numbered step boxes with progressive reveal
+    "algorithm_steps": '''\
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        self.camera.background_color = "#0d1117"
+
+        title = Text("$topic", font_size=36, color=BLUE, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
+        self.play(Write(title), run_time=1.0)
+
+        step_data = [
+            ("1", "$step1", TEAL),
+            ("2", "$step2", GREEN),
+            ("3", "$step3", YELLOW),
+            ("4", "$step4", ORANGE),
+        ]
+
+        step_groups = VGroup()
+        for i, (num, label, color) in enumerate(step_data):
+            circle = Circle(radius=0.35, color=color,
+                           fill_color=color, fill_opacity=0.25, stroke_width=3)
+            num_text = Text(num, font_size=22, color=color, weight=BOLD)
+            num_text.move_to(circle)
+            step_label = Text(label, font_size=20, color=WHITE)
+            step_label.next_to(circle, RIGHT, buff=0.35)
+            row = VGroup(circle, num_text, step_label)
+            step_groups.add(row)
+
+        step_groups.arrange(DOWN, buff=0.55, aligned_edge=LEFT)
+        step_groups.shift(LEFT * 1.5 + DOWN * 0.3)
+
+        for row in step_groups:
+            self.play(FadeIn(row), run_time=0.5)
+            self.wait(0.4)
+        self.wait(0.8)
+
+        # Connector arrow down the left side
+        result_box = RoundedRectangle(corner_radius=0.2, height=1.2, width=6.5,
+                                      color=BLUE, fill_color="#131b2e", fill_opacity=0.9)
+        result_box.next_to(step_groups, DOWN, buff=0.6)
+        result_text = Text("Result: $result", font_size=22, color=BLUE)
+        result_text.move_to(result_box)
+        self.play(FadeIn(result_box), Write(result_text), run_time=1.0)
+        self.wait(2)
+''',
+
+    # ── Template 9: Chemistry Reaction ────────────────────────────────────────
+    # Best for: chemical reactions, molecular diagrams, element descriptions
+    "chemistry_reaction": '''\
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        self.camera.background_color = "#0d1117"
+
+        title = Text("$topic", font_size=34, color=BLUE, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
+        self.play(Write(title), run_time=1.0)
+
+        # Reactant A molecule
+        circ_a = Circle(radius=0.55, color=RED, fill_color="#2b0a0a", fill_opacity=0.8)
+        label_a = Text("$element_a", font_size=26, color=RED, weight=BOLD)
+        label_a.move_to(circ_a)
+        mol_a = VGroup(circ_a, label_a).shift(LEFT * 4.0)
+        self.play(FadeIn(mol_a), run_time=0.7)
+
+        # Reactant B molecule
+        circ_b = Circle(radius=0.55, color=GREEN, fill_color="#0a2b0a", fill_opacity=0.8)
+        label_b = Text("$element_b", font_size=26, color=GREEN, weight=BOLD)
+        label_b.move_to(circ_b)
+        mol_b = VGroup(circ_b, label_b).shift(LEFT * 2.0)
+        self.play(FadeIn(mol_b), run_time=0.7)
+
+        # Plus sign
+        plus = Text("+", font_size=36, color=GRAY)
+        plus.move_to([-3.0, 0, 0])
+        self.play(FadeIn(plus))
+
+        # Reaction arrow
+        reaction_arrow = Arrow(LEFT * 0.8, RIGHT * 1.2, color=YELLOW, buff=0)
+        self.play(GrowArrow(reaction_arrow), run_time=0.8)
+
+        # Product molecule
+        circ_p = Circle(radius=0.7, color=TEAL, fill_color="#0d2b35", fill_opacity=0.85)
+        label_p = Text("$product", font_size=24, color=TEAL, weight=BOLD)
+        label_p.move_to(circ_p)
+        mol_p = VGroup(circ_p, label_p).shift(RIGHT * 2.5)
+        self.play(FadeIn(mol_p), run_time=0.8)
+        self.wait(1)
+
+        # Reaction equation below
+        equation = Text("$reaction_equation", font_size=22, color=YELLOW)
+        equation.to_edge(DOWN, buff=1.2)
+        self.play(Write(equation), run_time=1.0)
+
+        # Explanation
+        explanation = Text("$explanation", font_size=19, color=WHITE)
+        explanation.to_edge(DOWN, buff=0.5)
+        self.play(FadeIn(explanation))
+        self.wait(2)
+''',
 }
 
 
@@ -312,39 +529,68 @@ class SceneTemplateLibrary:
         # rather than raising an error — makes partial fills safe
         return Template(raw).safe_substitute(**kwargs)
 
-    def select_template_for_topic(self, user_prompt: str, story_script: str) -> str:
+    def select_template_for_topic(self, user_prompt: str, story_script: str, topic_subject: str = "") -> str:
         """
-        Heuristic: pick the best template based on content signals in
-        the user prompt and story script. CodeGenAgent calls this first.
+        Picks the best template based on topic_subject classification (from StoryAgent)
+        and keyword signals in the prompt and story script.
 
         Returns one of AVAILABLE_TEMPLATES.
         """
         text = (user_prompt + " " + (story_script or "")).lower()
 
-        # Strong math signals → math_explainer
-        math_signals = ["formula", "equation", "calculus", "derivative", "integral",
-                        "matrix", "vector", "eigenvalue", "probability", "theorem",
-                        "proof", r"latex", "∑", "∫", "∂"]
-        if any(s in text for s in math_signals):
-            # But if it's specifically about data flow / transformation → matrix_transform
-            if any(s in text for s in ["neural", "convolution", "layer", "activation", "transform"]):
+        # ── Subject-based routing (high confidence) ────────────────────────────
+        if topic_subject == "math":
+            if any(s in text for s in ["neural", "convolution", "layer", "transform", "matrix"]):
                 return "matrix_transform"
+            if any(s in text for s in ["derivative", "integral", "function", "graph", "plot", "curve"]):
+                return "graph_plotter"
             return "math_explainer"
 
-        # Process / pipeline signals → process_flow
+        if topic_subject == "physics":
+            if any(s in text for s in ["force", "vector", "motion", "gravity", "momentum", "field"]):
+                return "physics_diagram"
+            if any(s in text for s in ["graph", "curve", "plot", "wave"]):
+                return "graph_plotter"
+            return "physics_diagram"
+
+        if topic_subject == "cs":
+            if any(s in text for s in ["pipeline", "workflow", "flow", "architecture", "system"]):
+                return "process_flow"
+            if any(s in text for s in ["algorithm", "sort", "search", "tree", "step", "steps"]):
+                return "algorithm_steps"
+            if any(s in text for s in ["neural", "convolution", "layer", "activation"]):
+                return "matrix_transform"
+            return "process_flow"
+
+        if topic_subject == "chemistry":
+            return "chemistry_reaction"
+
+        if topic_subject == "statistics":
+            return "graph_plotter"
+
+        # ── Keyword-based fallback (when topic_subject is empty or general) ───
+        math_signals = ["formula", "equation", "calculus", "derivative", "integral",
+                        "matrix", "vector", "eigenvalue", "probability", "theorem",
+                        "proof", "∑", "∫", "∂", "function", "graph"]
+        if any(s in text for s in math_signals):
+            if any(s in text for s in ["neural", "convolution", "layer", "activation", "transform"]):
+                return "matrix_transform"
+            if any(s in text for s in ["derivative", "integral", "curve", "plot"]):
+                return "graph_plotter"
+            return "math_explainer"
+
         flow_signals = ["pipeline", "workflow", "algorithm", "step", "process",
                         "architecture", "flow", "system", "sequence", "stages"]
         if any(s in text for s in flow_signals):
             return "process_flow"
 
-        # Comparison signals → comparison
         compare_signals = ["compare", "vs", "versus", "difference", "better",
                            "trade-off", "advantage", "before", "after"]
         if any(s in text for s in compare_signals):
             return "comparison"
 
-        # Default: general concept explainer (Text() only, no LaTeX cost)
         return "concept_explainer"
+
 
     def list_templates(self) -> list:
         return self.AVAILABLE_TEMPLATES
