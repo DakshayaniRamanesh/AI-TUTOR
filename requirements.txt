@@ -21,3 +21,4 @@ beautifulsoup4
 sympy
 numpy
 matplotlib
+python-multipart

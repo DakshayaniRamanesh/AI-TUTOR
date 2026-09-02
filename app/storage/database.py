@@ -6,6 +6,7 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 # 1. Setup SQLite Engine and Session
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DB_PATH = os.path.join(_BASE_DIR, "storage_data", "kestrel.db")
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 SessionLocal = sessionmaker(bind=engine)
