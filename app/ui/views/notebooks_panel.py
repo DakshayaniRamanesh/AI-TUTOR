@@ -307,7 +307,7 @@ class NotebookRowWidget(QFrame):
         act_move.triggered.connect(lambda: self.move_requested.emit(self.notebook_id))
         menu.addAction(act_move)
 
-        act_git = QAction("⎇ Git Version History", menu)
+        act_git = QAction("⏱ Version History", menu)
         act_git.triggered.connect(lambda: self.git_clicked.emit(self.notebook_id, self.notebook_name))
         menu.addAction(act_git)
 

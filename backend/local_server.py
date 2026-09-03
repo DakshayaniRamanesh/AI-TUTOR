@@ -47,6 +47,44 @@ pipeline = VideoGenerationPipeline()
 latex_jobs_store: dict[str, LatexJob] = {}
 latex_pipeline = LatexGenerationPipeline()
 
+# ── User-facing progress label map ────────────────────────────────────────────
+_STEP_LABELS: dict[str, str] = {
+    "init": "Starting...",
+    "document_embedder": "Understanding your material...",
+    "story_agent": "Designing visual explanation...",
+    "validator_agent": "Reviewing lesson structure...",
+    "codegen_agent": "Generating animation...",
+    "ci": "Checking animation quality...",
+    "renderer_agent": "Rendering video...",
+    "uploader_agent": "Finalizing video...",
+    "notes_generator": "Generating study notes...",
+}
+
+# ── User-facing error code map ─────────────────────────────────────────────────
+_ERROR_LABELS: dict[str, str] = {
+    "CODEGEN_MAX_RETRIES": (
+        "Kestrel couldn't generate this animation after 3 attempts. "
+        "Try rephrasing your topic or using a simpler subject."
+    ),
+    "PAGE_LIMIT": "Your document selection is too large. Please select 30 or fewer pages.",
+    "No animation code": "No animation was produced. Please try again.",
+    "Manim render failed": "The animation could not be rendered. Kestrel is retrying.",
+    "Rendering failed unexpectedly": "An unexpected rendering error occurred. Please try again.",
+}
+
+
+def _friendly_error(raw_error: str | None) -> str:
+    """Map internal error messages to user-friendly strings."""
+    if not raw_error:
+        return ""
+    for key, friendly in _ERROR_LABELS.items():
+        if key in raw_error:
+            return friendly
+    # Strip internal stack details but keep a useful one-line description
+    first_line = raw_error.split("\n")[0][:200]
+    return f"Something went wrong: {first_line}"
+
+
 def run_job_background(job: VideoJob):
     try:
         final_job = pipeline.run_pipeline(job)
@@ -68,24 +106,26 @@ async def generate(
 ):
     job_id = f"job_{uuid.uuid4().hex[:8]}"
     pdf_path = ""
-    
-    if pdf:
+    source_doc = ""
+
+    if pdf and pdf.filename:
         temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
         content = await pdf.read()
         temp_pdf.write(content)
         temp_pdf.close()
         pdf_path = temp_pdf.name
+        source_doc = pdf.filename  # Record original filename for traceability
 
     job = VideoJob(
         job_id=job_id,
         pdf_path=pdf_path,
         user_prompt=prompt,
         document_text="",
-        # NEW fields for Feature 1
         page_range=page_range if page_range else None,
         emphasis_note=emphasis_note if emphasis_note else None,
         output_type=output_type,
-        subject_id=subject_id if subject_id else None
+        subject_id=subject_id if subject_id else None,
+        source_document=source_doc,
     )
     jobs_store[job_id] = job
     background_tasks.add_task(run_job_background, job)
@@ -93,31 +133,51 @@ async def generate(
     return {
         "job_id": job_id,
         "status": "processing",
-        "message": "Video generation pipeline started for uploaded document."
+        "message": "Video generation started. Use /status/{job_id} to track progress."
     }
+
+def get_base_url() -> str:
+    port = os.getenv("PORT", os.getenv("BACKEND_PORT", "8000"))
+    return os.getenv("BACKEND_URL", f"http://localhost:{port}").rstrip("/")
 
 @app.get("/status/{job_id}")
 async def status(job_id: str):
     if job_id not in jobs_store:
         return JSONResponse({"error": "Job not found"}, status_code=404)
-    
+
     job = jobs_store[job_id]
-    
+
     video_url = None
     if job.video_path and os.path.exists(job.video_path):
         filename = os.path.basename(job.video_path)
-        video_url = f"http://localhost:8000/video/{filename}"
+        video_url = f"{get_base_url()}/video/{filename}"
+
+    job_status = job.status.value if hasattr(job.status, "value") else str(job.status)
+    internal_step = job.step
+    friendly_step = job.friendly_step or _STEP_LABELS.get(internal_step, internal_step)
 
     return {
         "job_id": job.job_id,
-        "status": job.status.value if hasattr(job.status, "value") else str(job.status),
-        "step": job.step,
+        "status": job_status,
+        # Internal fields (for developer/debugging)
+        "step": internal_step,
         "progress_percentage": job.progress_percentage,
+        # User-facing fields
+        "friendly_step": friendly_step,
+        "friendly_error": _friendly_error(job.error_message),
+        "topic_subject": job.topic_subject,
+        "model_used": job.model_used,
+        "render_quality": job.render_quality,
+        "source_document": job.source_document,
+        "pipeline_version": job.pipeline_version,
+        # Video output
         "video_url": video_url or job.video_url,
         "video_local_path": job.video_path,
+        # Raw error (for developer details panel)
         "error_message": job.error_message,
         "version": job.version,
-        "story_script": job.story_script
+        "story_script": job.story_script,
+        "metadata": job.metadata,
     }
 
 @app.post("/annotate")
@@ -157,7 +217,7 @@ async def annotate(payload: dict):
     video_url = updated_job.video_url
     if updated_job.video_path and os.path.exists(updated_job.video_path):
         filename = os.path.basename(updated_job.video_path)
-        video_url = f"http://localhost:8000/video/{filename}"
+        video_url = f"{get_base_url()}/video/{filename}"
 
     return {
         "job_id": updated_job.job_id,
@@ -222,7 +282,7 @@ async def latex_status(job_id: str):
     pdf_url = None
     if job.pdf_path and os.path.exists(job.pdf_path):
         filename = os.path.basename(job.pdf_path)
-        pdf_url = f"http://localhost:8000/pdf/{filename}"
+        pdf_url = f"{get_base_url()}/pdf/{filename}"
 
     return {
         "job_id": job.job_id,
@@ -348,4 +408,28 @@ async def test_tectonic():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import socket
+
+    def _is_port_bindable(p: int, host: str = "0.0.0.0") -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, p))
+                return True
+            except OSError:
+                return False
+
+    desired_port = int(os.getenv("PORT", os.getenv("BACKEND_PORT", "8000")))
+    selected_port = desired_port
+
+    if not _is_port_bindable(selected_port):
+        # On Windows, ports like 8000 are frequently blocked by Windows NAT / Hyper-V exclusion ranges (WinError 10013)
+        fallbacks = [8888, 5050, 5000, 9000]
+        for fb in fallbacks:
+            if _is_port_bindable(fb):
+                print(f"[LocalServer] Port {selected_port} is blocked/unavailable. Automatically falling back to port {fb}.")
+                selected_port = fb
+                os.environ["PORT"] = str(fb)
+                os.environ["BACKEND_URL"] = f"http://localhost:{fb}"
+                break
+
+    uvicorn.run(app, host="0.0.0.0", port=selected_port)
