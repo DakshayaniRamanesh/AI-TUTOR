@@ -76,16 +76,17 @@ class AnswerBubbleWidget(QWidget):
                 border-radius: 10px;
             }
             QPushButton#BtnToggle {
-                background-color: #007aff;
+                background-color: #0a0a0a;
                 color: #ffffff;
-                border: none;
-                border-radius: 8px;
-                padding: 5px 12px;
-                font-weight: bold;
-                font-size: 12px;
+                border: 1px solid #252525;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                font-weight: 600;
+                font-size: 11px;
             }
             QPushButton#BtnToggle:hover {
-                background-color: #0056b3;
+                background-color: #222222;
             }
         """)
 

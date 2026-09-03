@@ -15,8 +15,13 @@ class ThemeManager(QObject):
 
     @classmethod
     def instance(cls):
-        if cls._instance is None:
-            cls._instance = ThemeManager()
+        try:
+            import PyQt6.sip as sip
+            if cls._instance is None or sip.isdeleted(cls._instance):
+                cls._instance = ThemeManager()
+        except Exception:
+            if cls._instance is None:
+                cls._instance = ThemeManager()
         return cls._instance
 
     def __init__(self, parent=None):

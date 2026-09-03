@@ -344,8 +344,8 @@ class PenechoMixedTextItem(QGraphicsItem):
         self._update_document()
 
     def _update_document(self):
-        tokens = parse_mixed_text(self._raw_text)
-        html_body = mixed_tokens_to_html(tokens)
+        from ...backend.math_engine.latex_formatter import format_math_to_html
+        html_body = format_math_to_html(self._raw_text)
         html = f"""
         <div style='font-family: "Segoe Print", "Ink Free", "Caveat", "Segoe Script", "Comic Sans MS", cursive, sans-serif;
                     font-size: {self._font_size}px; line-height: 1.6; color: {self._text_color.name()};'>

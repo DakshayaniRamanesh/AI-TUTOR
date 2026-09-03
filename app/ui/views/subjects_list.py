@@ -62,8 +62,11 @@ class SubjectsListView(QWidget):
         self.grid_widget = QWidget()
         self.grid_widget.setStyleSheet("background-color: transparent;")
         self.grid_layout = QGridLayout(self.grid_widget)
-        self.grid_layout.setSpacing(16)
-        self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.grid_layout.setSpacing(20)
+        self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.grid_layout.setColumnStretch(0, 1)
+        self.grid_layout.setColumnStretch(1, 1)
+        self.grid_layout.setColumnStretch(2, 1)
         
         self.scroll.setWidget(self.grid_widget)
         layout.addWidget(self.scroll)
@@ -130,24 +133,23 @@ class SubjectsListView(QWidget):
     def _create_subject_card(self, subject) -> QFrame:
         c = ThemeManager.instance().get_colors()
         card = QFrame()
-        card.setFixedSize(300, 160)
-        card.setCursor(Qt.CursorShape.PointingHandCursor)
         card.setObjectName("SubjectCard")
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
 
         card.setStyleSheet(f"""
             QFrame#SubjectCard {{
                 background-color: {c['bg_card']};
                 border: 1px solid {c['border_color']};
-                border-radius: 4px;
+                border-radius: 8px;
             }}
             QFrame#SubjectCard:hover {{
-                border-color: {c['accent']};
+                border: 1.5px solid {c['accent']};
                 background-color: {c['panel_card_bg']};
             }}
         """)
 
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(14, 12, 14, 12)
+        c_layout.setContentsMargins(18, 16, 18, 16)
         c_layout.setSpacing(6)
 
         # Subject-specific metadata mapping matching Figma reference
@@ -207,14 +209,14 @@ class SubjectsListView(QWidget):
         lbl_name = QLabel(f"{meta['symbol']} {subject.name}", card)
         lbl_name.setStyleSheet(f"""
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            font-size: 16px;
+            font-size: 15px;
             font-weight: 700;
             color: {c['text_primary']};
             background: transparent;
         """)
         c_layout.addWidget(lbl_name)
 
-        # Description / Syllabus summary
+        # Description / Syllabus summary (tightly hugged)
         nb_count = len(subject.notebooks)
         lbl_desc = QLabel(meta["desc"], card)
         lbl_desc.setWordWrap(True)
@@ -223,13 +225,14 @@ class SubjectsListView(QWidget):
             color: {c['text_secondary']};
             background: transparent;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            line-height: 1.4;
+            margin-bottom: 4px;
         """)
         c_layout.addWidget(lbl_desc)
 
-        c_layout.addStretch()
-
-        # Footer stats row
+        # Footer stats row sitting close under the description
         footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 4, 0, 0)
         stats_text = f"{nb_count} boards  {meta['extra_stats']}"
         lbl_stats = QLabel(stats_text, card)
         lbl_stats.setStyleSheet(f"""
@@ -255,10 +258,7 @@ class SubjectsListView(QWidget):
         c_layout.addLayout(footer_layout)
 
         # Mouse click routing
-        def _on_card_click(event):
-            self.open_subject_detail.emit(subject.id)
-        card.mousePressEvent = _on_card_click
-
+        card.mousePressEvent = lambda e, s_id=subject.id: self.open_subject_detail.emit(s_id)
         return card
 
     def _on_new_subject(self):

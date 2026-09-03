@@ -42,6 +42,7 @@ from .views.obsidian_graph_panel import ObsidianGraphPanel
 from .views.home_view import HomeView
 from .views.subjects_list import SubjectsListView
 from .views.subject_detail_view import SubjectDetailView
+from .views.constants_library_view import ConstantsLibraryView
 from .views.placeholder_panel import PlaceholderPanel
 from .views.settings_dialog import SettingsDialog
 from .views.progress_dialog import ProgressDialog
@@ -50,6 +51,7 @@ from .pen_properties_popup import PenPropertiesPopup
 from .shapes_popup import ShapesPopup
 from .eraser_popup import EraserPopup
 from .theme_manager import ThemeManager
+from .widgets.pomodoro_timer import PomodoroTimerWidget
 from .widgets.latex_editor_widget import LatexEditorWidget
 from .widgets.speedometer_progress_widget import SpeedometerProgressWidget
 from .widgets.magic_orb_widget import MagicOrbWidget
@@ -381,12 +383,19 @@ class MainWindow(QMainWindow):
         self.eraser_popup.hide()
         self.eraser_popup.size_changed.connect(self._on_eraser_popup_size_changed)
 
+        # Pomodoro Floating Study Timer Overlay (Parented to central_card for top bar access on all screens)
+        self.pomodoro_timer = PomodoroTimerWidget(self.central_card)
+        self.pomodoro_timer.hide()
+        self.pomodoro_timer.time_updated.connect(self._on_pomodoro_time_updated)
+
         self._canvas_wrapper = canvas_wrapper
         self.main_stack.addWidget(canvas_wrapper) # Index 0
 
         self.home_view = HomeView(self.main_stack)
         self.subjects_list_view = SubjectsListView(self.main_stack)
         self.subject_detail_view = SubjectDetailView(self.main_stack)
+        self.constants_library_view = ConstantsLibraryView(self.main_stack)
+        self.constants_library_view.go_back.connect(self._on_canvas_back_clicked)
 
         # Connect Navigation Signals
         def _open_blank():
@@ -448,6 +457,9 @@ class MainWindow(QMainWindow):
         self.obsidian_graph_panel = ObsidianGraphPanel(self.main_stack)
         self.obsidian_graph_panel.open_notebook_requested.connect(self._on_load_notebook_requested)
         self.main_stack.addWidget(self.obsidian_graph_panel) # Index 5
+
+        # Constants Library View Panel
+        self.main_stack.addWidget(self.constants_library_view) # Index 6
 
         cc_layout.addWidget(self.main_stack)
         self.splitter.addWidget(self.canvas_container)
@@ -576,6 +588,14 @@ class MainWindow(QMainWindow):
         if top: return Qt.Edge.TopEdge
         if bottom: return Qt.Edge.BottomEdge
         return None
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'pomodoro_timer') and self.pomodoro_timer.isVisible():
+            w = self.central_card.width()
+            t_w = self.pomodoro_timer.width()
+            self.pomodoro_timer.move(max(20, w - t_w - 24), 52)
+            self.pomodoro_timer.raise_()
 
     def mouseMoveEvent(self, event):
         edges = self._get_resize_edges(event.position().toPoint())
@@ -835,6 +855,25 @@ class MainWindow(QMainWindow):
         self.btn_theme_toggle.clicked.connect(self._toggle_theme)
         layout.addWidget(self.btn_theme_toggle)
 
+        # Pomodoro Study Timer Toggle Button
+        self.btn_pomodoro_toggle = self._make_toolbar_btn(
+            'ri.timer-line', "", tb, None, "Toggle Pomodoro Study Timer"
+        )
+        self.btn_pomodoro_toggle.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                padding: 4px 8px;
+                color: {c['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {c['panel_card_bg']};
+            }}
+        """)
+        self.btn_pomodoro_toggle.clicked.connect(self._toggle_pomodoro_timer)
+        layout.addWidget(self.btn_pomodoro_toggle)
+
         layout.addStretch()
 
         # ── Save Button + Status Indicator ───────────────────────────────────
@@ -989,7 +1028,10 @@ class MainWindow(QMainWindow):
         from .penecho_integration.ai_canvas_bridge import AICanvasWorker, create_draft_from_payload
         self.magic_orb.set_state("thinking", "Analyzing...")
 
-        worker = AICanvasWorker(query_text=query, target_pos=target_pos, parent=self)
+        # Collision-free positioning
+        clean_pos = self._find_non_overlapping_pos(target_pos, width=400.0, height=200.0)
+
+        worker = AICanvasWorker(query_text=query, target_pos=clean_pos, parent=self)
 
         def _on_finished(payload_dict, pos, msg):
             draft_item = create_draft_from_payload(payload_dict)
@@ -1739,21 +1781,86 @@ class MainWindow(QMainWindow):
     def _on_latex_video_progress(self, job_id, stage, progress):
         self.pdf_viewer_widget.update_video_progress(stage, progress)
 
+    def _find_non_overlapping_pos(self, initial_pos: QPointF, width: float = 580.0, height: float = 240.0) -> QPointF:
+        """Finds a clear spot on the canvas, cascading downward/rightward if overlapping existing content."""
+        pos = QPointF(initial_pos.x(), initial_pos.y())
+        max_attempts = 12
+
+        for _ in range(max_attempts):
+            test_rect = QRectF(pos.x(), pos.y(), width, height)
+            items_in_rect = self.scene.items(test_rect)
+
+            has_collision = False
+            for it in items_in_rect:
+                cname = it.__class__.__name__
+                if cname in ["AnswerBubble", "HandwritingNote", "StickyNote", "GraphCard", "PenechoDraftLayerItem", "TableItem", "ImageItem"]:
+                    has_collision = True
+                    break
+                elif hasattr(it, "sceneBoundingRect"):
+                    br = it.sceneBoundingRect()
+                    if br.width() > 100 and br.height() > 60:
+                        has_collision = True
+                        break
+
+            if not has_collision:
+                return pos
+
+            # Cascade downwards with clean margin
+            pos.setY(pos.y() + height + 24.0)
+            if pos.y() > 3200:
+                pos.setX(pos.x() + width + 30.0)
+                pos.setY(initial_pos.y())
+
+        return pos
+
+    def _on_pomodoro_time_updated(self, time_str: str, is_running: bool):
+        """Updates the top bar timer button text to act as a compact persistent badge while running."""
+        if hasattr(self, 'btn_pomodoro_toggle'):
+            if is_running or (hasattr(self, 'pomodoro_timer') and self.pomodoro_timer._remaining_seconds != self.pomodoro_timer._duration_seconds):
+                self.btn_pomodoro_toggle.setText(f" {time_str}")
+            else:
+                self.btn_pomodoro_toggle.setText("")
+
+    def _toggle_pomodoro_timer(self):
+        """Toggles the floating Pomodoro study timer widget overlay docked at top right."""
+        if not hasattr(self, 'pomodoro_timer'):
+            return
+        is_vis = self.pomodoro_timer.isVisible()
+        if is_vis:
+            self.pomodoro_timer.hide()
+        else:
+            w = self.central_card.width()
+            t_w = self.pomodoro_timer.width()
+            self.pomodoro_timer.move(max(20, w - t_w - 24), 52)
+            self.pomodoro_timer.show()
+            self.pomodoro_timer.raise_()
+
+    def _toggle_reference_panel(self):
+        """Switches main stack to the full-page Constants Library view."""
+        if hasattr(self, 'constants_library_view'):
+            self.main_stack.setCurrentWidget(self.constants_library_view)
+            if hasattr(self, '_set_sidebar_active_button'):
+                self._set_sidebar_active_button("ref")
+
     def _on_stem_question_asked(self, question: str, target_pos=None, mode: str = None):
         # 1. Grounded RAG if PDF Study Mode is active
         if hasattr(self, 'pdf_rag_mgr') and self.pdf_rag_mgr.is_loaded() and hasattr(self, 'pdf_viewer_widget') and self.pdf_viewer_widget.isVisible():
             ai_response = self.pdf_rag_mgr.generate_grounded_answer(question)
-            center_pos = target_pos or self.view.mapToScene(self.view.viewport().rect().center())
+            raw_pos = target_pos or self.view.mapToScene(self.view.viewport().rect().center())
+            center_pos = self._find_non_overlapping_pos(raw_pos, width=580.0, height=220.0)
             bubble = AnswerBubble(title="PDF Grounded Answer", full_text=ai_response, question=question)
             bubble.setPos(center_pos)
             self.scene.addItem(bubble)
             return
+
         if target_pos:
-            place_pos = target_pos
+            raw_pos = target_pos
         elif hasattr(self.view, 'last_mouse_scene_pos') and not self.view.last_mouse_scene_pos.isNull():
-            place_pos = self.view.last_mouse_scene_pos
+            raw_pos = self.view.last_mouse_scene_pos
         else:
-            place_pos = self.view.mapToScene(self.view.viewport().rect().center())
+            raw_pos = self.view.mapToScene(self.view.viewport().rect().center())
+
+        place_pos = self._find_non_overlapping_pos(raw_pos, width=580.0, height=240.0)
 
         active_mode = mode or (self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study")
 

@@ -327,6 +327,13 @@ class VersionService:
 
         return local_dt.strftime("%b %d, %Y, %I:%M %p").lstrip('0')
 
+    def create_checkpoint(self, title: str = "", description: str = "", is_backup: bool = False, notebook_id: Optional[str] = None) -> VersionSnapshot:
+        """Creates a version checkpoint with custom title or description."""
+        desc = title if title else description
+        if is_backup:
+            desc = f"Pre-restore backup: {desc}"
+        return self.save_version(description=desc, notebook_id=notebook_id)
+
     def save_version(self, description: str = "", notebook_id: Optional[str] = None) -> VersionSnapshot:
         """
         Creates a meaningful recoverable version checkpoint.
@@ -336,18 +343,17 @@ class VersionService:
         # 1. Sync live canvas boards into Git repository
         self.adapter.sync_boards_to_repo()
 
-        # 2. Check if there are changes
+        # 2. Check if there are changes; if not, record checkpoint state file
         status = self.adapter.get_files_status()
         if not status["staged"] and not status["unstaged"]:
-            # Nothing to commit; return latest snapshot
-            history = self.get_version_history(limit=1)
-            if history:
-                return history[0]
+            checkpoint_file = os.path.join(self.adapter.repo_dir, ".kestrel_checkpoint")
+            with open(checkpoint_file, "w", encoding="utf-8") as f:
+                f.write(f"Checkpoint: {description}\nTimestamp: {datetime.now(timezone.utc).isoformat()}\n")
+            self.adapter.stage_file(".kestrel_checkpoint")
+        else:
+            self.adapter.stage_all()
 
-        # 3. Stage all modifications
-        self.adapter.stage_all()
-
-        # 4. Compute next version number
+        # 3. Compute next version number
         count = self.adapter.get_commit_count()
         next_version_num = count + 1
 
