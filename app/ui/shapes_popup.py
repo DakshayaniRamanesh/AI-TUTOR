@@ -1,70 +1,80 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QGraphicsDropShadowEffect
+    QWidget, QHBoxLayout, QPushButton
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QColor
 import qtawesome as qta
+from .theme_manager import ThemeManager
+
 
 class ShapesPopup(QWidget):
-    shape_selected = pyqtSignal(str) # "rectangle", "circle", "line", "arrow", "triangle"
+    shape_selected = pyqtSignal(str)  # "rectangle", "circle", "line", "arrow", "triangle"
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet("""
-            ShapesPopup {
-                background-color: #ffffff;
-                border-radius: 12px;
-                border: 1px solid #cbd5e1;
-            }
-            QPushButton {
-                background: transparent;
-                border: 1px solid transparent;
-                border-radius: 8px;
-                padding: 6px;
-            }
-            QPushButton:hover {
-                background-color: #f1f5f9;
-                border: 1px solid #e2e8f0;
-            }
-            QPushButton:pressed {
-                background-color: #e2e8f0;
-            }
-        """)
+        self.active_shape = "rectangle"
+        self._init_ui()
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._apply_theme(ThemeManager.instance().current_theme)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(15)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 30))
-        self.setGraphicsEffect(shadow)
+    def _init_ui(self):
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(6, 6, 6, 6)
+        self.layout.setSpacing(4)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(4)
-
-        shapes = [
-            ('fa5.square', 'rectangle'),
-            ('fa5.circle', 'circle'),
-            ('fa5s.slash', 'line'), # line doesn't have an exact icon, slash or horizontal rule is fine
-            ('fa5s.long-arrow-alt-right', 'arrow'),
-            ('fa5s.caret-up', 'triangle')
+        self.shapes = [
+            ('ri.checkbox-blank-line', 'rectangle'),
+            ('ri.disc-line', 'circle'),
+            ('ri.subtract-line', 'line'),
+            ('ri.arrow-right-line', 'arrow'),
+            ('ri.play-line', 'triangle')
         ]
         
         self.buttons = {}
-        for icon_name, shape_id in shapes:
-            btn = QPushButton(qta.icon(icon_name, color='#475569'), "")
-            btn.setIconSize(QSize(20, 20))
+        for icon_name, shape_id in self.shapes:
+            btn = QPushButton("", self)
+            btn.setIconSize(QSize(18, 18))
+            btn.setFixedSize(32, 32)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setToolTip(shape_id.capitalize())
-            # Capture variable using default arg
             btn.clicked.connect(lambda checked, s=shape_id: self._on_shape_clicked(s))
-            layout.addWidget(btn)
-            self.buttons[shape_id] = btn
+            self.layout.addWidget(btn)
+            self.buttons[shape_id] = (btn, icon_name)
             
-    def _on_shape_clicked(self, shape_id: str):
-        for s_id, btn in self.buttons.items():
-            if s_id == shape_id:
-                btn.setStyleSheet("background-color: #e2e8f0; border: 1px solid #cbd5e1;")
+        self.setFixedSize(184, 44)
+
+    def _render_buttons(self):
+        c = ThemeManager.instance().get_colors()
+        for shape_id, (btn, icon_name) in self.buttons.items():
+            is_active = (shape_id == self.active_shape)
+            icon_col = c['accent_text'] if is_active else c['text_secondary']
+            btn.setIcon(qta.icon(icon_name, color=icon_col))
+            if is_active:
+                btn.setStyleSheet(f"background-color: {c['accent']}; border: none; border-radius: 2px;")
             else:
-                btn.setStyleSheet("")
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        border: none;
+                        border-radius: 2px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {c['panel_card_bg']};
+                    }}
+                """)
+
+    def _apply_theme(self, theme_name: str = "light"):
+        c = ThemeManager.instance().get_colors()
+        self.setStyleSheet(f"""
+            ShapesPopup {{
+                background-color: {c['bg_card']};
+                border-radius: 4px;
+                border: 1px solid {c['border_color']};
+            }}
+        """)
+        self._render_buttons()
+
+    def _on_shape_clicked(self, shape_id: str):
+        self.active_shape = shape_id
+        self._render_buttons()
         self.shape_selected.emit(shape_id)

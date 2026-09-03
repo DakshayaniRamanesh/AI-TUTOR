@@ -1,5 +1,5 @@
 """
-Notebooks Management View Panel
+Notebooks Management View Panel (Monochrome / Technical Aesthetic)
 Displays folder tree navigation with breadcrumb, folder cards, and notebook cards.
 Supports nested folder structure, share dialog, Git VCS history, and Rename/Move/Delete actions.
 """
@@ -11,9 +11,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QCursor
+import qtawesome as qta
 
 from ...storage.notebook_storage import NotebookStorage
 from ..dialogs.share_notebook_dialog import ShareNotebookDialog
+from ..theme_manager import ThemeManager
+from ..kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss, menu_qss
 
 
 # ─── Move-To Folder Picker Dialog ─────────────────────────────────────────────
@@ -23,27 +26,32 @@ class FolderPickerDialog(QDialog):
 
     def __init__(self, folders: list[dict], exclude_id: str = None, parent=None):
         super().__init__(parent)
+        c = ThemeManager.instance().get_colors()
         self.setWindowTitle("Move to Folder")
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(340)
         self.setMinimumHeight(300)
         self.selected_folder_id = None
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
 
-        lbl = QLabel("Choose a destination folder:", self)
-        lbl.setStyleSheet("font-size: 13px; font-weight: 600; color: #1c1c1e;")
+        lbl = QLabel("CHOOSE DESTINATION FOLDER:", self)
+        lbl.setStyleSheet(f"font-size: 11px; font-weight: 700; font-family: {MONO_FONT}; color: {c['text_secondary']}; letter-spacing: 1px;")
         layout.addWidget(lbl)
 
         self.list_widget = QListWidget(self)
-        self.list_widget.setStyleSheet("""
-            QListWidget {
-                border: 1px solid #e5e5ea;
-                border-radius: 8px;
-                font-size: 13px;
-            }
-            QListWidget::item { padding: 8px; }
-            QListWidget::item:selected { background: #007aff; color: white; border-radius: 4px; }
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                font-family: {MONO_FONT};
+                font-size: 12px;
+                background-color: {c['bg_card']};
+                color: {c['text_primary']};
+            }}
+            QListWidget::item {{ padding: 8px; }}
+            QListWidget::item:selected {{ background: {c['accent']}; color: {c['accent_text']}; }}
         """)
 
         # Add Root option
@@ -52,8 +60,6 @@ class FolderPickerDialog(QDialog):
         self.list_widget.addItem(root_item)
 
         # Build indented folder list
-        all_folders = {f["id"]: f for f in folders}
-
         def _add_items(parent_id, depth):
             children = [f for f in folders if f.get("parent_id") == parent_id and f["id"] != exclude_id]
             children.sort(key=lambda x: x["name"].lower())
@@ -93,43 +99,46 @@ class FolderCardWidget(QFrame):
         super().__init__(parent)
         self.folder_id = folder["id"]
         self.folder_name = folder["name"]
+        c = ThemeManager.instance().get_colors()
 
         self.setObjectName("FolderCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
-        self.setStyleSheet("""
-            QFrame#FolderCard {
-                background-color: #ffffff;
-                border: 1px solid #e5e5ea;
-                border-radius: 10px;
-            }
-            QFrame#FolderCard:hover {
-                border-color: #007aff;
-                background-color: #f0f7ff;
-            }
-            QLabel#FolderCardTitle {
-                font-size: 14px;
-                font-weight: 600;
-                color: #1c1c1e;
-            }
-            QLabel#FolderCardSub {
+        self.setStyleSheet(f"""
+            QFrame#FolderCard {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 4px;
+            }}
+            QFrame#FolderCard:hover {{
+                border-color: {c['accent']};
+                background-color: {c['panel_card_bg']};
+            }}
+            QLabel#FolderCardTitle {{
+                font-size: 13px;
+                font-weight: 700;
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+            }}
+            QLabel#FolderCardSub {{
                 font-size: 11px;
-                color: #8e8e93;
-            }
-            QPushButton#BtnMenu {
+                font-family: {MONO_FONT};
+                color: {c['text_secondary']};
+            }}
+            QPushButton#BtnMenu {{
                 background: transparent;
                 border: none;
-                font-size: 16px;
-                color: #8e8e93;
-                padding: 4px;
-                border-radius: 6px;
-            }
-            QPushButton#BtnMenu:hover {
-                background-color: #e5e5ea;
-                color: #1c1c1e;
-            }
+                font-size: 14px;
+                color: {c['text_secondary']};
+                padding: 2px 6px;
+                border-radius: 2px;
+            }}
+            QPushButton#BtnMenu:hover {{
+                background-color: {c['border_color']};
+                color: {c['text_primary']};
+            }}
         """)
 
         layout = QHBoxLayout(self)
@@ -137,7 +146,7 @@ class FolderCardWidget(QFrame):
         layout.setSpacing(12)
 
         lbl_icon = QLabel("📁", self)
-        lbl_icon.setStyleSheet("font-size: 24px; background: transparent;")
+        lbl_icon.setStyleSheet("font-size: 20px; background: transparent;")
 
         text_box = QVBoxLayout()
         text_box.setSpacing(2)
@@ -163,23 +172,17 @@ class FolderCardWidget(QFrame):
         self.open_clicked.emit(self.folder_id)
 
     def _show_context_menu(self, pos):
+        c = ThemeManager.instance().get_colors()
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background: #ffffff; border: 1px solid #d1d1d6;
-                border-radius: 8px; padding: 4px; font-size: 12px;
-            }
-            QMenu::item { padding: 7px 16px; border-radius: 4px; color: #1c1c1e; }
-            QMenu::item:selected { background-color: #007aff; color: white; }
-        """)
-        act_open = menu.addAction("📂 Open")
-        act_rename = menu.addAction("✏️ Rename")
-        act_move = menu.addAction("📋 Move to...")
+        menu.setStyleSheet(menu_qss(c))
+
+        act_open = menu.addAction("Open")
+        act_rename = menu.addAction("Rename")
+        act_move = menu.addAction("Move to...")
         menu.addSeparator()
-        act_delete = menu.addAction("🗑️ Delete")
+        act_delete = menu.addAction("Delete")
 
         global_pos = self.mapToGlobal(pos)
-
         action = menu.exec(global_pos)
         if action == act_open:
             self.open_clicked.emit(self.folder_id)
@@ -207,46 +210,66 @@ class NotebookRowWidget(QFrame):
         self.notebook_id = data.get("id", "")
         self.notebook_name = data.get("name", "Untitled Notebook")
         self.updated_at = data.get("updated_at", "")
+        c = ThemeManager.instance().get_colors()
 
-        self.setStyleSheet("""
-            QFrame#NotebookRow {
-                background-color: #ffffff;
-                border: 1px solid #e5e5ea;
-                border-radius: 10px;
-                padding: 6px;
-            }
-            QFrame#NotebookRow:hover {
-                border-color: #007aff;
-                background-color: #f8f9ff;
-            }
-            QLabel#TitleLabel { font-size: 14px; font-weight: 600; color: #1c1c1e; }
-            QLabel#SubLabel { font-size: 11px; color: #8e8e93; }
-            QPushButton#BtnOpen {
-                background-color: #007aff; color: white; font-weight: 600; font-size: 12px;
-                border: none; border-radius: 6px; padding: 6px 14px;
-            }
-            QPushButton#BtnOpen:hover { background-color: #0056b3; }
-            QPushButton#BtnMore, QPushButton#BtnMenu {
+        self.setStyleSheet(f"""
+            QFrame#NotebookRow {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 4px;
+                padding: 4px;
+            }}
+            QFrame#NotebookRow:hover {{
+                border-color: {c['accent']};
+                background-color: {c['panel_card_bg']};
+            }}
+            QLabel#TitleLabel {{
+                font-size: 13px;
+                font-weight: 700;
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+            }}
+            QLabel#SubLabel {{
+                font-size: 11px;
+                font-family: {MONO_FONT};
+                color: {c['text_secondary']};
+            }}
+            QPushButton#BtnOpen {{
+                background-color: {c['accent']};
+                color: {c['accent_text']};
+                font-weight: 700;
+                font-family: {MONO_FONT};
+                font-size: 11px;
+                border: 1px solid {c['accent']};
+                border-radius: 2px;
+                padding: 5px 14px;
+                letter-spacing: 0.5px;
+            }}
+            QPushButton#BtnOpen:hover {{
+                background-color: {c['accent_hover']};
+            }}
+            QPushButton#BtnMore {{
                 background-color: transparent;
-                color: #1c1c1e;
-                border: 1px solid #d1d1d6;
+                color: {c['text_secondary']};
+                border: 1px solid {c['border_color']};
                 font-weight: bold;
-                font-size: 16px;
-                padding: 2px 8px;
-                border-radius: 6px;
-            }
-            QPushButton#BtnMore:hover, QPushButton#BtnMenu:hover {
-                background-color: #e5e5ea;
-            }
+                font-size: 13px;
+                padding: 2px 6px;
+                border-radius: 2px;
+            }}
+            QPushButton#BtnMore:hover {{
+                border-color: {c['accent']};
+                color: {c['text_primary']};
+            }}
         """)
 
         self.setObjectName("NotebookRow")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(12)
 
         lbl_icon = QLabel("📓", self)
-        lbl_icon.setStyleSheet("font-size: 22px; background: transparent;")
+        lbl_icon.setStyleSheet("font-size: 18px; background: transparent;")
 
         text_box = QVBoxLayout()
         text_box.setSpacing(2)
@@ -257,7 +280,7 @@ class NotebookRowWidget(QFrame):
         text_box.addWidget(lbl_title)
         text_box.addWidget(lbl_sub)
 
-        btn_open = QPushButton("Open", self)
+        btn_open = QPushButton("OPEN", self)
         btn_open.setObjectName("BtnOpen")
         btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_open.clicked.connect(lambda: self.open_clicked.emit(self.notebook_id))
@@ -275,35 +298,19 @@ class NotebookRowWidget(QFrame):
         layout.addWidget(btn_more)
 
     def _show_context_menu(self):
+        c = ThemeManager.instance().get_colors()
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #d1d1d6;
-                border-radius: 8px;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-size: 13px;
-                color: #1c1c1e;
-            }
-            QMenu::item:selected {
-                background-color: #007aff;
-                color: white;
-            }
-        """)
+        menu.setStyleSheet(menu_qss(c))
 
-        act_share = QAction("☌ Share Notebook (Drive)", menu)
+        act_share = QAction("Share Notebook (Drive)", menu)
         act_share.triggered.connect(lambda: self.share_clicked.emit(self.notebook_id, self.notebook_name))
         menu.addAction(act_share)
 
-        act_rename = QAction("✏️ Rename", menu)
+        act_rename = QAction("Rename", menu)
         act_rename.triggered.connect(lambda: self.rename_requested.emit(self.notebook_id))
         menu.addAction(act_rename)
 
-        act_move = QAction("📋 Move to...", menu)
+        act_move = QAction("Move to...", menu)
         act_move.triggered.connect(lambda: self.move_requested.emit(self.notebook_id))
         menu.addAction(act_move)
 
@@ -313,7 +320,7 @@ class NotebookRowWidget(QFrame):
 
         menu.addSeparator()
 
-        act_del = QAction("🗑️ Delete", menu)
+        act_del = QAction("Delete", menu)
         act_del.triggered.connect(lambda: self.delete_clicked.emit(self.notebook_id, self.notebook_name))
         menu.addAction(act_del)
 
@@ -333,13 +340,11 @@ class BreadcrumbBar(QFrame):
         self.setStyleSheet("QFrame { background: transparent; }")
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(0)
+        self._layout.setSpacing(2)
         self._layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
     def set_path(self, path: list[dict]):
-        """
-        path: [{id: None, name: 'Notebooks'}, {id: 'fld_...', name: 'Maths'}, ...]
-        """
+        c = ThemeManager.instance().get_colors()
         while self._layout.count():
             child = self._layout.takeAt(0)
             if child.widget():
@@ -347,19 +352,21 @@ class BreadcrumbBar(QFrame):
 
         for i, crumb in enumerate(path):
             is_last = i == len(path) - 1
-            btn = QPushButton(crumb["name"], self)
+            btn = QPushButton(crumb["name"].upper(), self)
             fid = crumb["id"]
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent;
                     border: none;
-                    font-size: 13px;
+                    font-family: {MONO_FONT};
+                    font-size: 11px;
                     font-weight: {'700' if is_last else '500'};
-                    color: {'#1c1c1e' if is_last else '#007aff'};
+                    letter-spacing: 0.5px;
+                    color: {c['text_primary'] if is_last else c['text_secondary']};
                     padding: 2px 4px;
                 }}
                 QPushButton:hover {{
-                    {'text-decoration: none;' if is_last else 'text-decoration: underline;'}
+                    color: {c['text_primary']};
                 }}
             """)
             if not is_last:
@@ -369,8 +376,8 @@ class BreadcrumbBar(QFrame):
             self._layout.addWidget(btn)
 
             if not is_last:
-                sep = QLabel("›", self)
-                sep.setStyleSheet("color: #8e8e93; font-size: 14px; padding: 0 2px;")
+                sep = QLabel(">", self)
+                sep.setStyleSheet(f"color: {c['text_secondary']}; font-family: {MONO_FONT}; font-size: 11px; padding: 0 2px;")
                 self._layout.addWidget(sep)
 
 
@@ -385,49 +392,37 @@ class NotebooksPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_folder_id = None  # None = root
-
-        self.setStyleSheet("""
-            QWidget#NotebooksPanelRoot { background-color: #f2f2f7; }
-            QLabel#PanelHeaderTitle {
-                font-size: 22px; font-weight: 700; color: #1c1c1e;
-            }
-            QPushButton#BtnNewNotebook {
-                background-color: #007aff; color: white; font-size: 13px; font-weight: 600;
-                border: none; border-radius: 8px; padding: 8px 16px;
-            }
-            QPushButton#BtnNewNotebook:hover { background-color: #0056b3; }
-            QPushButton#BtnNewFolder {
-                background-color: #ffffff; color: #1c1c1e; font-size: 13px; font-weight: 600;
-                border: 1px solid #d1d1d6; border-radius: 8px; padding: 8px 16px;
-            }
-            QPushButton#BtnNewFolder:hover { background-color: #e5e5ea; }
-        """)
-
         self.setObjectName("NotebooksPanelRoot")
+        self._setup_ui()
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._apply_theme(ThemeManager.instance().current_theme)
+        self.refresh()
+
+    def _setup_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(24, 20, 24, 20)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(32, 24, 32, 24)
+        main_layout.setSpacing(14)
 
         # ── Header Row ──
         header = QHBoxLayout()
-        lbl_header = QLabel("🗂 Saved Notebooks", self)
-        lbl_header.setObjectName("PanelHeaderTitle")
+        self.lbl_header = QLabel("Saved Notebooks", self)
+        self.lbl_header.setObjectName("PanelHeaderTitle")
 
-        btn_new_folder = QPushButton("📁 New Folder", self)
-        btn_new_folder.setObjectName("BtnNewFolder")
-        btn_new_folder.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_new_folder.clicked.connect(self._create_folder)
+        self.btn_new_folder = QPushButton("+ NEW FOLDER", self)
+        self.btn_new_folder.setObjectName("BtnNewFolder")
+        self.btn_new_folder.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_new_folder.clicked.connect(self._create_folder)
 
-        btn_new = QPushButton("➕ New Notebook", self)
-        btn_new.setObjectName("BtnNewNotebook")
-        btn_new.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_new.clicked.connect(self._new_notebook_in_current_folder)
+        self.btn_new = QPushButton("+ NEW NOTEBOOK", self)
+        self.btn_new.setObjectName("BtnNewNotebook")
+        self.btn_new.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_new.clicked.connect(self._new_notebook_in_current_folder)
 
-        header.addWidget(lbl_header)
+        header.addWidget(self.lbl_header)
         header.addStretch()
-        header.addWidget(btn_new_folder)
+        header.addWidget(self.btn_new_folder)
         header.addSpacing(8)
-        header.addWidget(btn_new)
+        header.addWidget(self.btn_new)
         main_layout.addLayout(header)
 
         # ── Breadcrumb Bar ──
@@ -443,13 +438,23 @@ class NotebooksPanel(QWidget):
         self.list_container = QWidget()
         self.list_layout = QVBoxLayout(self.list_container)
         self.list_layout.setContentsMargins(0, 0, 0, 0)
-        self.list_layout.setSpacing(10)
+        self.list_layout.setSpacing(8)
         self.list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self.scroll_area.setWidget(self.list_container)
         main_layout.addWidget(self.scroll_area)
 
-        self.refresh()
+    def _apply_theme(self, theme_name: str = "light"):
+        c = ThemeManager.instance().get_colors()
+        self.setStyleSheet(f"QWidget#NotebooksPanelRoot {{ background-color: {c['bg_app']}; }}")
+
+        self.lbl_header.setStyleSheet(f"""
+            font-size: 22px; font-weight: 800; color: {c['text_primary']};
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        """)
+
+        self.btn_new.setStyleSheet(primary_button_qss(c))
+        self.btn_new_folder.setStyleSheet(ghost_button_qss(c))
 
     def navigate_to_folder(self, folder_id):
         """Navigate into a folder (folder_id=None = root). Called by breadcrumb and folder card double-click."""
@@ -458,183 +463,147 @@ class NotebooksPanel(QWidget):
         self.refresh()
 
     def _open_share_dialog(self, notebook_id: str, name: str):
-        dialog = ShareNotebookDialog(notebook_id, name, self)
+        dialog = ShareNotebookDialog(notebook_id=notebook_id, notebook_name=name, parent=self)
         dialog.exec()
 
+    def _open_git_vcs(self, notebook_id: str, name: str):
+        self.git_vcs_requested.emit(notebook_id)
+
+    def _new_notebook_in_current_folder(self):
+        """Create a new notebook tagged to the current folder and open it."""
+        from ...storage.notebook_storage import NotebookStorage
+        nb_id = NotebookStorage.create_notebook(
+            name="Untitled Notebook",
+            folder_id=self._current_folder_id
+        )
+        self.create_notebook_requested.emit()
+        self.open_notebook_requested.emit(nb_id)
+
+    def _create_folder(self):
+        name, ok = QInputDialog.getText(
+            self, "New Folder", "Enter folder name:",
+            text="New Folder"
+        )
+        if ok and name.strip():
+            NotebookStorage.create_folder(name.strip(), parent_id=self._current_folder_id)
+            self.refresh()
+
+    def _rename_folder(self, folder_id: str):
+        folder = NotebookStorage.get_folder(folder_id)
+        current_name = folder["name"] if folder else ""
+        name, ok = QInputDialog.getText(
+            self, "Rename Folder", "Enter new name:",
+            text=current_name
+        )
+        if ok and name.strip() and name.strip() != current_name:
+            NotebookStorage.rename_folder(folder_id, name.strip())
+            self.refresh()
+
+    def _move_folder(self, folder_id: str):
+        folders = NotebookStorage.get_all_folders()
+        dlg = FolderPickerDialog(folders, exclude_id=folder_id, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            dest_id = dlg.selected_folder_id
+            if dest_id == folder_id:
+                QMessageBox.warning(self, "Invalid Move", "Cannot move a folder into itself.")
+                return
+            NotebookStorage.move_folder(folder_id, dest_id)
+            self.refresh()
+
+    def _delete_folder(self, folder_id: str):
+        reply = QMessageBox.question(
+            self, "Delete Folder",
+            "Are you sure you want to delete this folder?\nNotebooks inside will be moved to the parent folder.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            NotebookStorage.delete_folder(folder_id)
+            self.refresh()
+
+    def _rename_notebook(self, notebook_id: str):
+        meta = NotebookStorage.get_notebook(notebook_id)
+        current_name = meta.get("name", "") if meta else ""
+        name, ok = QInputDialog.getText(
+            self, "Rename Notebook", "Enter new name:",
+            text=current_name
+        )
+        if ok and name.strip() and name.strip() != current_name:
+            NotebookStorage.rename_notebook(notebook_id, name.strip())
+            self.refresh()
+
+    def _move_notebook(self, notebook_id: str):
+        folders = NotebookStorage.get_all_folders()
+        dlg = FolderPickerDialog(folders, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            NotebookStorage.move_notebook(notebook_id, dlg.selected_folder_id)
+            self.refresh()
+
+    def _delete_notebook(self, notebook_id: str, name: str):
+        reply = QMessageBox.question(
+            self, "Delete Notebook",
+            f"Are you sure you want to delete '{name}'?\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            NotebookStorage.delete_notebook(notebook_id)
+            self.refresh()
+
     def refresh(self):
-        """Reload current folder's direct children: sub-folders then notebooks."""
+        """Re-renders breadcrumb, folder cards, and notebook cards for current folder."""
+        # Update breadcrumb
+        path = NotebookStorage.get_breadcrumb_path(self._current_folder_id)
+        self.breadcrumb.set_path(path)
+
+        # Clear existing cards
         while self.list_layout.count():
             child = self.list_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
-        # Update breadcrumb
-        path = NotebookStorage.get_breadcrumb_path(self._current_folder_id)
-        self.breadcrumb.set_path(path)
+        # Load folders in current folder
+        folders = [f for f in NotebookStorage.get_folders() if f.get('parent_id') == self._current_folder_id]
+        # Load notebooks in current folder
+        notebooks = [nb for nb in NotebookStorage.get_index() if nb.get('folder_id') == self._current_folder_id]
 
-        try:
-            all_folders = NotebookStorage.get_folder_tree()
-            all_notebooks = NotebookStorage.get_index()
+        c = ThemeManager.instance().get_colors()
 
-            # Direct child folders of current folder
-            child_folders = [f for f in all_folders if f.get("parent_id") == self._current_folder_id]
-            child_folders.sort(key=lambda x: x["name"].lower())
+        if not folders and not notebooks:
+            empty_lbl = QLabel("This folder is empty. Create a notebook or subfolder above.", self)
+            empty_lbl.setStyleSheet(f"font-size: 12px; color: {c['text_secondary']}; font-family: {MONO_FONT}; padding: 30px;")
+            empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.list_layout.addWidget(empty_lbl)
+            return
 
-            # Notebooks in current folder
-            child_notebooks = [nb for nb in all_notebooks if nb.get("folder_id") == self._current_folder_id]
+        # Section 1: Folders
+        if folders:
+            lbl_sec_f = QLabel("FOLDERS", self)
+            lbl_sec_f.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {c['text_secondary']}; font-family: {MONO_FONT}; letter-spacing: 1.5px; padding-top: 4px;")
+            self.list_layout.addWidget(lbl_sec_f)
 
-            if not child_folders and not child_notebooks:
-                self._show_empty()
-                return
-
-            # ── Folder Cards ──
-            if child_folders:
-                lbl_sec = QLabel("Folders", self.list_container)
-                lbl_sec.setStyleSheet("font-size: 11px; font-weight: bold; color: #8e8e93; letter-spacing: 0.5px; padding: 4px 0;")
-                self.list_layout.addWidget(lbl_sec)
-
-            # Count items per folder
-            folder_nb_counts = {}
-            for nb in all_notebooks:
-                fid = nb.get("folder_id")
-                if fid:
-                    folder_nb_counts[fid] = folder_nb_counts.get(fid, 0) + 1
-            sub_counts = {}
-            for f in all_folders:
-                pid = f.get("parent_id")
-                if pid:
-                    sub_counts[pid] = sub_counts.get(pid, 0) + 1
-
-            for folder in child_folders:
-                fid = folder["id"]
-                total = folder_nb_counts.get(fid, 0) + sub_counts.get(fid, 0)
-                card = FolderCardWidget(folder, item_count=total, parent=self.list_container)
+            for f in folders:
+                # Count items inside this subfolder
+                sub_count = len([sf for sf in NotebookStorage.get_folders() if sf.get('parent_id') == f["id"]]) + len([nb for nb in NotebookStorage.get_index() if nb.get('folder_id') == f["id"]])
+                card = FolderCardWidget(f, item_count=sub_count, parent=self)
                 card.open_clicked.connect(self.navigate_to_folder)
                 card.rename_requested.connect(self._rename_folder)
                 card.move_requested.connect(self._move_folder)
                 card.delete_requested.connect(self._delete_folder)
                 self.list_layout.addWidget(card)
 
-            # ── Notebook Rows ──
-            if child_notebooks:
-                lbl_sec2 = QLabel("Notebooks", self.list_container)
-                lbl_sec2.setStyleSheet("font-size: 11px; font-weight: bold; color: #8e8e93; letter-spacing: 0.5px; padding: 4px 0;")
-                self.list_layout.addWidget(lbl_sec2)
+        # Section 2: Notebooks
+        if notebooks:
+            lbl_sec_n = QLabel("NOTEBOOKS", self)
+            lbl_sec_n.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {c['text_secondary']}; font-family: {MONO_FONT}; letter-spacing: 1.5px; padding-top: 10px;")
+            self.list_layout.addWidget(lbl_sec_n)
 
-            for nb in child_notebooks:
-                row = NotebookRowWidget(nb, self.list_container)
+            for nb in notebooks:
+                row = NotebookRowWidget(nb, parent=self)
                 row.open_clicked.connect(self.open_notebook_requested.emit)
                 row.share_clicked.connect(self._open_share_dialog)
-                row.git_clicked.connect(lambda nb_id, name: self.git_vcs_requested.emit(nb_id))
-                row.delete_clicked.connect(self._confirm_delete_notebook)
                 row.rename_requested.connect(self._rename_notebook)
                 row.move_requested.connect(self._move_notebook)
+                row.git_clicked.connect(self._open_git_vcs)
+                row.delete_clicked.connect(self._delete_notebook)
                 self.list_layout.addWidget(row)
-
-        except Exception as err:
-            QMessageBox.warning(self, "Error Loading Notebooks", f"Could not load notebooks:\n{err}")
-
-    def _show_empty(self):
-        lbl = QLabel(
-            "📭 This folder is empty.\nCreate a sub-folder or click '➕ New Notebook'.",
-            self.list_container,
-        )
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setStyleSheet("font-size: 14px; color: #8e8e93; padding: 40px;")
-        self.list_layout.addWidget(lbl)
-
-    # ── Create ──────────────────────────────────────────────────────────────────
-
-    def _new_notebook_in_current_folder(self):
-        name, ok = QInputDialog.getText(self, "New Notebook", "Notebook name:", text="Untitled Notebook")
-        if ok and name.strip():
-            NotebookStorage.create_notebook(name.strip(), folder_id=self._current_folder_id)
-            self.refresh()
-
-    def _create_folder(self):
-        name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
-        if ok and name.strip():
-            try:
-                NotebookStorage.create_folder(name.strip(), parent_id=self._current_folder_id)
-                self.refresh()
-            except ValueError as e:
-                QMessageBox.warning(self, "Cannot Create Folder", str(e))
-
-    # ── Rename ──────────────────────────────────────────────────────────────────
-
-    def _rename_folder(self, folder_id: str):
-        folders = {f["id"]: f for f in NotebookStorage.get_folders()}
-        current = folders.get(folder_id, {}).get("name", "")
-        name, ok = QInputDialog.getText(self, "Rename Folder", "New name:", text=current)
-        if ok and name.strip():
-            NotebookStorage.rename_folder(folder_id, name.strip())
-            self.refresh()
-
-    def _rename_notebook(self, notebook_id: str):
-        index = {nb["id"]: nb for nb in NotebookStorage.get_index()}
-        current = index.get(notebook_id, {}).get("name", "")
-        name, ok = QInputDialog.getText(self, "Rename Notebook", "New name:", text=current)
-        if ok and name.strip():
-            NotebookStorage.rename_notebook(notebook_id, name.strip())
-            self.refresh()
-
-    # ── Move ────────────────────────────────────────────────────────────────────
-
-    def _move_notebook(self, notebook_id: str):
-        folders = NotebookStorage.get_folder_tree()
-        dlg = FolderPickerDialog(folders, parent=self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            target = dlg.selected_folder_id
-            NotebookStorage.move_notebook(notebook_id, target)
-            self.refresh()
-
-    def _move_folder(self, folder_id: str):
-        folders = NotebookStorage.get_folder_tree()
-        dlg = FolderPickerDialog(folders, exclude_id=folder_id, parent=self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            target = dlg.selected_folder_id
-            try:
-                NotebookStorage.move_folder(folder_id, target)
-                self.refresh()
-            except ValueError as e:
-                QMessageBox.warning(self, "Cannot Move Folder", str(e))
-
-    # ── Delete ──────────────────────────────────────────────────────────────────
-
-    def _confirm_delete_notebook(self, notebook_id: str, name: str):
-        reply = QMessageBox.question(
-            self, "Delete Notebook",
-            f"Are you sure you want to delete '{name}'?\nThis action cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                NotebookStorage.delete_notebook(notebook_id)
-                self.refresh()
-            except Exception as err:
-                QMessageBox.warning(self, "Delete Failed", f"Failed to delete notebook:\n{err}")
-
-    def _delete_folder(self, folder_id: str):
-        preview = NotebookStorage.get_cascade_preview(folder_id)
-        folder_names = preview["folder_names"]
-        nb_names = preview["notebook_names"]
-
-        details = []
-        if len(folder_names) > 1:
-            details.append(f"• {len(folder_names)} folder(s): {', '.join(folder_names[:4])}")
-        if nb_names:
-            details.append(f"• {len(nb_names)} notebook(s): {', '.join(nb_names[:4])}")
-
-        body = "This will permanently delete:\n" + "\n".join(details) if details else "This folder is empty."
-        fname = folder_names[0] if folder_names else folder_id
-
-        reply = QMessageBox.warning(
-            self, "Delete Folder",
-            f"Delete '{fname}'?\n\n{body}\n\nThis cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            NotebookStorage.delete_folder_cascade(folder_id)
-            self.refresh()

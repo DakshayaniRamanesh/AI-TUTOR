@@ -1,68 +1,170 @@
+"""
+Home View — Minimal Brutalist / Technical Hero Landing
+Matches the Figma reference design:
+- Uppercase monospace category headers
+- Prominent 'Kestrel' brand title
+- Monospace subtitle
+- Sharp geometric action buttons: 'NEW CANVAS' (solid primary) and 'SUBJECTS' (ghost bordered)
+"""
+
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from ..theme_manager import ThemeManager
+from ..kestrel_theme import MONO_FONT
+
 
 class HomeView(QWidget):
-    # These signals tell the main window to switch screens
     open_blank_notebook = pyqtSignal()
     open_my_subjects = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background-color: #f8f9fa; color: #1c1c1e; font-family: -apple-system, sans-serif;")
         self._setup_ui()
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._apply_theme(ThemeManager.instance().current_theme)
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout = QVBoxLayout(self)
+        main_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.setSpacing(0)
 
-        # Title
-        title = QLabel("Welcome to Kestrel")
-        title.setStyleSheet("font-size: 32px; font-weight: bold; margin-bottom: 10px;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
+        # Center Container
+        center_box = QWidget(self)
+        center_box.setMaximumWidth(560)
+        c_layout = QVBoxLayout(center_box)
+        c_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        c_layout.setSpacing(14)
+
+        # Top micro-tagline (monospace, uppercase, letter-spaced)
+        self.lbl_tagline = QLabel("ADAPTIVE STEM LEARNING ENVIRONMENT", center_box)
+        self.lbl_tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        c_layout.addWidget(self.lbl_tagline)
+
+        # Brand Title
+        self.lbl_title = QLabel("Kestrel", center_box)
+        self.lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        c_layout.addWidget(self.lbl_title)
 
         # Subtitle
-        subtitle = QLabel("Choose how you want to start learning today.")
-        subtitle.setStyleSheet("font-size: 16px; color: #6e6e73; margin-bottom: 40px;")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(subtitle)
+        self.lbl_subtitle = QLabel("YOUR INTELLIGENT NOTEBOOK", center_box)
+        self.lbl_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        c_layout.addWidget(self.lbl_subtitle)
 
-        # Buttons Layout
+        c_layout.addSpacing(16)
+
+        # Buttons Layout (2 sharp geometric buttons)
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(30)
+        btn_layout.setSpacing(14)
         btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Blank Notebook Button (Unstructured path)
-        self.btn_blank = QPushButton("📝 Blank Notebook\n\nQuick, unfiled scratchpad")
-        self._style_button(self.btn_blank)
+        # 1. NEW CANVAS Button (Primary Solid Block)
+        self.btn_blank = QPushButton("NEW CANVAS", center_box)
+        self.btn_blank.setFixedSize(140, 42)
+        self.btn_blank.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_blank.clicked.connect(self.open_blank_notebook.emit)
         btn_layout.addWidget(self.btn_blank)
 
-        # My Subjects Button (Structured path)
-        self.btn_subjects = QPushButton("📚 My Subjects\n\nOrganized notes & videos")
-        self._style_button(self.btn_subjects)
+        # 2. SUBJECTS Button (Ghost Bordered Block)
+        self.btn_subjects = QPushButton("SUBJECTS", center_box)
+        self.btn_subjects.setFixedSize(140, 42)
+        self.btn_subjects.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_subjects.clicked.connect(self.open_my_subjects.emit)
         btn_layout.addWidget(self.btn_subjects)
 
-        layout.addLayout(btn_layout)
+        c_layout.addLayout(btn_layout)
 
-    def _style_button(self, btn: QPushButton):
-        btn.setFixedSize(240, 160)
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ffffff;
-                border: 2px solid #e5e5ea;
-                border-radius: 12px;
-                font-size: 16px;
-                font-weight: 500;
-                color: #1c1c1e;
-                padding: 20px;
-            }
-            QPushButton:hover {
-                border-color: #007aff;
-                color: #007aff;
-                background-color: #f0f8ff;
-            }
+        c_layout.addSpacing(12)
+
+        # Optional bottom demo link (styled cleanly)
+        self.btn_demo = QPushButton("→ VIEW FEATURE DEMO BOARD", center_box)
+        self.btn_demo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_demo.clicked.connect(self.open_blank_notebook.emit)
+        c_layout.addWidget(self.btn_demo, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        main_layout.addWidget(center_box)
+
+    def _apply_theme(self, theme_name: str = "light"):
+        c = ThemeManager.instance().get_colors()
+        self.setStyleSheet(f"background-color: {c['bg_app']};")
+
+        self.lbl_tagline.setStyleSheet(f"""
+            font-family: {MONO_FONT};
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 2.5px;
+            color: {c['text_secondary']};
+            background: transparent;
+        """)
+
+        self.lbl_title.setStyleSheet(f"""
+            font-size: 52px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: {c['text_primary']};
+            background: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        """)
+
+        self.lbl_subtitle.setStyleSheet(f"""
+            font-family: {MONO_FONT};
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            color: {c['text_secondary']};
+            background: transparent;
+        """)
+
+        # Solid Primary Button
+        self.btn_blank.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['accent']};
+                color: {c['accent_text']};
+                border: 1px solid {c['accent']};
+                border-radius: 2px;
+                font-family: {MONO_FONT};
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 1px;
+            }}
+            QPushButton:hover {{
+                background-color: {c['accent_hover']};
+                border-color: {c['accent_hover']};
+            }}
+        """)
+
+        # Ghost Bordered Button
+        self.btn_subjects.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['bg_card']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                font-family: {MONO_FONT};
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 1px;
+            }}
+            QPushButton:hover {{
+                border-color: {c['accent']};
+                background-color: {c['panel_card_bg']};
+            }}
+        """)
+
+        # Demo sub-link button
+        self.btn_demo.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                font-family: {MONO_FONT};
+                font-size: 10px;
+                font-weight: 600;
+                letter-spacing: 1.5px;
+                color: {c['text_secondary']};
+                padding: 4px 8px;
+            }}
+            QPushButton:hover {{
+                color: {c['text_primary']};
+            }}
         """)

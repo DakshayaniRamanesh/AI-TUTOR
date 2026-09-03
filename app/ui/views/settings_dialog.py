@@ -1,42 +1,37 @@
+import os
 import requests
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
-import qtawesome as qta
+from ..theme_manager import ThemeManager
+from ..kestrel_theme import MONO_FONT, ghost_button_qss, primary_button_qss
+
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings & Diagnostics")
-        self.resize(400, 300)
-        self.setStyleSheet("""
-        
-            QDialog {
-                background-color: #f2f2f7;
-            }
-            QLabel {
-                color: #1c1c1e;
-            }
-            QPushButton {
-                background-color: #ffffff;
-                border: 1px solid #d1d1d6;
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-weight: 600;
-                color: #1c1c1e;
-            }
-            QPushButton:hover {
-                background-color: #e5e5ea;
-            }
+        self.resize(420, 320)
+        c = ThemeManager.instance().get_colors()
+
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+            }}
+            QLabel {{
+                color: {c['text_primary']};
+                font-family: {MONO_FONT};
+            }}
         """)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
         
-        title = QLabel("API Integrations Test")
-        title.setFont(QFont("-apple-system", 14, QFont.Weight.Bold))
+        title = QLabel("SYSTEM DIAGNOSTICS & APIS")
+        title.setStyleSheet(f"font-size: 13px; font-weight: 800; letter-spacing: 1px; color: {c['text_primary']}; font-family: {MONO_FONT};")
         layout.addWidget(title)
 
         self._add_diagnostic_row(layout, "Groq API (Structure Agent)", "/api/diagnostics/groq")
@@ -45,19 +40,38 @@ class SettingsDialog(QDialog):
 
         layout.addStretch()
 
-        btn_close = QPushButton("Close")
+        btn_close = QPushButton("CLOSE")
+        btn_close.setStyleSheet(ghost_button_qss(c))
         btn_close.clicked.connect(self.close)
         layout.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignRight)
 
     def _add_diagnostic_row(self, layout: QVBoxLayout, label_text: str, endpoint: str):
+        c = ThemeManager.instance().get_colors()
         row = QFrame()
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
         
         lbl = QLabel(label_text)
-        lbl.setFont(QFont("-apple-system", 12))
+        lbl.setStyleSheet(f"font-size: 12px; font-family: {MONO_FONT}; color: {c['text_primary']};")
         
-        btn_test = QPushButton("Test Connection")
+        btn_test = QPushButton("TEST")
+        btn_test.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['bg_card']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                font-family: {MONO_FONT};
+                font-size: 11px;
+                font-weight: 600;
+                padding: 4px 10px;
+            }}
+            QPushButton:hover {{
+                border-color: {c['accent']};
+                background-color: {c['panel_card_bg']};
+            }}
+        """)
         status_lbl = QLabel("")
         status_lbl.setFixedWidth(24)
 
@@ -71,27 +85,27 @@ class SettingsDialog(QDialog):
         layout.addWidget(row)
 
     def _run_test(self, button: QPushButton, status_lbl: QLabel, endpoint: str):
-        button.setText("Testing...")
+        button.setText("...")
         button.setEnabled(False)
         status_lbl.setText("")
         
-        # We use QApplication.processEvents to force UI update since requests.get is blocking
         from PyQt6.QtWidgets import QApplication
         QApplication.processEvents()
         
+        backend_url = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('PORT', '8888')}").rstrip("/")
         try:
-            resp = requests.get(f"http://127.0.0.1:8000{endpoint}", timeout=10)
+            resp = requests.get(f"{backend_url}{endpoint}", timeout=10)
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
             if resp.status_code == 200 and data.get("status") == "ok":
-                status_lbl.setText("✅")
+                status_lbl.setText("✓")
                 status_lbl.setToolTip(data.get("message", "Connected successfully"))
             else:
                 msg = data.get("message", f"HTTP {resp.status_code}: {resp.text}")
-                status_lbl.setText("❌")
+                status_lbl.setText("✕")
                 status_lbl.setToolTip(msg)
         except Exception as e:
-            status_lbl.setText("❌")
+            status_lbl.setText("✕")
             status_lbl.setToolTip(f"Connection failed: {str(e)}")
         finally:
-            button.setText("Test Connection")
+            button.setText("TEST")
             button.setEnabled(True)

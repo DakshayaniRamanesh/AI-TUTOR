@@ -1,17 +1,33 @@
+"""
+RendererAgent — Two-stage Manim rendering with reliable temp directory cleanup.
+
+Improvements over v1:
+  - Two-stage render: fast validation render (-ql, 480p) → production render (-qm, 720p)
+  - Final video moved to persistent workspace/videos/ before temp dir cleanup
+  - Temp directories always cleaned up via try/finally (no more disk leaks)
+  - Improved error message extraction: shows Python exception type + line, not raw Manim log
+  - Records render_quality on the job for traceability
+"""
+
 import os
+import sys
+import shutil
 import subprocess
 import tempfile
-import sys
 from backend.video_generation.models import VideoJob, JobStatus
 
-# Detect if running on a GPU-capable environment (Modal A10G)
-# If nvidia-smi is present, we can use h264_nvenc for 3-5x faster encoding.
+# Persistent output directory for successfully rendered videos
+_VIDEOS_DIR = os.path.join(
+    os.path.dirname(__file__), "..", "..", "workspace", "videos"
+)
+os.makedirs(_VIDEOS_DIR, exist_ok=True)
+
+
 def _nvenc_available() -> bool:
     try:
         result = subprocess.run(["nvidia-smi"], capture_output=True, timeout=5)
         if result.returncode != 0:
             return False
-        # Also check ffmpeg supports nvenc
         ffmpeg_check = subprocess.run(
             ["ffmpeg", "-hide_banner", "-encoders"],
             capture_output=True, text=True, timeout=10
@@ -20,6 +36,7 @@ def _nvenc_available() -> bool:
     except Exception:
         return False
 
+
 _GPU_ENCODE = _nvenc_available()
 if _GPU_ENCODE:
     print("[RendererAgent] GPU detected — using h264_nvenc encoder (3-5x faster encode)")
@@ -27,99 +44,177 @@ else:
     print("[RendererAgent] No GPU encoder — using libx264 CPU encoder")
 
 
+def _get_ffmpeg() -> str:
+    try:
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        ffmpeg_dir = os.path.dirname(ffmpeg_exe)
+        if ffmpeg_dir not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+        return ffmpeg_exe
+    except Exception:
+        import shutil
+        return shutil.which("ffmpeg") or "ffmpeg"
+
+
+def _find_mp4(media_dir: str) -> str | None:
+    """Walk media_dir and return the first non-partial .mp4 file found."""
+    for root, dirs, files in os.walk(media_dir):
+        # Skip partial/temp movie subdirs
+        dirs[:] = [d for d in dirs if "partial" not in d.lower()]
+        for f in files:
+            if f.endswith(".mp4"):
+                return os.path.join(root, f)
+    return None
+
+
+def _clean_stderr(stderr: str) -> str:
+    """Remove tqdm progress bar noise."""
+    return "\n".join(
+        l for l in (stderr or "").splitlines()
+        if not ("|" in l and "%" in l and "it/s" in l)
+    )
+
+
+def _extract_error(stderr: str, stdout: str = "") -> str:
+    """Extract the most meaningful error message from Manim's output."""
+    combined = _clean_stderr(stderr) + "\n" + (stdout or "")
+    lines = combined.splitlines()
+    # Python exceptions first
+    error_lines = [l for l in lines if any(
+        kw in l for kw in ["Error:", "Exception:", "Traceback", "line "]
+    )]
+    if error_lines:
+        return "\n".join(error_lines[:6])
+    # Fall back to last 800 chars of cleaned stderr
+    return combined[-800:].strip()
+
+
+def _reencode(src: str, dst: str) -> bool:
+    """Re-encode with FFmpeg for browser compatibility. Returns True on success."""
+    encoder = "h264_nvenc" if _GPU_ENCODE else "libx264"
+    ffmpeg = _get_ffmpeg()
+    cmd = [
+        ffmpeg, "-y",
+        "-i", src,
+        "-c:v", encoder,
+        "-preset", "fast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        dst,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode == 0 and os.path.exists(dst):
+            print(f"[RendererAgent] Re-encoded with {encoder}: {dst}")
+            return True
+        print(f"[RendererAgent] Re-encode failed ({encoder}): {result.stderr[:150]}")
+        return False
+    except Exception as e:
+        print(f"[RendererAgent] FFmpeg re-encode skipped ({e}) — using raw Manim output")
+        return False
+
+
 class RendererAgent:
     def run(self, job: VideoJob) -> VideoJob:
         job.step = "renderer_agent"
+        job.friendly_step = "Rendering video..."
         job.progress_percentage = 85
 
         if not job.manim_code:
             job.status = JobStatus.ERROR
-            job.error_message = "No Manim code available to render."
+            job.error_message = "No animation code available to render."
             return job
 
         temp_dir = tempfile.mkdtemp(prefix=f"manim_{job.job_id}_")
         script_path = os.path.join(temp_dir, "scene.py")
 
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(job.manim_code)
-
-        output_media_dir = os.path.join(temp_dir, "media")
-
         try:
-            # Use --renderer=opengl where GPU supports it for accelerated rendering.
-            # Falls back gracefully to Cairo if OpenGL is unavailable.
-            cmd = [
-                sys.executable, "-m", "manim", "render", "-qh",   # High quality (1080p)
-                "--media_dir", output_media_dir,
-                script_path, "MainScene"
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(job.manim_code)
 
-            if result.returncode != 0:
-                # OpenGL renderer failed — fall back to default Cairo renderer
-                print(f"[RendererAgent] OpenGL renderer failed, falling back to Cairo: {result.stderr[:200]}")
-                cmd = [
-                    sys.executable, "-m", "manim", "render", "-ql",
-                    "--media_dir", output_media_dir,
-                    script_path, "MainScene"
-                ]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            # ── Stage A: Fast validation render (-ql, 480p) ───────────────────
+            print(f"[RendererAgent] Stage A: fast validation render (-ql)")
+            ql_media = os.path.join(temp_dir, "media_ql")
+            ok, mp4 = self._manim_render(script_path, ql_media, quality="-ql", timeout=120)
 
-            if result.returncode == 0:
-                # Find rendered MP4
-                mp4_file = None
-                for root, _, files in os.walk(output_media_dir):
-                    if "partial_movie_files" in root:
-                        continue
-                    for file in files:
-                        if file.endswith(".mp4"):
-                            mp4_file = os.path.join(root, file)
-                            break
-                    if mp4_file:
-                        break
+            if not ok or not mp4:
+                err = _extract_error(mp4 or "")  # mp4 is error string when ok=False
+                job.status = JobStatus.ERROR
+                job.error_message = f"Animation rendering failed.\n{err[:400]}"
+                print(f"[RendererAgent] Stage A failed: {err[:150]}")
+                return job
 
-                if mp4_file and os.path.exists(mp4_file):
-                    # ── GPU Encode step (NEW) ──────────────────────────────────────────
-                    # Re-encode the Manim output using NVENC (GPU) if available.
-                    # h264_nvenc is 3-5x faster than libx264 on the same A10G box
-                    # we are already paying for. Falls back to libx264 on CPU if
-                    # no GPU encoder is detected (local dev / non-GPU Modal tier).
-                    encoded_path = os.path.join(temp_dir, f"{job.job_id}_encoded.mp4")
-                    encoder = "h264_nvenc" if _GPU_ENCODE else "libx264"
-                    try:
-                        import imageio_ffmpeg
-                        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-                    except ImportError:
-                        ffmpeg_exe = "ffmpeg"
-                    
-                    encode_cmd = [
-                        ffmpeg_exe, "-y",
-                        "-i", mp4_file,
-                        "-c:v", encoder,
-                        "-preset", "fast",   # nvenc: fast; libx264: fast (both valid)
-                        "-crf", "23",          # quality (ignored by nvenc, uses -b:v default)
-                        "-pix_fmt", "yuv420p", # browser-compatible pixel format
-                        "-movflags", "+faststart",  # web streaming optimization
-                        encoded_path
-                    ]
-                    enc_result = subprocess.run(encode_cmd, capture_output=True, text=True, timeout=120)
-                    if enc_result.returncode == 0 and os.path.exists(encoded_path):
-                        print(f"[RendererAgent] Encoded with {encoder}: {encoded_path}")
-                        job.video_path = encoded_path
-                    else:
-                        # Encode failed — use raw Manim output as-is
-                        print(f"[RendererAgent] Encode step failed ({encoder}), using raw output. {enc_result.stderr[:150]}")
-                        job.video_path = mp4_file
-                    return job
+            # ── Stage B: Production render (-qm, 720p) ────────────────────────
+            # Only on first attempt (retry_count == 0). On retries keep -ql.
+            final_mp4 = mp4
+            if job.retry_count == 0:
+                print(f"[RendererAgent] Stage B: production render (-qm)")
+                qm_media = os.path.join(temp_dir, "media_qm")
+                ok_prod, mp4_prod = self._manim_render(script_path, qm_media, quality="-qm", timeout=240)
+                if ok_prod and mp4_prod:
+                    final_mp4 = mp4_prod
+                    job.render_quality = "medium"
+                    print(f"[RendererAgent] Production render succeeded")
+                else:
+                    # Production render failed — use -ql output (still watchable)
+                    print(f"[RendererAgent] Production render failed — using fast render output")
+                    job.render_quality = "low"
+            else:
+                job.render_quality = "low"
 
-            job.status = JobStatus.ERROR
-            err_msg = getattr(result, 'stderr', 'Unknown render error')
-            job.error_message = f"Manim render failed: {err_msg[:300]}"
-            print(f"[RendererAgent] {job.error_message}")
+            # ── FFmpeg re-encode for browser compatibility ─────────────────────
+            persistent_path = os.path.join(
+                _VIDEOS_DIR, f"{job.job_id}_v{job.version}.mp4"
+            )
+            if _reencode(final_mp4, persistent_path):
+                job.video_path = persistent_path
+            else:
+                # Fall back: copy raw file to persistent dir
+                shutil.copy2(final_mp4, persistent_path)
+                job.video_path = persistent_path
+                print(f"[RendererAgent] Using raw output (copy to persistent dir): {persistent_path}")
+
             return job
-            
+
         except Exception as e:
-            print(f"[RendererAgent] Execution exception: {e}.")
+            print(f"[RendererAgent] Unexpected exception: {e}")
             job.status = JobStatus.ERROR
-            job.error_message = f"Renderer exception: {str(e)}"
+            job.error_message = f"Rendering failed unexpectedly: {type(e).__name__}: {str(e)[:200]}"
             return job
+
+        finally:
+            # Always clean up temp dir, even on error
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                print(f"[RendererAgent] Cleaned up temp dir: {temp_dir}")
+            except Exception as cleanup_err:
+                print(f"[RendererAgent] Temp dir cleanup failed: {cleanup_err}")
+
+    def _manim_render(
+        self, script_path: str, media_dir: str, quality: str = "-ql", timeout: int = 180
+    ) -> tuple[bool, str]:
+        """
+        Run manim render and return (success, mp4_path_or_error_message).
+        """
+        os.makedirs(media_dir, exist_ok=True)
+        cmd = [
+            sys.executable, "-m", "manim", "render",
+            quality,
+            "--media_dir", media_dir,
+            script_path, "MainScene"
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return False, f"Render timed out after {timeout}s. Simplify the animation."
+
+        if result.returncode != 0:
+            return False, _extract_error(result.stderr, result.stdout)
+
+        mp4 = _find_mp4(media_dir)
+        if not mp4:
+            return False, "Manim finished but no .mp4 output file was found."
+
+        return True, mp4

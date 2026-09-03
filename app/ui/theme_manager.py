@@ -70,37 +70,69 @@ class ThemeManager(QObject):
     def get_colors(self) -> dict:
         if self.is_dark():
             return {
-                "bg_app": "#0f0f11",
-                "bg_card": "#18181b",
-                "bg_sidebar": "#121215",
-                "bg_titlebar": "#1c1c20",
-                "bg_toolbar": "#18181b",
-                "text_primary": "#f4f4f5",
-                "text_secondary": "#a1a1aa",
-                "border_color": "#27272a",
-                "canvas_bg": "#18181c",
-                "canvas_grid": "#27272a",
-                "accent": "#38bdf8",
-                "accent_hover": "#0284c7",
-                "panel_card_bg": "#27272a",
-                "input_bg": "#27272a",
-                "editor_bg": "#121215"
+                # ── Backgrounds ──────────────────────────────────────────
+                "bg_app":       "#0a0a0f",
+                "bg_card":      "#111116",
+                "bg_sidebar":   "#080808",
+                "bg_titlebar":  "#0a0a0f",
+                "bg_toolbar":   "#111116",
+                # ── Text ─────────────────────────────────────────────────
+                "text_primary":   "#f0f0f0",
+                "text_secondary": "#888888",
+                # ── Borders ──────────────────────────────────────────────
+                "border_color": "#252525",
+                # ── Canvas ───────────────────────────────────────────────
+                "canvas_bg":   "#0f0f14",
+                "canvas_grid": "#1a1a1f",
+                # ── Accent (monochrome: white in dark mode) ───────────────
+                "accent":       "#f0f0f0",
+                "accent_hover": "#cccccc",
+                "accent_text":  "#0a0a0a",   # text ON the accent fill
+                # ── Surfaces ─────────────────────────────────────────────
+                "panel_card_bg": "#1a1a1f",
+                "input_bg":      "#1a1a1f",
+                "editor_bg":     "#0a0a0f",
+                # ── Sidebar icons ─────────────────────────────────────────
+                "sidebar_icon":        "#6a6a7a",
+                "sidebar_active_bg":   "#0a0a0f",
+                "sidebar_active_icon": "#f0f0f0",
+                # ── Tag pills (subtle, muted) ─────────────────────────────
+                "tag_pill_bg":   "#252525",
+                "tag_pill_text": "#888888",
+                # ── Typography ───────────────────────────────────────────
+                "mono_font": '"Courier New", "Consolas", "Lucida Console", monospace',
             }
         else:
             return {
-                "bg_app": "#f2f2f7",
-                "bg_card": "#ffffff",
-                "bg_sidebar": "#f8f8fa",
-                "bg_titlebar": "#f2f2f7",
-                "bg_toolbar": "#ffffff",
-                "text_primary": "#1c1c1e",
-                "text_secondary": "#6e6e73",
-                "border_color": "#d1d1d6",
-                "canvas_bg": "#fcfbf7",
-                "canvas_grid": "#e5e5ea",
-                "accent": "#007aff",
-                "accent_hover": "#0056b3",
-                "panel_card_bg": "#ffffff",
-                "input_bg": "#ffffff",
-                "editor_bg": "#f8f9fa"
+                # ── Backgrounds ──────────────────────────────────────────
+                "bg_app":       "#ffffff",
+                "bg_card":      "#ffffff",
+                "bg_sidebar":   "#0d0d12",   # dark sidebar in light mode (Figma ref)
+                "bg_titlebar":  "#ffffff",
+                "bg_toolbar":   "#ffffff",
+                # ── Text ─────────────────────────────────────────────────
+                "text_primary":   "#0a0a0a",
+                "text_secondary": "#888888",
+                # ── Borders ──────────────────────────────────────────────
+                "border_color": "#e0e0e0",
+                # ── Canvas ───────────────────────────────────────────────
+                "canvas_bg":   "#fafafa",
+                "canvas_grid": "#e8e8e8",
+                # ── Accent (monochrome: black in light mode) ──────────────
+                "accent":       "#0a0a0a",
+                "accent_hover": "#333333",
+                "accent_text":  "#ffffff",   # text ON the accent fill
+                # ── Surfaces ─────────────────────────────────────────────
+                "panel_card_bg": "#f5f5f5",
+                "input_bg":      "#ffffff",
+                "editor_bg":     "#fafafa",
+                # ── Sidebar icons ─────────────────────────────────────────
+                "sidebar_icon":        "#9a9aaa",
+                "sidebar_active_bg":   "#1e1e26",
+                "sidebar_active_icon": "#ffffff",
+                # ── Tag pills (subtle, muted) ─────────────────────────────
+                "tag_pill_bg":   "#f0f0f0",
+                "tag_pill_text": "#555555",
+                # ── Typography ───────────────────────────────────────────
+                "mono_font": '"Courier New", "Consolas", "Lucida Console", monospace',
             }

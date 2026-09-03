@@ -84,6 +84,15 @@ class VideoJob:
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
 
+    # ── User-Facing Progress & Traceability ──────────────────────────────────
+    # These fields are populated by agents and surfaced in /status for UX.
+    friendly_step: str = "Starting..."          # Human-readable progress label
+    topic_subject: str = ""                      # Classified topic: math/physics/cs/chemistry/biology/statistics/general
+    model_used: str = ""                         # e.g. "gemini-1.5-flash" or "groq/llama-3.3-70b"
+    render_quality: str = "low"                  # low / medium / high
+    source_document: str = ""                    # Original PDF filename for traceability
+    pipeline_version: str = "2.0"               # Bumped when pipeline architecture changes
+
 
 @dataclass
 class LatexJob:

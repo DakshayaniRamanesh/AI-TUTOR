@@ -2,7 +2,10 @@ import os
 import re
 import json
 import uuid
-import google.generativeai as genai
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", category=FutureWarning)
+    import google.generativeai as genai
 from pypdf import PdfReader
 from backend.video_generation.models import VideoJob, JobStatus
 from backend.workspace.qdrant_store import QdrantRAGStore
