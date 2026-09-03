@@ -26,8 +26,105 @@ GREEK_AND_SYMBOLS = {
     r"\,": " ", r"\;": " ", r"\!": ""
 }
 
+def extract_balanced_group(s: str, start_idx: int):
+    """Given a string and the index of an opening '{', returns (content_inside, end_index_after_closing_brace)."""
+    if start_idx >= len(s) or s[start_idx] != '{':
+        return "", start_idx
+    depth = 0
+    i = start_idx
+    while i < len(s):
+        if s[i] == '{':
+            depth += 1
+        elif s[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return s[start_idx + 1:i], i + 1
+        i += 1
+    return s[start_idx + 1:], len(s)
+
+
+def parse_math_fractions_and_roots(text: str) -> str:
+    """Parses nested \\frac{num}{den} and \\sqrt{expr} using balanced-group extraction into Qt-compatible math notation."""
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        # 1. Match \frac{num}{den} or bare frac{num}{den}
+        is_frac = False
+        prefix_len = 0
+        if text[i:i+5] == r"\frac":
+            is_frac = True
+            prefix_len = 5
+        elif text[i:i+4] == "frac" and (i == 0 or not text[i-1].isalnum()):
+            is_frac = True
+            prefix_len = 4
+
+        if is_frac:
+            j = i + prefix_len
+            while j < n and text[j].isspace():
+                j += 1
+            if j < n and text[j] == '{':
+                num, next_j = extract_balanced_group(text, j)
+                while next_j < n and text[next_j].isspace():
+                    next_j += 1
+                if next_j < n and text[next_j] == '{':
+                    den, end_j = extract_balanced_group(text, next_j)
+                    num_parsed = parse_math_fractions_and_roots(num.strip())
+                    den_parsed = parse_math_fractions_and_roots(den.strip())
+
+                    # Clean Qt RichText fraction notation ensuring the division slash / is always visible
+                    if num_parsed.isdigit() and den_parsed.isdigit():
+                        frac_html = f"({num_parsed}/{den_parsed})"
+                    elif '+' in den_parsed or '-' in den_parsed:
+                        frac_html = f"({num_parsed})/({den_parsed})"
+                    else:
+                        frac_html = f"({num_parsed})/{den_parsed}"
+                    out.append(frac_html)
+                    i = end_j
+                    continue
+
+        # 2. Match \sqrt[n]{expr} or \sqrt{expr}
+        if text[i:i+5] == r"\sqrt":
+            j = i + 5
+            while j < n and text[j].isspace():
+                j += 1
+            degree = ""
+            if j < n and text[j] == '[':
+                end_bracket = text.find(']', j)
+                if end_bracket != -1:
+                    degree = text[j+1:end_bracket]
+                    j = end_bracket + 1
+                    while j < n and text[j].isspace():
+                        j += 1
+            if j < n and text[j] == '{':
+                radicand, end_j = extract_balanced_group(text, j)
+                rad_parsed = parse_math_fractions_and_roots(radicand)
+                if degree:
+                    out.append(f'<sup>{degree}</sup>√(<span style="text-decoration:overline;">{rad_parsed}</span>)')
+                else:
+                    out.append(f'√(<span style="text-decoration:overline;">{rad_parsed}</span>)')
+                i = end_j
+                continue
+
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+def replace_greek_and_symbols(s: str) -> str:
+    """Replaces LaTeX symbols and Greek letters using word boundaries and longest-first matching."""
+    # First handle multi-char symbols sorted by length descending
+    for cmd in sorted(GREEK_AND_SYMBOLS.keys(), key=len, reverse=True):
+        sym = GREEK_AND_SYMBOLS[cmd]
+        if cmd.startswith('\\') and cmd[1:].isalpha():
+            s = re.sub(re.escape(cmd) + r'(?![a-zA-Z])', sym, s)
+        else:
+            s = s.replace(cmd, sym)
+    return s
+
+
 def clean_math_syntax(math_str: str) -> str:
-    """Converts a math expression string into clean mathematical HTML typography without LaTeX syntax."""
+    """Converts a math expression string into clean mathematical HTML typography without LaTeX syntax, preserving all operators."""
     s = math_str.strip()
 
     # 1. Clean brackets and formatting commands
@@ -43,42 +140,33 @@ def clean_math_syntax(math_str: str) -> str:
     s = re.sub(r'\\mathrm\{([^{}]+)\}', r'\1', s)
     s = re.sub(r'\\mathbf\{([^{}]+)\}', r'<b>\1</b>', s)
 
-    # 2. Fractions \frac{num}{den} or bare frac{num}{den} -> typeset fraction HTML
-    def _frac_repl(m):
-        num = clean_math_syntax(m.group(1))
-        den = clean_math_syntax(m.group(2))
-        return f'<span style="display:inline-block; vertical-align:middle; text-align:center; padding:0 2px;"><span style="display:block; font-size:90%; border-bottom:1px solid currentColor; padding-bottom:1px;">{num}</span><span style="display:block; font-size:90%; padding-top:1px;">{den}</span></span>'
+    # 2. Parse balanced fractions and roots
+    s = parse_math_fractions_and_roots(s)
 
-    for _ in range(4):  # Support nested fractions
-        s = re.sub(r'\\?frac\{([^{}]+)\}\{([^{}]+)\}', _frac_repl, s)
-
-    # 3. Square roots \sqrt{expr} or \sqrt[n]{expr}
-    s = re.sub(r'\\?sqrt\[([^{}]+)\]\{([^{}]+)\}', r'<sup>\1</sup>√(<span style="text-decoration:overline;">\2</span>)', s)
-    s = re.sub(r'\\?sqrt\{([^{}]+)\}', r'√(<span style="text-decoration:overline;">\1</span>)', s)
-
-    # 4. Integrals \int_{a}^{b} or \int_a^b
+    # 3. Integrals \int_{a}^{b} or \int_a^b or bare \int
     s = re.sub(r'\\int_\{([^{}]+)\}\^\{([^{}]+)\}', r'∫<sub>\1</sub><sup>\2</sup> ', s)
     s = re.sub(r'\\int_([0-9a-zA-Z])\^([0-9a-zA-Z])', r'∫<sub>\1</sub><sup>\2</sup> ', s)
-    s = re.sub(r'\\int', '∫ ', s)
+    s = re.sub(r'\\int(?![a-zA-Z])', '∫ ', s)
 
-    # 5. Sums & Limits
+    # 4. Sums & Limits
     s = re.sub(r'\\sum_\{([^{}]+)\}\^\{([^{}]+)\}', r'∑<sub>\1</sub><sup>\2</sup> ', s)
-    s = re.sub(r'\\sum', '∑ ', s)
+    s = re.sub(r'\\sum(?![a-zA-Z])', '∑ ', s)
     s = re.sub(r'\\lim_\{([^{}]+)\}', r'lim<sub>\1</sub> ', s)
+    s = re.sub(r'\\lim(?![a-zA-Z])', 'lim ', s)
 
-    # 6. Exponents & Subscripts
+    # 5. Exponents & Subscripts with balanced group handling
     s = re.sub(r'\^\{([^{}]+)\}', r'<sup>\1</sup>', s)
     s = re.sub(r'\^([0-9a-zA-Z\+\-\*nxy])', r'<sup>\1</sup>', s)
     s = re.sub(r'_\{([^{}]+)\}', r'<sub>\1</sub>', s)
     s = re.sub(r'_([0-9a-zA-Z])', r'<sub>\1</sub>', s)
 
-    # 7. Greek letters & mathematical symbols
-    for cmd, sym in GREEK_AND_SYMBOLS.items():
-        s = s.replace(cmd, sym)
+    # 6. Greek letters & mathematical symbols
+    s = replace_greek_and_symbols(s)
 
-    # 8. Strip any leftover backslashes & braces
+    # 7. Strip leftover backslashes only from known latex commands, preserving division slashes and arithmetic operators
     s = re.sub(r'\\([a-zA-Z]+)', r'\1', s)
-    s = s.replace('\\', '').replace('{', '').replace('}', '')
+    s = s.replace('\\', '')
+    s = s.replace('{', '').replace('}', '')
 
     return s
 
@@ -87,7 +175,7 @@ def format_math_to_html(raw_text: str) -> str:
     """
     Parses a raw LaTeX document or Markdown + Math string into a clean, PDF-level HTML view
     with clear heading hierarchy, bolding, bullet points, and typeset math notation.
-    No literal '###', '**', or raw LaTeX symbols will be shown.
+    Never drops fractions, division marks, or mathematical terms.
     """
     if not raw_text or not raw_text.strip():
         return "<p>No content provided.</p>"
@@ -99,130 +187,68 @@ def format_math_to_html(raw_text: str) -> str:
     if doc_body_m:
         text = doc_body_m.group(1)
 
-    # 1. Strip preamble & LaTeX document configuration commands
-    text = re.sub(r'\\documentclass\[.*?\]\{.*?\}', '', text)
-    text = re.sub(r'\\documentclass\{.*?\}', '', text)
-    text = re.sub(r'\\usepackage\[.*?\]\{.*?\}', '', text)
-    text = re.sub(r'\\usepackage\{.*?\}', '', text)
-    text = re.sub(r'\\geometry\{.*?\}', '', text)
-    text = re.sub(r'\\pagestyle\{.*?\}', '', text)
-    text = re.sub(r'\\thispagestyle\{.*?\}', '', text)
-    text = re.sub(r'\\title\{.*?\}', '', text)
-    text = re.sub(r'\\author\{.*?\}', '', text)
-    text = re.sub(r'\\date\{.*?\}', '', text)
-    text = re.sub(r'\\maketitle', '', text)
-
-    # Clean center environments & spacing commands
-    text = text.replace(r"\begin{center}", '<div style="text-align: center;">')
-    text = text.replace(r"\end{center}", '</div>')
-    text = re.sub(r'\\vspace\*?\{[^{}]*\}', '<br/>', text)
-    text = re.sub(r'\\hspace\*?\{[^{}]*\}', ' ', text)
-    text = re.sub(r'\\vfill|\\hfill', '', text)
+    # Clean preambles & configuration
+    text = re.sub(r'\\documentclass\[.*?\]\{.*?\}|\\documentclass\{.*?\}', '', text)
+    text = re.sub(r'\\usepackage\[.*?\]\{.*?\}|\\usepackage\{.*?\}', '', text)
+    text = re.sub(r'\\title\{.*?\}|\\author\{.*?\}|\\date\{.*?\}|\\maketitle', '', text)
     text = re.sub(r'\\(Large|large|LARGE|huge|Huge|small|footnotesize|tiny|normalsize|centering|noindent)', '', text)
 
-    # 2. Format Display Math Environments ($$...$$, \[...\], \begin{equation}...)
-    def _display_math_repl(m):
-        math_content = m.group(1).strip()
-        cleaned = clean_math_syntax(math_content)
-        return f'<div style="margin: 8px 0; font-size: 1.1em; line-height: 1.6; text-align: left; padding: 4px 0;">{cleaned}</div>'
+    # 1. Format Display Math Environments
+    def _disp_repl(m):
+        c = clean_math_syntax(m.group(1))
+        return f'<div style="margin: 6px 0; font-size: 1.1em; line-height: 1.6;">{c}</div>'
 
-    text = re.sub(r'\\begin\{equation\*?\}(.*?)\\end\{equation\*?\}', _display_math_repl, text, flags=re.DOTALL)
-    text = re.sub(r'\\begin\{align\*?\}(.*?)\\end\{align\*?\}', _display_math_repl, text, flags=re.DOTALL)
-    text = re.sub(r'\\begin\{gather\*?\}(.*?)\\end\{gather\*?\}', _display_math_repl, text, flags=re.DOTALL)
-    text = re.sub(r'\\\[(.*?)\\\]', _display_math_repl, text, flags=re.DOTALL)
-    text = re.sub(r'\$\$(.*?)\$\$', _display_math_repl, text, flags=re.DOTALL)
+    text = re.sub(r'\\begin\{equation\*?\}(.*?)\\end\{equation\*?\}', _disp_repl, text, flags=re.DOTALL)
+    text = re.sub(r'\\begin\{align\*?\}(.*?)\\end\{align\*?\}', _disp_repl, text, flags=re.DOTALL)
+    text = re.sub(r'\\\[(.*?)\\\]', _disp_repl, text, flags=re.DOTALL)
+    text = re.sub(r'\$\$(.*?)\$\$', _disp_repl, text, flags=re.DOTALL)
 
-    # 3. Format Inline Math ($...$, \(...\))
-    def _inline_math_repl(m):
-        math_content = m.group(1).strip()
-        cleaned = clean_math_syntax(math_content)
-        return f'<span>{cleaned}</span>'
+    # 2. Format Inline Math
+    def _inline_repl(m):
+        c = clean_math_syntax(m.group(1))
+        return f'<span>{c}</span>'
 
-    text = re.sub(r'\\\((.*?)\\\)', _inline_math_repl, text)
-    text = re.sub(r'\$([^\$\n]+)\$', _inline_math_repl, text)
+    text = re.sub(r'\\\((.*?)\\\)', _inline_repl, text)
+    text = re.sub(r'\$([^\$\n]+)\$', _inline_repl, text)
 
-    # 4. Clean up bare LaTeX fractions and math expressions outside delimiters
-    text = re.sub(r'\\?frac\{([^{}]+)\}\{([^{}]+)\}', lambda m: clean_math_syntax(m.group(0)), text)
-    text = re.sub(r'\\?sqrt\{([^{}]+)\}', lambda m: clean_math_syntax(m.group(0)), text)
+    # 3. Parse bare LaTeX fractions and roots
+    text = parse_math_fractions_and_roots(text)
 
-    # 5. Process Markdown line-by-line for headings, lists, and structural elements
+    # 4. Line-by-line Markdown Structure
     lines = text.split('\n')
-    processed_lines = []
-
+    out = []
     for line in lines:
         sline = line.strip()
-
-        # Markdown Headings
-        if sline.startswith('#### '):
-            heading_txt = sline[5:].strip()
-            processed_lines.append(f'<div style="font-size: 14px; font-weight: 700; margin-top: 8px; margin-bottom: 3px; color: #0a0a0a;">{heading_txt}</div>')
-            continue
-        elif sline.startswith('### '):
-            heading_txt = sline[4:].strip()
-            processed_lines.append(f'<div style="font-size: 16px; font-weight: 800; margin-top: 10px; margin-bottom: 4px; color: #0a0a0a;">{heading_txt}</div>')
-            continue
-        elif sline.startswith('## '):
-            heading_txt = sline[3:].strip()
-            processed_lines.append(f'<div style="font-size: 18px; font-weight: 800; margin-top: 12px; margin-bottom: 5px; color: #0a0a0a;">{heading_txt}</div>')
-            continue
-        elif sline.startswith('# '):
-            heading_txt = sline[2:].strip()
-            processed_lines.append(f'<div style="font-size: 20px; font-weight: 800; margin-top: 14px; margin-bottom: 6px; color: #0a0a0a;">{heading_txt}</div>')
-            continue
-
-        # Bullet lists (- item or * item)
-        if re.match(r'^[\*\-]\s+', sline):
-            item_text = re.sub(r'^[\*\-]\s+', '', sline)
-            processed_lines.append(f'<div style="margin-left: 14px; margin-top: 2px; margin-bottom: 2px; line-height: 1.5;">• &nbsp;{item_text}</div>')
-            continue
-
-        # Numbered lists (1. item)
-        num_match = re.match(r'^(\d+)\.\s+(.*)$', sline)
-        if num_match:
-            num = num_match.group(1)
-            item_text = num_match.group(2)
-            processed_lines.append(f'<div style="margin-left: 14px; margin-top: 2px; margin-bottom: 2px; line-height: 1.5;"><b>{num}.</b> &nbsp;{item_text}</div>')
-            continue
-
-        # LaTeX section commands
-        sec_m = re.match(r'\\section\*?\{([^{}]+)\}', sline)
-        if sec_m:
-            processed_lines.append(f'<div style="font-size: 18px; font-weight: 800; margin-top: 12px; margin-bottom: 5px;">{sec_m.group(1)}</div>')
-            continue
-        subsec_m = re.match(r'\\subsection\*?\{([^{}]+)\}', sline)
-        if subsec_m:
-            processed_lines.append(f'<div style="font-size: 16px; font-weight: 800; margin-top: 10px; margin-bottom: 4px;">{subsec_m.group(1)}</div>')
-            continue
-
         if not sline:
-            processed_lines.append('<br/>')
+            out.append('<br/>')
+            continue
+        if sline.startswith('#### '):
+            out.append(f'<div style="font-size: 14px; font-weight: 700; margin-top: 8px; margin-bottom: 3px; color: #0a0a0a;">{sline[5:].strip()}</div>')
+        elif sline.startswith('### '):
+            out.append(f'<div style="font-size: 16px; font-weight: 800; margin-top: 10px; margin-bottom: 4px; color: #0a0a0a;">{sline[4:].strip()}</div>')
+        elif sline.startswith('## '):
+            out.append(f'<div style="font-size: 18px; font-weight: 800; margin-top: 12px; margin-bottom: 5px; color: #0a0a0a;">{sline[3:].strip()}</div>')
+        elif sline.startswith('# '):
+            out.append(f'<div style="font-size: 20px; font-weight: 800; margin-top: 14px; margin-bottom: 6px; color: #0a0a0a;">{sline[2:].strip()}</div>')
+        elif re.match(r'^[\*\-]\s+', sline):
+            item = re.sub(r'^[\*\-]\s+', '', sline)
+            out.append(f'<div style="margin-left: 14px; margin-top: 2px; margin-bottom: 2px; line-height: 1.5;">• &nbsp;{item}</div>')
+        elif re.match(r'^\d+\.\s+', sline):
+            m = re.match(r'^(\d+)\.\s+(.*)$', sline)
+            out.append(f'<div style="margin-left: 14px; margin-top: 2px; margin-bottom: 2px; line-height: 1.5;"><b>{m.group(1)}.</b> &nbsp;{m.group(2)}</div>')
         else:
-            processed_lines.append(f'<div style="line-height: 1.6; margin-bottom: 3px;">{sline}</div>')
+            out.append(f'<div style="line-height: 1.6; margin-bottom: 3px;">{sline}</div>')
 
-    text = "".join(processed_lines)
+    text = "".join(out)
 
-    # 6. Format Markdown Inline Bolds (**bold** / __bold__) & Italics (*italic* / _italic_)
+    # 5. Inline Bolds & Italics
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'__(.+?)__', r'<b>\1</b>', text)
-    text = re.sub(r'(?<![a-zA-Z0-9])\*([^\*\n]+?)\*(?![a-zA-Z0-9])', r'<i>\1</i>', text)
+    text = re.sub(r'(?<![a-zA-Z0-9])\*([^\*\n<]+?)\*(?![a-zA-Z0-9])', r'<i>\1</i>', text)
 
-    # Format LaTeX Inline text formatting
-    text = re.sub(r'\\textbf\{([^{}]+)\}', r'<b>\1</b>', text)
-    text = re.sub(r'\\textit\{([^{}]+)\}', r'<i>\1</i>', text)
-    text = re.sub(r'\\underline\{([^{}]+)\}', r'<u>\1</u>', text)
-
-    # 7. Clean up common LaTeX symbols outside math environments
-    for cmd, sym in GREEK_AND_SYMBOLS.items():
-        text = text.replace(cmd, sym)
-
-    # Clean escapes & linebreaks
-    text = text.replace(r"\\", "<br/>")
-    text = text.replace(r"\newline", "<br/>")
-    text = text.replace(r"\par", "<br/>")
-    text = text.replace(r"\%", "%").replace(r"\$", "$").replace(r"\&", "&").replace(r"\_", "_")
-
-    # Final cleanup of any stray literal LaTeX commands or braces
-    text = re.sub(r'\\[a-zA-Z]+', '', text)
-    text = text.replace('{', '').replace('}', '')
+    # 6. Global symbols & linebreaks
+    text = replace_greek_and_symbols(text)
+    text = text.replace(r'\\', '<br/>').replace(r'\newline', '<br/>').replace(r'\par', '<br/>')
+    text = text.replace(r'\%', '%').replace(r'\$', '$').replace(r'\&', '&').replace(r'\_', '_')
 
     return text.strip()
