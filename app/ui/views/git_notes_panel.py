@@ -21,6 +21,8 @@ import qtawesome as qta
 from ...backend.version_control.git_notes_manager import GitNotesManager
 
 class GitNotesPanel(QWidget):
+    version_restored = pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.git_mgr = GitNotesManager()

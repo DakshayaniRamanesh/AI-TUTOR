@@ -136,6 +136,10 @@ async def generate(
         "message": "Video generation started. Use /status/{job_id} to track progress."
     }
 
+def get_base_url() -> str:
+    port = os.getenv("PORT", os.getenv("BACKEND_PORT", "8000"))
+    return os.getenv("BACKEND_URL", f"http://localhost:{port}").rstrip("/")
+
 @app.get("/status/{job_id}")
 async def status(job_id: str):
     if job_id not in jobs_store:
@@ -146,7 +150,7 @@ async def status(job_id: str):
     video_url = None
     if job.video_path and os.path.exists(job.video_path):
         filename = os.path.basename(job.video_path)
-        video_url = f"http://localhost:8000/video/{filename}"
+        video_url = f"{get_base_url()}/video/{filename}"
 
     job_status = job.status.value if hasattr(job.status, "value") else str(job.status)
     internal_step = job.step
@@ -213,7 +217,7 @@ async def annotate(payload: dict):
     video_url = updated_job.video_url
     if updated_job.video_path and os.path.exists(updated_job.video_path):
         filename = os.path.basename(updated_job.video_path)
-        video_url = f"http://localhost:8000/video/{filename}"
+        video_url = f"{get_base_url()}/video/{filename}"
 
     return {
         "job_id": updated_job.job_id,
@@ -278,7 +282,7 @@ async def latex_status(job_id: str):
     pdf_url = None
     if job.pdf_path and os.path.exists(job.pdf_path):
         filename = os.path.basename(job.pdf_path)
-        pdf_url = f"http://localhost:8000/pdf/{filename}"
+        pdf_url = f"{get_base_url()}/pdf/{filename}"
 
     return {
         "job_id": job.job_id,
@@ -404,4 +408,28 @@ async def test_tectonic():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import socket
+
+    def _is_port_bindable(p: int, host: str = "0.0.0.0") -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, p))
+                return True
+            except OSError:
+                return False
+
+    desired_port = int(os.getenv("PORT", os.getenv("BACKEND_PORT", "8000")))
+    selected_port = desired_port
+
+    if not _is_port_bindable(selected_port):
+        # On Windows, ports like 8000 are frequently blocked by Windows NAT / Hyper-V exclusion ranges (WinError 10013)
+        fallbacks = [8888, 5050, 5000, 9000]
+        for fb in fallbacks:
+            if _is_port_bindable(fb):
+                print(f"[LocalServer] Port {selected_port} is blocked/unavailable. Automatically falling back to port {fb}.")
+                selected_port = fb
+                os.environ["PORT"] = str(fb)
+                os.environ["BACKEND_URL"] = f"http://localhost:{fb}"
+                break
+
+    uvicorn.run(app, host="0.0.0.0", port=selected_port)

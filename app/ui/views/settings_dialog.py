@@ -1,3 +1,4 @@
+import os
 import requests
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
@@ -91,8 +92,9 @@ class SettingsDialog(QDialog):
         from PyQt6.QtWidgets import QApplication
         QApplication.processEvents()
         
+        backend_url = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('PORT', '8888')}").rstrip("/")
         try:
-            resp = requests.get(f"http://127.0.0.1:8000{endpoint}", timeout=10)
+            resp = requests.get(f"{backend_url}{endpoint}", timeout=10)
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
             if resp.status_code == 200 and data.get("status") == "ok":
                 status_lbl.setText("✓")

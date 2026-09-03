@@ -13,7 +13,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 # Ensure root workspace is on Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-LOCAL_SERVER_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+LOCAL_SERVER_URL = os.getenv("BACKEND_URL", f"http://localhost:{os.getenv('PORT', '8888')}")
 MODAL_ENDPOINT_URL = os.getenv("MODAL_URL", "https://dakshayaniramanesh--manim-app-generate.modal.run")
 # Replace modal url to the specific endpoints for latex if needed. 
 # We'll use local server URL for now, modal fallback can be added if endpoints match.
