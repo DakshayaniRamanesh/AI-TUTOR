@@ -29,27 +29,35 @@ class KnowledgeGraphWidget(QGraphicsView):
     """Draws a beautiful circular node map natively using PyQt graphics."""
     def __init__(self, parent=None):
         super().__init__(parent)
+        from app.ui.theme_manager import ThemeManager
+        from app.ui.kestrel_theme import MONO_FONT
+        c = ThemeManager.instance().get_colors()
+
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setStyleSheet("background-color: #1a1a2e; border: none; border-radius: 8px;")
+        self.setStyleSheet(f"background-color: {c['bg_card']}; border: 1px solid {c['border_color']}; border-radius: 4px;")
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.active_node = None
         self.last_nodes, self.last_edges = [], []
         
         from PyQt6.QtWidgets import QPushButton
-        self.btn_back = QPushButton("← Back to Main Graph", self)
-        self.btn_back.setStyleSheet("""
-            QPushButton {
-                background-color: #3d5af1;
-                color: white;
-                border-radius: 4px;
-                padding: 6px 12px;
+        self.btn_back = QPushButton("← MAIN GRAPH", self)
+        self.btn_back.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['bg_card']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                padding: 5px 12px;
+                font-family: {MONO_FONT};
+                font-size: 11px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #4361ee;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {c['panel_card_bg']};
+                border-color: {c['accent']};
+            }}
         """)
         self.btn_back.move(20, 20)
         self.btn_back.hide()
@@ -246,11 +254,10 @@ class KnowledgeGraphWidget(QGraphicsView):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Deletable List Widget — a list with checkboxes + a "Delete Selected" bar
+# Deletable List Widget — a list with checkboxes + a "Delete Selected" action
 # ────────────────────────────────────────────────────────────────────────────
 
 class DeletableListWidget(QWidget):
-    """A QListWidget wrapper that adds checkboxes and a Delete Selected button."""
     item_double_clicked = pyqtSignal(QListWidgetItem)
 
     def __init__(self, parent=None):
@@ -258,6 +265,10 @@ class DeletableListWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
+
+        from app.ui.theme_manager import ThemeManager
+        from app.ui.kestrel_theme import MONO_FONT
+        c = ThemeManager.instance().get_colors()
 
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -268,14 +279,26 @@ class DeletableListWidget(QWidget):
         self.delete_bar = QHBoxLayout()
         self.delete_bar.setContentsMargins(0, 0, 0, 0)
         self.lbl_selected = QLabel("0 selected")
-        self.lbl_selected.setStyleSheet("font-size: 12px; color: #666;")
+        self.lbl_selected.setStyleSheet(f"font-size: 11px; font-family: {MONO_FONT}; color: {c['text_secondary']};")
         self.delete_bar.addWidget(self.lbl_selected)
         self.delete_bar.addStretch()
-        self.btn_delete = QPushButton("🗑 Delete Selected")
-        self.btn_delete.setStyleSheet(
-            "background: #ff3b30; color: white; border: none; font-weight: 600; "
-            "padding: 5px 12px; border-radius: 5px; font-size: 12px;"
-        )
+        self.btn_delete = QPushButton("✕ Delete Selected")
+        self.btn_delete.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: #cc3333;
+                border: 1px solid #cc3333;
+                font-family: {MONO_FONT};
+                font-weight: 600;
+                padding: 4px 10px;
+                border-radius: 2px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: #cc3333;
+                color: white;
+            }}
+        """)
         self.btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
         self.delete_bar.addWidget(self.btn_delete)
 
@@ -331,59 +354,39 @@ class SubjectDetailView(QWidget):
     open_notebook = pyqtSignal(str)
     open_pdf_in_viewer = pyqtSignal(str)
 
-    CARD_STYLE = """
-        QFrame#card {{
-            background: {bg};
-            border: 1px solid {border};
-            border-radius: 10px;
-        }}
-    """
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_subject_id = None
         self._cached_materials = []
         self._cached_videos = []
         self._setup_ui()
+        from app.ui.theme_manager import ThemeManager
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._apply_theme(ThemeManager.instance().current_theme)
 
     def _setup_ui(self):
-        self.setStyleSheet("""
-            QWidget { background-color: #f5f5f7; color: #1c1c1e; font-family: 'Segoe UI', sans-serif; }
-            QListWidget {
-                background: #ffffff; border: 1px solid #e0e0e5; border-radius: 6px;
-                font-size: 13px; padding: 4px;
-            }
-            QListWidget::item { padding: 8px 6px; border-bottom: 1px solid #f0f0f2; }
-            QListWidget::item:hover { background: #e8f0fe; }
-            QPushButton { font-size: 13px; padding: 6px 14px; border-radius: 6px; }
-        """)
+        from app.ui.theme_manager import ThemeManager
+        from app.ui.kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
+        c = ThemeManager.instance().get_colors()
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(16, 12, 16, 12)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(24, 16, 24, 16)
+        main_layout.setSpacing(12)
 
         # ── Header ──
         header = QHBoxLayout()
-        header.setSpacing(10)
+        header.setSpacing(12)
 
-        self.btn_back = QPushButton("← Back")
-        self.btn_back.setStyleSheet(
-            "border: none; color: #007aff; font-size: 15px; font-weight: 600; padding: 4px 8px;"
-        )
+        self.btn_back = QPushButton("← SUBJECTS", self)
         self.btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_back.clicked.connect(self.go_back.emit)
         header.addWidget(self.btn_back)
 
-        self.lbl_title = QLabel("Subject")
-        self.lbl_title.setStyleSheet("font-size: 22px; font-weight: 700; color: #1c1c1e;")
+        self.lbl_title = QLabel("Subject", self)
         header.addWidget(self.lbl_title)
         header.addStretch()
 
-        self.btn_delete = QPushButton("🗑  Delete Subject")
-        self.btn_delete.setStyleSheet(
-            "color: #ff3b30; border: 1px solid #ff3b30; border-radius: 6px; "
-            "font-weight: 600; padding: 5px 12px;"
-        )
+        self.btn_delete = QPushButton("✕ Delete Subject", self)
         self.btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_delete.clicked.connect(self._on_delete_subject)
         header.addWidget(self.btn_delete)
@@ -391,117 +394,202 @@ class SubjectDetailView(QWidget):
 
         # ── Tabs ──
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane { border: none; }
-            QTabBar::tab {
-                padding: 8px 20px; font-weight: 600; font-size: 13px;
-                border: none; border-bottom: 2px solid transparent; color: #888;
-                margin-right: 4px;
-            }
-            QTabBar::tab:selected { color: #007aff; border-bottom: 2px solid #007aff; }
-            QTabBar::tab:hover { color: #333; }
-        """)
-        self.tabs.addTab(self._build_dashboard_tab(), "📋  Dashboard")
+        self.tabs.addTab(self._build_dashboard_tab(), "DASHBOARD")
         self.graph_view = KnowledgeGraphWidget()
-        self.tabs.addTab(self.graph_view, "🧠  Knowledge Graph")
+        self.tabs.addTab(self.graph_view, "KNOWLEDGE GRAPH")
         main_layout.addWidget(self.tabs)
+
+    def _apply_theme(self, theme_name: str = "light"):
+        from app.ui.theme_manager import ThemeManager
+        from app.ui.kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
+        c = ThemeManager.instance().get_colors()
+        self.setStyleSheet(f"""
+            QWidget {{ background-color: {c['bg_app']}; color: {c['text_primary']}; }}
+            QListWidget {{
+                background: {c['bg_card']}; border: 1px solid {c['border_color']}; border-radius: 2px;
+                font-family: {MONO_FONT}; font-size: 12px; padding: 2px;
+            }}
+            QListWidget::item {{ padding: 6px 4px; border-bottom: 1px solid {c['border_color']}; }}
+            QListWidget::item:hover {{ background: {c['panel_card_bg']}; }}
+        """)
+
+        self.btn_back.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                padding: 5px 12px;
+                color: {c['text_secondary']};
+                font-family: {MONO_FONT};
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 1px;
+            }}
+            QPushButton:hover {{
+                color: {c['text_primary']};
+                border-color: {c['accent']};
+            }}
+        """)
+
+        self.lbl_title.setStyleSheet(f"""
+            font-size: 20px; font-weight: 800; color: {c['text_primary']};
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin-left: 4px;
+        """)
+
+        self.btn_delete.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: #cc3333;
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                font-family: {MONO_FONT};
+                font-weight: 600;
+                font-size: 11px;
+                padding: 5px 12px;
+            }}
+            QPushButton:hover {{
+                border-color: #cc3333;
+                background-color: {c['panel_card_bg']};
+            }}
+        """)
+
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: none; border-top: 1px solid {c['border_color']}; }}
+            QTabBar::tab {{
+                padding: 8px 16px; font-weight: 700; font-size: 11px;
+                font-family: {MONO_FONT}; letter-spacing: 1px;
+                border: none; border-bottom: 2px solid transparent; color: {c['text_secondary']};
+                margin-right: 4px;
+            }}
+            QTabBar::tab:selected {{ color: {c['text_primary']}; border-bottom: 2px solid {c['accent']}; }}
+            QTabBar::tab:hover:!selected {{ color: {c['text_primary']}; }}
+        """)
+
+        if hasattr(self, 'nb_card'):
+            for card in [self.nb_card, self.mat_card, self.vid_card]:
+                card.setStyleSheet(f"""
+                    QFrame#card {{
+                        background-color: {c['bg_card']};
+                        border: 1px solid {c['border_color']};
+                        border-radius: 4px;
+                    }}
+                """)
+            self.btn_new_nb.setStyleSheet(primary_button_qss(c))
+            self.btn_upload.setStyleSheet(ghost_button_qss(c))
 
     # ── Dashboard Tab ───────────────────────────────────────────────────────
 
     def _build_dashboard_tab(self):
+        from app.ui.theme_manager import ThemeManager
+        from app.ui.kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
+        c = ThemeManager.instance().get_colors()
+
         tab = QWidget()
         layout = QHBoxLayout(tab)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setSpacing(14)
 
         # ── Left: Notebooks ──
-        nb_card = QFrame()
-        nb_card.setObjectName("card")
-        nb_card.setStyleSheet(self.CARD_STYLE.format(bg="#ffffff", border="#e0e0e5"))
-        nb_layout = QVBoxLayout(nb_card)
+        self.nb_card = QFrame()
+        self.nb_card.setObjectName("card")
+        self.nb_card.setStyleSheet(f"""
+            QFrame#card {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 4px;
+            }}
+        """)
+        nb_layout = QVBoxLayout(self.nb_card)
         nb_layout.setContentsMargins(14, 14, 14, 14)
 
         nb_header = QHBoxLayout()
-        nb_lbl = QLabel("📓 Notebooks")
-        nb_lbl.setStyleSheet("font-size: 16px; font-weight: 700;")
+        nb_lbl = QLabel("NOTEBOOKS")
+        nb_lbl.setStyleSheet(f"font-size: 13px; font-weight: 800; font-family: {MONO_FONT}; letter-spacing: 1px; color: {c['text_primary']};")
         nb_header.addWidget(nb_lbl)
         nb_header.addStretch()
-        btn_new_nb = QPushButton("+ New")
-        btn_new_nb.setStyleSheet(
-            "background: #007aff; color: white; border: none; font-weight: 600; "
-            "padding: 5px 12px; border-radius: 5px;"
-        )
-        btn_new_nb.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_new_nb.clicked.connect(self._on_new_notebook)
-        nb_header.addWidget(btn_new_nb)
+        self.btn_new_nb = QPushButton("+ NEW")
+        self.btn_new_nb.setStyleSheet(primary_button_qss(c))
+        self.btn_new_nb.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_new_nb.clicked.connect(self._on_new_notebook)
+        nb_header.addWidget(self.btn_new_nb)
         nb_layout.addLayout(nb_header)
 
         hint = QLabel("Double-click to open  •  Check boxes to select for deletion")
-        hint.setStyleSheet("font-size: 11px; color: #999; margin-bottom: 2px;")
+        hint.setStyleSheet(f"font-size: 10px; font-family: {MONO_FONT}; color: {c['text_secondary']}; margin-bottom: 2px;")
         nb_layout.addWidget(hint)
 
         self.nb_list = DeletableListWidget()
         self.nb_list.item_double_clicked.connect(self._on_notebook_clicked)
         self.nb_list.btn_delete.clicked.connect(self._on_delete_notebooks)
         nb_layout.addWidget(self.nb_list)
-        layout.addWidget(nb_card, stretch=4)
+        layout.addWidget(self.nb_card, stretch=4)
 
         # ── Right: Materials + Videos ──
         right = QVBoxLayout()
         right.setSpacing(12)
 
         # Materials card
-        mat_card = QFrame()
-        mat_card.setObjectName("card")
-        mat_card.setStyleSheet(self.CARD_STYLE.format(bg="#ffffff", border="#e0e0e5"))
-        mat_layout = QVBoxLayout(mat_card)
+        self.mat_card = QFrame()
+        self.mat_card.setObjectName("card")
+        self.mat_card.setStyleSheet(f"""
+            QFrame#card {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 4px;
+            }}
+        """)
+        mat_layout = QVBoxLayout(self.mat_card)
         mat_layout.setContentsMargins(14, 14, 14, 14)
 
         mat_header = QHBoxLayout()
-        mat_lbl = QLabel("📄 Reference PDFs")
-        mat_lbl.setStyleSheet("font-size: 16px; font-weight: 700;")
+        mat_lbl = QLabel("REFERENCE PDFS")
+        mat_lbl.setStyleSheet(f"font-size: 13px; font-weight: 800; font-family: {MONO_FONT}; letter-spacing: 1px; color: {c['text_primary']};")
         mat_header.addWidget(mat_lbl)
         mat_header.addStretch()
-        btn_upload = QPushButton("+ Upload")
-        btn_upload.setStyleSheet(
-            "background: #34c759; color: white; border: none; font-weight: 600; "
-            "padding: 5px 12px; border-radius: 5px;"
-        )
-        btn_upload.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_upload.clicked.connect(self._on_upload_material)
-        mat_header.addWidget(btn_upload)
+        self.btn_upload = QPushButton("+ UPLOAD")
+        self.btn_upload.setStyleSheet(ghost_button_qss(c))
+        self.btn_upload.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_upload.clicked.connect(self._on_upload_material)
+        mat_header.addWidget(self.btn_upload)
         mat_layout.addLayout(mat_header)
 
         hint2 = QLabel("Double-click to open in PDF viewer  •  Check boxes to select for deletion")
-        hint2.setStyleSheet("font-size: 11px; color: #999; margin-bottom: 2px;")
+        hint2.setStyleSheet(f"font-size: 10px; font-family: {MONO_FONT}; color: {c['text_secondary']}; margin-bottom: 2px;")
         mat_layout.addWidget(hint2)
 
         self.mat_list = DeletableListWidget()
         self.mat_list.item_double_clicked.connect(self._on_material_clicked)
         self.mat_list.btn_delete.clicked.connect(self._on_delete_materials)
         mat_layout.addWidget(self.mat_list)
-        right.addWidget(mat_card)
+        right.addWidget(self.mat_card)
 
         # Videos card
-        vid_card = QFrame()
-        vid_card.setObjectName("card")
-        vid_card.setStyleSheet(self.CARD_STYLE.format(bg="#ffffff", border="#e0e0e5"))
-        vid_layout = QVBoxLayout(vid_card)
+        self.vid_card = QFrame()
+        self.vid_card.setObjectName("card")
+        self.vid_card.setStyleSheet(f"""
+            QFrame#card {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 4px;
+            }}
+        """)
+        vid_layout = QVBoxLayout(self.vid_card)
         vid_layout.setContentsMargins(14, 14, 14, 14)
 
-        vid_lbl = QLabel("🎥 Generated Videos")
-        vid_lbl.setStyleSheet("font-size: 16px; font-weight: 700;")
+        vid_lbl = QLabel("GENERATED VIDEOS")
+        vid_lbl.setStyleSheet(f"font-size: 13px; font-weight: 800; font-family: {MONO_FONT}; letter-spacing: 1px; color: {c['text_primary']};")
         vid_layout.addWidget(vid_lbl)
 
         hint3 = QLabel("Double-click to play  •  Check boxes to select for deletion")
-        hint3.setStyleSheet("font-size: 11px; color: #999; margin-bottom: 2px;")
+        hint3.setStyleSheet(f"font-size: 10px; font-family: {MONO_FONT}; color: {c['text_secondary']}; margin-bottom: 2px;")
         vid_layout.addWidget(hint3)
 
         self.vid_list = DeletableListWidget()
         self.vid_list.item_double_clicked.connect(self._on_video_clicked)
         self.vid_list.btn_delete.clicked.connect(self._on_delete_videos)
         vid_layout.addWidget(self.vid_list)
-        right.addWidget(vid_card)
+        right.addWidget(self.vid_card)
 
         layout.addLayout(right, stretch=5)
         return tab

@@ -17,6 +17,7 @@ import requests
 import traceback
 import re
 import qtawesome as qta
+from .kestrel_theme import get_global_qss, MONO_FONT, primary_button_qss, ghost_button_qss, menu_qss
 
 from .canvas_scene import CanvasScene
 from .canvas_view import CanvasView
@@ -167,8 +168,11 @@ class MacTitleBar(QWidget):
         layout.addWidget(tl_box)
         layout.addStretch()
 
-        self.lbl_title = QLabel("Kestrel — Handwritten Freeform Notebook", self)
-        self.lbl_title.setStyleSheet("font-size: 13px; font-weight: 600; color: #3a3a3c; background: transparent;")
+        self.lbl_title = QLabel("KESTREL", self)
+        self.lbl_title.setStyleSheet(
+            f"font-size: 11px; font-weight: 700; letter-spacing: 2px; "
+            f"font-family: {MONO_FONT}; color: #888888; background: transparent;"
+        )
         layout.addWidget(self.lbl_title)
 
         layout.addStretch()
@@ -388,15 +392,21 @@ class MainWindow(QMainWindow):
         def _open_blank():
             self.subject_detail_view.current_subject_id = None
             self.main_stack.setCurrentWidget(canvas_wrapper)
+            self._set_sidebar_active_button("canvas")
             
         self.home_view.open_blank_notebook.connect(_open_blank)
         def _open_subjects_list():
             self.subjects_list_view.refresh_subjects()
             self.main_stack.setCurrentWidget(self.subjects_list_view)
+            self._set_sidebar_active_button("notebooks")
 
         self.home_view.open_my_subjects.connect(_open_subjects_list)
         
-        self.subjects_list_view.go_back.connect(lambda: self.main_stack.setCurrentWidget(self.home_view))
+        def _go_home():
+            self.main_stack.setCurrentWidget(self.home_view)
+            self._set_sidebar_active_button("home")
+
+        self.subjects_list_view.go_back.connect(_go_home)
         self.subjects_list_view.open_subject_detail.connect(self._on_open_subject_detail)
 
         self.subject_detail_view.go_back.connect(_open_subjects_list)
@@ -487,13 +497,11 @@ class MainWindow(QMainWindow):
 
     def _apply_global_styles(self):
         c = ThemeManager.instance().get_colors()
-        self.setStyleSheet(f"""
+        # Apply the centralized monochrome global QSS then override just the window bg
+        base = get_global_qss(c)
+        self.setStyleSheet(base + f"""
             QMainWindow {{
                 background: transparent;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            }}
-            QSplitter::handle {{
-                background-color: {c['border_color']};
             }}
         """)
 
@@ -526,13 +534,13 @@ class MainWindow(QMainWindow):
             self.central_card.setStyleSheet(f"""
                 QWidget#CentralCard {{
                     background-color: {c['bg_card']};
-                    border-radius: 12px;
+                    border-radius: 4px;
                     border: 1px solid {c['border_color']};
                 }}
                 QWidget#MacTitleBar {{
                     background-color: {c['bg_titlebar']};
-                    border-top-left-radius: 12px;
-                    border-top-right-radius: 12px;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
                     border-bottom: 1px solid {c['border_color']};
                 }}
             """)
@@ -542,9 +550,9 @@ class MainWindow(QMainWindow):
         self._update_window_corners()
         if hasattr(self, 'btn_theme_toggle'):
             if theme_name == "dark":
-                self.btn_theme_toggle.setText(" Light")
+                self.btn_theme_toggle.setText("LIGHT")
             else:
-                self.btn_theme_toggle.setText(" Dark")
+                self.btn_theme_toggle.setText("DARK")
 
     # --- 8-Direction Resizing Engine ---
     def _get_resize_edges(self, pos: QPoint):
@@ -594,53 +602,59 @@ class MainWindow(QMainWindow):
         super().mousePressEvent(event)
 
     def _create_sidebar(self) -> QWidget:
+        c = ThemeManager.instance().get_colors()
+        ic = c['sidebar_icon']  # inactive icon color
         sb = QWidget(self)
         sb.setFixedWidth(56)
-        sb.setStyleSheet("""
-            QWidget {
-                background-color: #0f172a;
-            }
-            QPushButton {
+        sb.setObjectName("KestrelSidebar")
+        sb.setStyleSheet(f"""
+            QWidget#KestrelSidebar {{
+                background-color: {c['bg_sidebar']};
+            }}
+            QPushButton {{
                 background: transparent;
                 border: none;
-                border-radius: 10px;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: rgba(255,255,255,0.08);
-            }
+                border-radius: 6px;
+                padding: 6px;
+            }}
+            QPushButton:hover {{
+                background-color: rgba(255,255,255,0.07);
+            }}
         """)
 
         layout = QVBoxLayout(sb)
         layout.setContentsMargins(6, 14, 6, 14)
         layout.setSpacing(4)
 
-        # Nav icon buttons — each stores its target main_stack index
+        # Nav icon buttons — Remix Icons thin-stroke outline set matching Figma reference exactly
         nav_items = [
-            (qta.icon('fa5s.th-large',    color='#94a3b8'), "Boards",          0),
-            (qta.icon('fa5s.book',         color='#94a3b8'), "Notebooks",       1),
-            (qta.icon('fa5s.history',      color='#94a3b8'), "Version History", 3),
-            (qta.icon('fa5s.project-diagram', color='#94a3b8'), "Knowledge Graph", 5),
-            (qta.icon('fa5s.star',         color='#94a3b8'), "Favourites",     2),
-            (qta.icon('fa5s.download',     color='#94a3b8'), f"Downloads",     2),
+            ("ri.grid-line",       "Home",            "home"),
+            ("ri.pencil-line",     "Canvas",          "canvas"),
+            ("ri.bookmark-line",   "Notebooks",       "notebooks"),
+            ("ri.git-branch-line", "Version Control", "vcs"),
+            ("ri.share-line",      "Knowledge Graph", "graph"),
+            ("ri.star-line",       "Favourites",      "favourites"),
+            ("ri.download-line",   "Downloads",       "downloads"),
         ]
 
         self.sidebar_list = QListWidget()   # keep for _on_sidebar_changed compatibility
         self.sidebar_list.hide()
         self._sidebar_nav_buttons = []
+        self._sidebar_btn_map = {}
 
-        for icon, tooltip, stack_idx in nav_items:
-            btn = QPushButton(icon, "", sb)
+        for idx, (icon_name, tooltip, nav_key) in enumerate(nav_items):
+            btn = QPushButton(qta.icon(icon_name, color=ic), "", sb)
             btn.setFixedSize(40, 40)
             btn.setIconSize(QSize(18, 18))
             btn.setToolTip(tooltip)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            # store index for click handler
-            btn._stack_idx = stack_idx
             btn._nav_tooltip = tooltip
+            btn._nav_key = nav_key
+            btn._icon_name = icon_name
             btn.clicked.connect(lambda checked, b=btn: self._on_sidebar_nav_clicked(b))
             layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignHCenter)
             self._sidebar_nav_buttons.append(btn)
+            self._sidebar_btn_map[nav_key] = btn
 
         # Folder Tree (hidden, kept for compatibility)
         self.folder_tree = FolderTreeWidget(self)
@@ -651,7 +665,7 @@ class MainWindow(QMainWindow):
         layout.addStretch()
 
         # Reference Database icon at the bottom
-        btn_ref = QPushButton(qta.icon('fa5s.database', color='#94a3b8'), "", sb)
+        btn_ref = QPushButton(qta.icon('ri.database-2-line', color=ic), "", sb)
         btn_ref.setFixedSize(40, 40)
         btn_ref.setIconSize(QSize(18, 18))
         btn_ref.setToolTip("Reference Database")
@@ -659,68 +673,93 @@ class MainWindow(QMainWindow):
         btn_ref.clicked.connect(self._toggle_reference_panel)
         layout.addWidget(btn_ref, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # Highlight the first button as active
+        # Highlight the first button (Home) as active
         self._set_sidebar_active_button(self._sidebar_nav_buttons[0])
 
         return sb
 
-    def _make_toolbar_btn(self, icon, label: str, parent, color='#475569', tooltip: str = ""):
+    def _make_toolbar_btn(self, icon, label: str, parent, color=None, tooltip: str = ""):
         """Creates a clean, monochrome icon-only toolbar button."""
-        btn = QPushButton(qta.icon(icon, color=color), label, parent)
+        c = ThemeManager.instance().get_colors()
+        icon_color = color if color else c['text_secondary']
+        btn = QPushButton(qta.icon(icon, color=icon_color), label, parent)
         btn.setIconSize(QSize(15, 15))
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                border-radius: 3px;
+                padding: 5px 8px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {c['panel_card_bg']};
+            }}
+            QPushButton:pressed {{
+                background-color: {c['border_color']};
+            }}
+        """)
         if tooltip:
             btn.setToolTip(tooltip)
         return btn
 
     def _make_toolbar_separator(self, parent) -> QFrame:
+        c = ThemeManager.instance().get_colors()
         sep = QFrame(parent)
         sep.setFrameShape(QFrame.Shape.VLine)
         sep.setFixedHeight(18)
-        sep.setStyleSheet("color: #e2e8f0; margin: 0 2px;")
+        sep.setStyleSheet(f"color: {c['border_color']}; margin: 0 2px;")
         return sep
 
     def _create_top_toolbar(self) -> QWidget:
+        c = ThemeManager.instance().get_colors()
         tb = QWidget(self)
         tb.setFixedHeight(46)
         tb.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        tb.setStyleSheet("""
-            QWidget {
-                background-color: #ffffff;
-                border-bottom: 1px solid #e2e8f0;
-            }
-            QPushButton {
+        tb.setStyleSheet(f"""
+            QWidget {{
+                background-color: {c['bg_toolbar']};
+                border-bottom: 1px solid {c['border_color']};
+            }}
+            QPushButton {{
                 background: transparent;
                 border: none;
-                border-radius: 7px;
+                border-radius: 2px;
                 padding: 5px 9px;
                 font-size: 12px;
                 font-weight: 500;
-                color: #334155;
-            }
-            QPushButton:hover {
-                background-color: #f1f5f9;
-                color: #0f172a;
-            }
-            QPushButton:pressed {
-                background-color: #e2e8f0;
-            }
-            QLineEdit {
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {c['panel_card_bg']};
+            }}
+            QPushButton:pressed {{
+                background-color: {c['border_color']};
+            }}
+            QLineEdit {{
                 font-size: 13px;
                 font-weight: 600;
                 border: none;
                 background: transparent;
-                color: #0f172a;
-            }
-            QComboBox {
-                border: none;
-                background: transparent;
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+            }}
+            QComboBox {{
+                border: 1px solid {c['border_color']};
+                background: {c['input_bg']};
                 font-size: 12px;
                 font-weight: 500;
-                color: #334155;
-                padding-left: 4px;
-            }
-            QComboBox::drop-down { border: none; width: 14px; }
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+                padding: 3px 6px;
+                border-radius: 2px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 14px; }}
         """)
 
         layout = QHBoxLayout(tb)
@@ -728,7 +767,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(4)
 
         # Back + Title
-        btn_back = self._make_toolbar_btn('fa5s.chevron-left', "", tb, '#3b82f6', "Back to Menu")
+        btn_back = self._make_toolbar_btn('ri.arrow-left-line', "", tb, None, "Back to Menu")
         btn_back.clicked.connect(self._on_canvas_back_clicked)
         layout.addWidget(btn_back)
 
@@ -738,12 +777,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.title_edit)
 
         # Insert Image
-        btn_img = self._make_toolbar_btn('fa5s.image', "Insert Image", tb, '#64748b', "Insert Image")
+        btn_img = self._make_toolbar_btn('ri.image-line', "Image", tb, None, "Insert Image")
         btn_img.clicked.connect(self._on_insert_image)
         layout.addWidget(btn_img)
 
         # Grid Toggle
-        self.btn_grid_mode = self._make_toolbar_btn('fa5s.border-none', " Blank", tb, '#64748b', "Toggle Grid")
+        self.btn_grid_mode = self._make_toolbar_btn('ri.grid-line', "Blank", tb, None, "Toggle Grid")
         self.btn_grid_mode.clicked.connect(self._toggle_grid_mode)
         layout.addWidget(self.btn_grid_mode)
 
@@ -759,59 +798,64 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.latex_combo)
         layout.addWidget(self.classroom_action_combo)
 
-        btn_latex = self._make_toolbar_btn('fa5s.file-export', " LaTeX", tb, '#8b5cf6', "Convert to LaTeX")
+        btn_latex = self._make_toolbar_btn('ri.file-upload-line', "LaTeX", tb, None, "Convert to LaTeX")
         btn_latex.clicked.connect(self._convert_to_latex)
         layout.addWidget(btn_latex)
 
         layout.addWidget(self._make_toolbar_separator(tb))
 
         # Study/Classroom Mode
-        self.btn_mode_toggle = self._make_toolbar_btn('fa5s.graduation-cap', " Study", tb, '#10b981', "Toggle Mode")
+        self.btn_mode_toggle = self._make_toolbar_btn('ri.book-open-line', "Study", tb, None, "Toggle Mode")
         self.btn_mode_toggle.clicked.connect(self._toggle_tutor_mode)
         layout.addWidget(self.btn_mode_toggle)
 
-        # Theme Toggle (Light / Dark Mode)
-        theme_icon_txt = " Light" if ThemeManager.instance().is_dark() else " Dark"
-        self.btn_theme_toggle = self._make_toolbar_btn('fa5s.moon', theme_icon_txt, tb, '#f59e0b', "Toggle Light/Dark Theme")
+        # Theme Toggle (Light / Dark Mode) — monochrome bordered pill
+        c = ThemeManager.instance().get_colors()
+        theme_lbl = "LIGHT" if ThemeManager.instance().is_dark() else "DARK"
+        self.btn_theme_toggle = self._make_toolbar_btn(
+            'ri.sun-line' if ThemeManager.instance().is_dark() else 'ri.moon-line',
+            theme_lbl, tb, None, "Toggle Light/Dark Theme"
+        )
+        self.btn_theme_toggle.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: 600;
+                font-family: {MONO_FONT};
+                letter-spacing: 0.5px;
+                color: {c['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {c['panel_card_bg']};
+            }}
+        """)
         self.btn_theme_toggle.clicked.connect(self._toggle_theme)
         layout.addWidget(self.btn_theme_toggle)
 
         layout.addStretch()
 
         # ── Save Button + Status Indicator ───────────────────────────────────
+        c = ThemeManager.instance().get_colors()
         self.lbl_save_status = QLabel("", tb)
         self.lbl_save_status.setStyleSheet(
-            "font-size: 11px; color: #2563eb; font-weight: 600; padding: 0 4px;"
+            f"font-size: 10px; color: {c['text_secondary']}; font-weight: 600; "
+            f"font-family: {MONO_FONT}; letter-spacing: 0.5px; padding: 2px 6px; "
+            f"border: 1px solid {c['border_color']}; border-radius: 2px;"
         )
         self.lbl_save_status.setVisible(False)
         layout.addWidget(self.lbl_save_status)
 
-        self.btn_save = self._make_toolbar_btn('fa5s.save', " Save", tb, '#3b82f6', "Save Notebook (Ctrl+S)")
-        self.btn_save.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                border: 1px solid #dbeafe;
-                border-radius: 7px;
-                padding: 5px 10px;
-                font-size: 12px;
-                font-weight: 600;
-                color: #2563eb;
-            }
-            QPushButton:hover {
-                background-color: #eff6ff;
-                border-color: #3b82f6;
-                color: #1e40af;
-            }
-            QPushButton:pressed {
-                background-color: #dbeafe;
-            }
-        """)
+        self.btn_save = self._make_toolbar_btn('ri.save-line', "Save", tb, None, "Save Notebook (Ctrl+S)")
+        self.btn_save.setStyleSheet(primary_button_qss(c))
         # Non-Popup Speedometer Live Status Widget
         self.speedometer_widget = SpeedometerProgressWidget(tb)
         layout.addWidget(self.speedometer_widget)
 
         # In-App View PDF Button (Appears on top right panel after PDF is exported)
-        self.btn_view_pdf = self._make_toolbar_btn('fa5s.file-pdf', " View PDF", tb, '#ef4444', "View Compiled PDF In-App")
+        self.btn_view_pdf = self._make_toolbar_btn('ri.file-pdf-line', "View PDF", tb, None, "View Compiled PDF In-App")
         self.btn_view_pdf.clicked.connect(self._open_in_app_pdf_viewer)
         self.btn_view_pdf.setVisible(False)
         layout.addWidget(self.btn_view_pdf)
@@ -820,14 +864,14 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self._make_toolbar_separator(tb))
 
-        # Add mock Search and Share icons
-        btn_search = self._make_toolbar_btn('fa5s.search', "", tb, '#94a3b8', "Search")
-        btn_share = self._make_toolbar_btn('fa5s.share', "", tb, '#94a3b8', "Share")
+        # Search / Share / Settings
+        btn_search = self._make_toolbar_btn('ri.search-line', "", tb, None, "Search")
+        btn_share = self._make_toolbar_btn('ri.share-line', "", tb, None, "Share")
         layout.addWidget(btn_search)
         layout.addWidget(btn_share)
 
         # Settings
-        btn_settings = self._make_toolbar_btn('fa5s.cog', "", tb, '#94a3b8', "Settings")
+        btn_settings = self._make_toolbar_btn('ri.settings-3-line', "", tb, None, "Settings")
         btn_settings.clicked.connect(self._open_settings)
         layout.addWidget(btn_settings)
 
@@ -841,56 +885,52 @@ class MainWindow(QMainWindow):
         self._update_mode_button_text(new_mode)
 
     def _update_mode_button_text(self, mode: str):
+        c = ThemeManager.instance().get_colors()
         if hasattr(self, 'btn_mode_toggle'):
             if mode == "classroom":
-                self.btn_mode_toggle.setText(" Classroom")
-                self.btn_mode_toggle.setStyleSheet("color: #f59e0b; font-weight: 600;")
-                self.btn_mode_toggle.setIcon(qta.icon('fa5s.chalkboard-teacher', color='#f59e0b'))
+                self.btn_mode_toggle.setText("Classroom")
+                self.btn_mode_toggle.setIcon(qta.icon('ri.slideshow-line', color=c['text_secondary']))
             else:
-                self.btn_mode_toggle.setText(" Study")
-                self.btn_mode_toggle.setStyleSheet("color: #10b981; font-weight: 600;")
-                self.btn_mode_toggle.setIcon(qta.icon('fa5s.graduation-cap', color='#10b981'))
+                self.btn_mode_toggle.setText("Study")
+                self.btn_mode_toggle.setIcon(qta.icon('ri.book-open-line', color=c['text_secondary']))
 
     def _create_hud_overlay(self) -> QWidget:
+        c = ThemeManager.instance().get_colors()
         hud = QWidget(self)
         hud.setFixedHeight(64)
         hud.setStyleSheet("background: transparent;")
 
-        # Single floating pill that holds everything
+        # Single floating bar that holds everything
         outer = QHBoxLayout(hud)
         outer.setContentsMargins(24, 0, 24, 10)
 
         pill = QWidget(hud)
         pill.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        pill.setStyleSheet("""
-            QWidget {
-                background-color: rgba(255,255,255,0.96);
-                border: 1px solid #e2e8f0;
-                border-radius: 20px;
-            }
-            QPushButton {
+        pill.setStyleSheet(f"""
+            QWidget {{
+                background-color: {c['bg_toolbar']};
+                border: 1px solid {c['border_color']};
+                border-radius: 8px;
+            }}
+            QPushButton {{
                 border: none;
                 background: transparent;
-                border-radius: 8px;
+                border-radius: 2px;
                 padding: 5px 8px;
                 font-size: 12px;
-                font-weight: 500;
-                color: #334155;
-            }
-            QPushButton:hover { background-color: #f1f5f9; }
-            QLabel {
+                font-weight: 600;
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
+            }}
+            QPushButton:hover {{ background-color: {c['panel_card_bg']}; }}
+            QLabel {{
                 font-size: 12px;
                 font-weight: 600;
-                color: #334155;
+                font-family: {MONO_FONT};
+                color: {c['text_primary']};
                 min-width: 36px;
-            }
+            }}
         """)
-
-        pill_shadow = QGraphicsDropShadowEffect(pill)
-        pill_shadow.setBlurRadius(24)
-        pill_shadow.setColor(QColor(15, 23, 42, 40))
-        pill_shadow.setOffset(0, 4)
-        pill.setGraphicsEffect(pill_shadow)
 
         pl = QHBoxLayout(pill)
         pl.setContentsMargins(10, 4, 10, 4)
@@ -914,7 +954,7 @@ class MainWindow(QMainWindow):
         sep1 = QFrame(pill)
         sep1.setFrameShape(QFrame.Shape.VLine)
         sep1.setFixedHeight(18)
-        sep1.setStyleSheet("color: #e2e8f0;")
+        sep1.setStyleSheet(f"color: {c['border_color']};")
         pl.addSpacing(4)
         pl.addWidget(sep1)
         pl.addSpacing(4)
@@ -931,7 +971,7 @@ class MainWindow(QMainWindow):
         sep2 = QFrame(pill)
         sep2.setFrameShape(QFrame.Shape.VLine)
         sep2.setFixedHeight(18)
-        sep2.setStyleSheet("color: #e2e8f0;")
+        sep2.setStyleSheet(f"color: {c['border_color']};")
         pl.addSpacing(4)
         pl.addWidget(sep2)
         pl.addSpacing(4)
@@ -1335,18 +1375,20 @@ class MainWindow(QMainWindow):
             self.reference_panel.show_panel(self)
 
     def _sync_grid_btn_ui(self, mode: str):
+        c = ThemeManager.instance().get_colors()
+        col = c['text_secondary']
         if mode == "ruled":
-            self.btn_grid_mode.setText(" Ruled")
-            self.btn_grid_mode.setIcon(qta.icon('fa5s.grip-lines', color='#475569'))
+            self.btn_grid_mode.setText("Ruled")
+            self.btn_grid_mode.setIcon(qta.icon('ri.menu-line', color=col))
         elif mode == "dotted":
-            self.btn_grid_mode.setText(" Dotted")
-            self.btn_grid_mode.setIcon(qta.icon('fa5s.braille', color='#475569'))
+            self.btn_grid_mode.setText("Dotted")
+            self.btn_grid_mode.setIcon(qta.icon('ri.more-line', color=col))
         elif mode == "math_ruled":
-            self.btn_grid_mode.setText(" Math Ruled")
-            self.btn_grid_mode.setIcon(qta.icon('fa5s.border-all', color='#475569'))
+            self.btn_grid_mode.setText("Math Grid")
+            self.btn_grid_mode.setIcon(qta.icon('ri.grid-line', color=col))
         else:
-            self.btn_grid_mode.setText(" Blank")
-            self.btn_grid_mode.setIcon(qta.icon('fa5s.square', color='#475569'))
+            self.btn_grid_mode.setText("Blank")
+            self.btn_grid_mode.setIcon(qta.icon('ri.checkbox-blank-line', color=col))
 
     def _toggle_grid_mode(self):
         if self.scene.background_mode == "blank":
@@ -1391,39 +1433,68 @@ class MainWindow(QMainWindow):
             self.main_stack.setCurrentIndex(2)
 
     def _set_sidebar_active_button(self, active_btn):
-        """Highlights the active nav button in the icon rail with a blue glow."""
+        """Highlights the active nav button with solid white fill & black icon (Figma ref)."""
+        if isinstance(active_btn, str):
+            active_btn = getattr(self, '_sidebar_btn_map', {}).get(active_btn)
+
+        c = ThemeManager.instance().get_colors()
         for btn in getattr(self, '_sidebar_nav_buttons', []):
-            btn.setStyleSheet("")
-        active_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(59, 130, 246, 0.15);
-                border-radius: 10px;
-                border: 1px solid rgba(59, 130, 246, 0.3);
-            }
-        """)
+            icon_name = getattr(btn, '_icon_name', 'ri.grid-line')
+            btn.setIcon(qta.icon(icon_name, color=c['sidebar_icon']))
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: transparent;
+                    border: none;
+                    border-radius: 2px;
+                }
+                QPushButton:hover {
+                    background-color: rgba(255, 255, 255, 0.08);
+                }
+            """)
+        if active_btn:
+            active_icon_name = getattr(active_btn, '_icon_name', 'ri.grid-line')
+            active_btn.setIcon(qta.icon(active_icon_name, color=c['sidebar_active_icon']))
+            active_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['sidebar_active_bg']};
+                    border-radius: 2px;
+                    border: none;
+                }}
+            """)
 
     def _on_sidebar_nav_clicked(self, btn):
         """Handles icon rail sidebar navigation clicks."""
         self._set_sidebar_active_button(btn)
-        tooltip = getattr(btn, '_nav_tooltip', '')
-        if tooltip == "Boards":
+        key = getattr(btn, '_nav_key', getattr(btn, '_nav_tooltip', ''))
+        if key in ("home", "Home", "Boards"):
             self.folder_tree.setVisible(False)
             self.main_stack.setCurrentWidget(self.home_view)
-        elif tooltip == "Notebooks":
-            self._refresh_folder_tree()
-            self.notebooks_panel.refresh()
-            self.main_stack.setCurrentWidget(self.notebooks_panel)
-        elif tooltip in ("Version History", "Git VCS"):
+        elif key in ("canvas", "Canvas"):
+            self.folder_tree.setVisible(False)
+            self.main_stack.setCurrentWidget(self._canvas_wrapper)
+        elif key in ("notebooks", "Notebooks"):
+            self.folder_tree.setVisible(False)
+            self.subjects_list_view.refresh_subjects()
+            self.main_stack.setCurrentWidget(self.subjects_list_view)
+        elif key in ("vcs", "Version Control", "Git VCS"):
+            self.folder_tree.setVisible(False)
             self.git_notes_panel.refresh_all()
             self.main_stack.setCurrentWidget(self.git_notes_panel)
-        elif tooltip == "Knowledge Graph":
+        elif key in ("graph", "Knowledge Graph"):
+            self.folder_tree.setVisible(False)
             self.obsidian_graph_panel.load_graph()
             self.main_stack.setCurrentWidget(self.obsidian_graph_panel)
-        elif tooltip == "Favourites":
+        elif key in ("favourites", "Favourites"):
+            self.folder_tree.setVisible(False)
             self.placeholder_panel.set_title("Favourites")
             self.main_stack.setCurrentWidget(self.placeholder_panel)
+        elif key in ("downloads", "Downloads"):
+            self.folder_tree.setVisible(False)
+            self.placeholder_panel.set_title("Downloads")
+            self.main_stack.setCurrentWidget(self.placeholder_panel)
         else:
-            self.placeholder_panel.set_title(tooltip)
+            self.folder_tree.setVisible(False)
+            self.placeholder_panel.set_title(str(key))
             self.main_stack.setCurrentWidget(self.placeholder_panel)
 
     def _refresh_folder_tree(self):
@@ -1527,6 +1598,7 @@ class MainWindow(QMainWindow):
             self._sync_grid_btn_ui(self.scene.background_mode)
             
             self.main_stack.setCurrentWidget(self._canvas_wrapper)
+            self._set_sidebar_active_button("canvas")
         except Exception as err:
             QMessageBox.warning(self, "Load Failed", f"Could not load notebook:\n{err}")
 
