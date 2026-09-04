@@ -129,6 +129,8 @@ class ManimVideoPollWorker(QThread):
                     elif status == "error":
                         self.video_failed.emit(self.job_id, data.get("error_message", "Manim pipeline error"))
                         return
+                    
+                    continue
             except Exception:
                 pass
 

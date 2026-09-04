@@ -1,5 +1,5 @@
 """
-PyQt6 Application Entry Point & Bootstrap
+PyQt6 Application Entry Point & Bootstrap with Animated Splash Screen
 """
 
 import sys
@@ -15,6 +15,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", "backend", ".env"))
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 from app.ui.main_window import MainWindow
+from app.ui.splash_screen import SplashScreen
 
 def main():
     try:
@@ -27,8 +28,16 @@ def main():
         app.setApplicationName("Kestrel")
         app.setStyle("Fusion")
 
+        # Display animated intro splash screen with Kestrel logo animation
+        splash = SplashScreen(duration_ms=2200)
+        splash.show()
+        app.processEvents()
+
+        # Initialize main window in background while splash animates
         window = MainWindow()
-        window.show()
+
+        # When splash finishes fade-out, reveal the main window
+        splash.finished.connect(window.show)
         
         sys.exit(app.exec())
     except Exception as e:

@@ -133,11 +133,17 @@ class RendererAgent:
         try:
             with open(script_path, "w", encoding="utf-8") as f:
                 f.write(job.manim_code)
+                
+            import re
+            scene_name = "MainScene"
+            matches = re.findall(r'^class\s+(\w+)\(Scene\):', job.manim_code, flags=re.MULTILINE)
+            if matches:
+                scene_name = matches[-1]
 
             # ── Stage A: Fast validation render (-ql, 480p) ───────────────────
-            print(f"[RendererAgent] Stage A: fast validation render (-ql)")
+            print(f"[RendererAgent] Stage A: fast validation render (-ql) for {scene_name}")
             ql_media = os.path.join(temp_dir, "media_ql")
-            ok, mp4 = self._manim_render(script_path, ql_media, quality="-ql", timeout=120)
+            ok, mp4 = self._manim_render(script_path, ql_media, quality="-ql", timeout=120, scene_name=scene_name)
 
             if not ok or not mp4:
                 err = _extract_error(mp4 or "")  # mp4 is error string when ok=False
@@ -152,7 +158,7 @@ class RendererAgent:
             if job.retry_count == 0:
                 print(f"[RendererAgent] Stage B: production render (-qm)")
                 qm_media = os.path.join(temp_dir, "media_qm")
-                ok_prod, mp4_prod = self._manim_render(script_path, qm_media, quality="-qm", timeout=240)
+                ok_prod, mp4_prod = self._manim_render(script_path, qm_media, quality="-qm", timeout=240, scene_name=scene_name)
                 if ok_prod and mp4_prod:
                     final_mp4 = mp4_prod
                     job.render_quality = "medium"
@@ -193,7 +199,7 @@ class RendererAgent:
                 print(f"[RendererAgent] Temp dir cleanup failed: {cleanup_err}")
 
     def _manim_render(
-        self, script_path: str, media_dir: str, quality: str = "-ql", timeout: int = 180
+        self, script_path: str, media_dir: str, quality: str = "-ql", timeout: int = 180, scene_name: str = "MainScene"
     ) -> tuple[bool, str]:
         """
         Run manim render and return (success, mp4_path_or_error_message).
@@ -203,12 +209,13 @@ class RendererAgent:
             sys.executable, "-m", "manim", "render",
             quality,
             "--media_dir", media_dir,
-            script_path, "MainScene"
+            script_path, scene_name
         ]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
             return False, f"Render timed out after {timeout}s. Simplify the animation."
+
 
         if result.returncode != 0:
             return False, _extract_error(result.stderr, result.stdout)
