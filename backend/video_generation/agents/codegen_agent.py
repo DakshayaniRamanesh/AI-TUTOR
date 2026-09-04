@@ -45,8 +45,9 @@ class CodeGenAgent:
         if getattr(self, "_groq_client", None):
             try:
                 response = self._groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="openai/gpt-oss-120b",  # Largest Groq model — best for code gen
                     messages=[{"role": "user", "content": prompt}],
+                    timeout=60.0,
                 )
                 if response.choices and response.choices[0].message.content:
                     return response.choices[0].message.content
@@ -62,7 +63,7 @@ class CodeGenAgent:
         """
         import re
 
-        # Known template variable names — used to detect genuinely unfilled placeholders
+        # Known template variable names ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â used to detect genuinely unfilled placeholders
         KNOWN_VARS = {
             "topic", "concept_label", "step1", "step2", "step3", "step4",
             "summary", "latex_formula", "transform_formula", "label_a", "label_b",
@@ -71,7 +72,7 @@ class CodeGenAgent:
         }
 
         # Step 1: Pre-fill $topic with the actual user prompt BEFORE sending to LLM.
-        # This is the most important fix — the LLM chose generic text here before.
+        # This is the most important fix ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the LLM chose generic text here before.
         topic_safe = job.user_prompt.strip().replace('"', "'")[:50]
         raw_template = self._template_lib.get_template(template_name)
         # Replace $topic (and ${topic}) with the real title before LLM sees it
@@ -82,16 +83,16 @@ class CodeGenAgent:
         prompt = f"""You are filling in a Manim animation template for a lesson about: "{job.user_prompt}"
 
 Lesson context (from the student's uploaded document):
-{(job.story_script or 'No script available — use your knowledge of the topic.')[:2000]}
+{(job.story_script or 'No script available ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â use your knowledge of the topic.')[:2000]}
 
 Below is a partially filled Manim Python template. The title ($topic) is already set.
 Your job is to fill in the REMAINING $variable placeholders with content specific to "{job.user_prompt}".
 
 STRICT RULES:
-- Text variables (concept_label, step1, step2, step3, summary etc.) → plain English, max 45 chars
-- LaTeX variables (latex_formula, transform_formula) → plain string math ONLY using Text(), e.g. "Av = \\lambda v". Do NOT use MathTex.
-- Make content SPECIFIC to "{job.user_prompt}" — not generic placeholder text
-- Do NOT change any Python code structure — only replace $variable placeholders
+- Text variables (concept_label, step1, step2, step3, summary etc.) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ plain English, max 45 chars
+- LaTeX variables (latex_formula, transform_formula) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ plain string math ONLY using Text(), e.g. "Av = \\lambda v". Do NOT use MathTex.
+- Make content SPECIFIC to "{job.user_prompt}" ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â not generic placeholder text
+- Do NOT change any Python code structure ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only replace $variable placeholders
 - Return ONLY the complete Python code block, no explanation
 
 TEMPLATE (fill remaining $variables):
@@ -114,17 +115,17 @@ Return only executable Python code."""
         else:
             code = raw_response.strip()
 
-        # Only flag genuinely unfilled placeholders — check against known var names.
+        # Only flag genuinely unfilled placeholders ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â check against known var names.
         # Avoids false positives from $ signs in LaTeX strings or Python comments.
         unfilled = [
             m for m in re.findall(r'\$\{?(\w+)\}?', code)
             if m in KNOWN_VARS
         ]
         if unfilled:
-            print(f"[CodeGenAgent] Template fill incomplete — unfilled vars: {unfilled}")
+            print(f"[CodeGenAgent] Template fill incomplete ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â unfilled vars: {unfilled}")
             return ""
 
-        print(f"[CodeGenAgent] Template strategy succeeded — {len(code)} chars generated")
+        print(f"[CodeGenAgent] Template strategy succeeded ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â {len(code)} chars generated")
         return code
 
     def run(self, job: VideoJob) -> VideoJob:
@@ -139,9 +140,9 @@ Return only executable Python code."""
         build_err = getattr(job, "build_error_trace", None) or getattr(job, "ci_error_log", None)
         if build_err:
             error_context = f"\nPREVIOUS BUILD ERROR (Fix this in your code):\n{build_err}\n"
-            print(f"[CodeGenAgent] Retry mode — build error: {build_err[:100]}")
+            print(f"[CodeGenAgent] Retry mode ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â build error: {build_err[:100]}")
 
-        # ── Strategy 1: Template-based generation (low error rate) ────────────
+        # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Strategy 1: Template-based generation (low error rate) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
         # DISABLED: Templates are too short for detailed user prompts. We now rely on
         # the full LLM generation (Strategy 2) for all requests to ensure detailed videos.
         if False: # self.api_key and not build_err:
@@ -163,7 +164,7 @@ Return only executable Python code."""
             except Exception as e:
                 print(f"[CodeGenAgent] Strategy 1 (template) exception: {e}. Falling back to free-gen.")
 
-        # ── Strategy 2: Free-generation (fallback / retry path) ────────────
+        # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Strategy 2: Free-generation (fallback / retry path) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
         print(f"[CodeGenAgent] Running Strategy 2 (Free-generation)")
         prompt = f"""You are an expert Manim CE (v0.20.1) Python code developer.
 User Topic: "{job.user_prompt}"
@@ -217,7 +218,7 @@ FORMATTING RULES:
             except Exception as e:
                 print(f"[CodeGenAgent] LLM error: {e}. Using educational fallback Manim template.")
 
-        # Educational fallback Manim code — renders real 2D matrix/grid diagrams & arrows
+        # Educational fallback Manim code ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â renders real 2D matrix/grid diagrams & arrows
         title_clean = (job.user_prompt or "Neural Network Concept").strip().replace("\n", " ")[:35]
         sub_clean = (job.document_text or "Feature maps & matrix transformations").strip().replace("\n", " ")[:45]
 
@@ -230,7 +231,7 @@ class MainScene(Scene):
     def construct(self):
         self.camera.background_color = "#090d16"
 
-        # ── Stage 1: Lesson Title Banner ──
+        # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Stage 1: Lesson Title Banner ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
         title = Text({title_json}, font_size=36, color=BLUE).to_edge(UP, buff=0.5)
         subtitle = Text("Step-by-Step Visual Explanation", font_size=20, color=GRAY).next_to(title, DOWN, buff=0.2)
         
@@ -238,7 +239,7 @@ class MainScene(Scene):
         self.play(FadeIn(subtitle), run_time=0.8)
         self.wait(1)
 
-        # ── Stage 2: Visual 2D Grid / Matrix Representation ──
+        # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Stage 2: Visual 2D Grid / Matrix Representation ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
         grid_group = VGroup()
         for row in range(3):
             for col in range(3):
@@ -252,14 +253,14 @@ class MainScene(Scene):
         self.play(Create(grid_group), FadeIn(grid_label), run_time=1.5)
         self.wait(1)
 
-        # ── Stage 3: Transformation Arrow & Formula ──
+        # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Stage 3: Transformation Arrow & Formula ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
         arrow = Arrow(LEFT * 1.5, RIGHT * 0.5, color=YELLOW, buff=0.1).shift(DOWN * 0.5)
         formula = Text("Y = f(W * X + b)", font_size=32, color=YELLOW).next_to(arrow, UP, buff=0.2)
 
         self.play(GrowArrow(arrow), Write(formula), run_time=1.2)
         self.wait(1)
 
-        # ── Stage 4: Feature Map Output Grid ──
+        # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Stage 4: Feature Map Output Grid ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
         out_grid = VGroup()
         for row in range(2):
             for col in range(2):
@@ -278,7 +279,7 @@ class MainScene(Scene):
         self.play(Create(pulse), run_time=1.0)
         self.play(Uncreate(pulse), run_time=0.8)
 
-        # ── Stage 5: Summary Card ──
+        # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Stage 5: Summary Card ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
         summary_card = RoundedRectangle(corner_radius=0.2, height=1.5, width=9.0, color=BLUE, fill_color="#131b2e", fill_opacity=0.9).to_edge(DOWN, buff=0.4)
         summary_text = Text({sub_json}, font_size=18, color=WHITE).move_to(summary_card.get_center())
         

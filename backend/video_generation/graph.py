@@ -1,18 +1,22 @@
 """
-LangGraph 1.2 StateGraph pipeline for Manim AI Video Generator.
+LangGraph StateGraph pipeline for the Manim AI Video Generator.
 
-Spec: build_graph() returns a CompiledGraph.
-      DeltaChannel is used so only state deltas are persisted per step.
-      Conditional edges:
-        validate → story   (if needs_revision)
-        validate → codegen (if approved)
-        ci → codegen       (if has_build_error and retry_count < 3)
-        ci → render        (if passed)
+Two compatible paths are supported:
+
+Legacy text/PDF:
+    embed -> story -> validate -> codegen -> ci -> render -> upload
+
+Whiteboard-aware:
+    embed -> board_understanding -> teaching_planner -> storyboard_planner
+          -> scene_compile -> ci -> render -> upload
+
+If deterministic SceneSpec compilation fails CI, the graph falls back to the
+legacy CodeGenAgent as a repair path instead of discarding the whole job.
 """
 
 from __future__ import annotations
 
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 try:
     from langgraph.graph import StateGraph, END  # type: ignore
@@ -29,37 +33,17 @@ from backend.video_generation.agents.codegen_agent import CodeGenAgent
 from backend.video_generation.agents.renderer_agent import RendererAgent
 from backend.video_generation.agents.uploader_agent import UploaderAgent
 from backend.video_generation.agents.notes_agent import NotesGeneratorAgent
+from backend.video_generation.agents.board_understanding_agent import BoardUnderstandingAgent
+from backend.video_generation.agents.teaching_planner_agent import TeachingPlannerAgent
+from backend.video_generation.agents.storyboard_agent import StoryboardPlannerAgent
+from backend.video_generation.agents.scene_compile_agent import SceneCompileAgent
 from backend.ci.pipeline import CIPipelineHarness
 
 
-# ── Node functions ─────────────────────────────────────────────────────────────
-
-def _make_embed_node(agent: DocumentEmbedderAgent):
-    def embed(state: VideoJob) -> VideoJob:
+def _node(agent):
+    def run(state: VideoJob) -> VideoJob:
         return agent.run(state)
-    return embed
-
-def _make_notes_node(agent: NotesGeneratorAgent):
-    def notes(state: VideoJob) -> VideoJob:
-        return agent.run(state)
-    return notes
-
-def _make_story_node(agent: StoryAgent):
-    def story(state: VideoJob) -> VideoJob:
-        return agent.run(state)
-    return story
-
-
-def _make_validate_node(agent: ValidatorAgent):
-    def validate(state: VideoJob) -> VideoJob:
-        return agent.run(state)
-    return validate
-
-
-def _make_codegen_node(agent: CodeGenAgent):
-    def codegen(state: VideoJob) -> VideoJob:
-        return agent.run(state)
-    return codegen
+    return run
 
 
 def _make_ci_node(harness: CIPipelineHarness):
@@ -75,50 +59,38 @@ def _make_ci_node(harness: CIPipelineHarness):
             print(f"[CI] Build failed (retry {state.retry_count}): {error_trace}")
             if state.retry_count >= 3:
                 state.status = JobStatus.ERROR
-                state.error_message = f"CODEGEN_MAX_RETRIES: Code generation failed after 3 attempts. Last error: {error_trace}"
+                state.error_message = (
+                    "CODEGEN_MAX_RETRIES: Code generation failed after 3 attempts. "
+                    f"Last error: {error_trace}"
+                )
         return state
     return ci
 
 
-def _make_render_node(agent: RendererAgent):
-    def render(state: VideoJob) -> VideoJob:
-        return agent.run(state)
-    return render
-
-
-def _make_upload_node(agent: UploaderAgent):
-    def upload(state: VideoJob) -> VideoJob:
-        return agent.run(state)
-    return upload
-
-
-# ── Conditional edge functions ─────────────────────────────────────────────────
 def _route_post_embed(state: VideoJob) -> str:
     if getattr(state, "output_type", "video") == "notes":
         return "notes_generator"
+    selection = getattr(state, "board_selection", None)
+    if selection and getattr(selection, "has_content", lambda: True)():
+        return "board_understanding"
     return "story"
 
+
 def _route_validate(state: VideoJob) -> str:
-    if state.needs_revision:
-        return "story"
-    return "codegen"
+    return "story" if state.needs_revision else "codegen"
 
 
 def _route_ci(state: VideoJob) -> str:
     if state.has_build_error:
         if state.status == JobStatus.ERROR:
-            return END  # max retries exceeded
+            return END
+        # Deterministic compiler is the preferred board path. On a CI failure,
+        # use the existing LLM CodeGenAgent as a bounded repair fallback.
         return "codegen"
     return "render"
 
 
-# ── Graph builder ──────────────────────────────────────────────────────────────
-
 def build_graph(rag_store: Optional[QdrantRAGStore] = None):
-    """
-    Build and compile the LangGraph StateGraph.
-    Returns a CompiledGraph (if langgraph is available) or a FallbackPipeline.
-    """
     rag = rag_store or QdrantRAGStore()
     embedder = DocumentEmbedderAgent(rag)
     story_agent = StoryAgent(rag)
@@ -127,32 +99,56 @@ def build_graph(rag_store: Optional[QdrantRAGStore] = None):
     ci_harness = CIPipelineHarness()
     renderer_agent = RendererAgent()
     uploader_agent = UploaderAgent()
-    notes_agent = NotesGeneratorAgent() 
+    notes_agent = NotesGeneratorAgent()
+    board_agent = BoardUnderstandingAgent()
+    teaching_agent = TeachingPlannerAgent(rag)
+    storyboard_agent = StoryboardPlannerAgent()
+    scene_compile_agent = SceneCompileAgent()
 
     if not LANGGRAPH_AVAILABLE:
         print("[VideoGenerationPipeline] LangGraph not installed. Using FallbackPipeline.")
         return _FallbackPipeline(
-            embedder, story_agent, validator_agent,
-            codegen_agent, ci_harness, renderer_agent, uploader_agent, notes_agent 
+            embedder=embedder,
+            story_agent=story_agent,
+            validator_agent=validator_agent,
+            codegen_agent=codegen_agent,
+            ci_harness=ci_harness,
+            renderer_agent=renderer_agent,
+            uploader_agent=uploader_agent,
+            notes_agent=notes_agent,
+            board_agent=board_agent,
+            teaching_agent=teaching_agent,
+            storyboard_agent=storyboard_agent,
+            scene_compile_agent=scene_compile_agent,
         )
 
     graph = StateGraph(VideoJob)
-
-    graph.add_node("embed", _make_embed_node(embedder))
-    graph.add_node("story", _make_story_node(story_agent))
-    graph.add_node("validate", _make_validate_node(validator_agent))
-    graph.add_node("codegen", _make_codegen_node(codegen_agent))
+    graph.add_node("embed", _node(embedder))
+    graph.add_node("story", _node(story_agent))
+    graph.add_node("validate", _node(validator_agent))
+    graph.add_node("codegen", _node(codegen_agent))
     graph.add_node("ci", _make_ci_node(ci_harness))
-    graph.add_node("render", _make_render_node(renderer_agent))
-    graph.add_node("upload", _make_upload_node(uploader_agent))
-    graph.add_node("notes_generator", _make_notes_node(notes_agent)) 
+    graph.add_node("render", _node(renderer_agent))
+    graph.add_node("upload", _node(uploader_agent))
+    graph.add_node("notes_generator", _node(notes_agent))
+
+    graph.add_node("board_understanding", _node(board_agent))
+    graph.add_node("teaching_planner", _node(teaching_agent))
+    graph.add_node("storyboard_planner", _node(storyboard_agent))
+    graph.add_node("scene_compile", _node(scene_compile_agent))
 
     graph.set_entry_point("embed")
     graph.add_conditional_edges(
         "embed",
         _route_post_embed,
-        {"notes_generator": "notes_generator", "story": "story"},
+        {
+            "notes_generator": "notes_generator",
+            "board_understanding": "board_understanding",
+            "story": "story",
+        },
     )
+
+    # Legacy path
     graph.add_edge("story", "validate")
     graph.add_conditional_edges(
         "validate",
@@ -160,6 +156,13 @@ def build_graph(rag_store: Optional[QdrantRAGStore] = None):
         {"story": "story", "codegen": "codegen"},
     )
     graph.add_edge("codegen", "ci")
+
+    # Whiteboard path
+    graph.add_edge("board_understanding", "teaching_planner")
+    graph.add_edge("teaching_planner", "storyboard_planner")
+    graph.add_edge("storyboard_planner", "scene_compile")
+    graph.add_edge("scene_compile", "ci")
+
     graph.add_conditional_edges(
         "ci",
         _route_ci,
@@ -167,17 +170,26 @@ def build_graph(rag_store: Optional[QdrantRAGStore] = None):
     )
     graph.add_edge("render", "upload")
     graph.set_finish_point("upload")
-
+    graph.add_edge("notes_generator", END)
     return graph.compile()
 
 
-# ── Fallback pipeline (when LangGraph is not installed) ────────────────────────
-
 class _FallbackPipeline:
-    """Runs the same agent sequence without LangGraph for local dev/testing."""
-
-    def __init__(self, embedder, story_agent, validator_agent,
-                 codegen_agent, ci_harness, renderer_agent, uploader_agent, notes_agent):
+    def __init__(
+        self,
+        embedder,
+        story_agent,
+        validator_agent,
+        codegen_agent,
+        ci_harness,
+        renderer_agent,
+        uploader_agent,
+        notes_agent,
+        board_agent,
+        teaching_agent,
+        storyboard_agent,
+        scene_compile_agent,
+    ):
         self.embedder = embedder
         self.story_agent = story_agent
         self.validator_agent = validator_agent
@@ -186,30 +198,58 @@ class _FallbackPipeline:
         self.renderer_agent = renderer_agent
         self.uploader_agent = uploader_agent
         self.notes_agent = notes_agent
+        self.board_agent = board_agent
+        self.teaching_agent = teaching_agent
+        self.storyboard_agent = storyboard_agent
+        self.scene_compile_agent = scene_compile_agent
 
     def invoke(self, state: VideoJob) -> VideoJob:
         state.status = JobStatus.PROCESSING
-
         state = self.embedder.run(state)
         if state.status == JobStatus.ERROR:
             return state
 
-        # NEW: Fallback pipeline routing
         if getattr(state, "output_type", "video") == "notes":
-            # If the user wants notes, we just run the notes agent and exit!
             state = self.notes_agent.run(state)
-            state.status = JobStatus.DONE
+            if state.status != JobStatus.ERROR:
+                state.status = JobStatus.DONE
             return state
 
-        # Story + Validation loop
-        while True:
-            state = self.story_agent.run(state)
-            state = self.validator_agent.run(state)
-            if not state.needs_revision:
-                break
+        selection = getattr(state, "board_selection", None)
+        if selection and getattr(selection, "has_content", lambda: True)():
+            state = self.board_agent.run(state)
+            state = self.teaching_agent.run(state)
+            state = self.storyboard_agent.run(state)
+            state = self.scene_compile_agent.run(state)
+            state = self._validate_or_repair(state)
+        else:
+            while True:
+                state = self.story_agent.run(state)
+                state = self.validator_agent.run(state)
+                if not state.needs_revision:
+                    break
+            state = self._codegen_until_valid(state)
 
-        # Codegen + CI loop (max 3 retries)
-        while True:
+        if state.status == JobStatus.ERROR:
+            return state
+        state = self.renderer_agent.run(state)
+        if state.status == JobStatus.ERROR:
+            return state
+        return self.uploader_agent.run(state)
+
+    def _validate_or_repair(self, state: VideoJob) -> VideoJob:
+        passed, error_trace = self.ci_harness.validate_code(state.manim_code or "")
+        if passed:
+            state.has_build_error = False
+            state.build_error_trace = None
+            return state
+        state.has_build_error = True
+        state.build_error_trace = error_trace
+        state.retry_count += 1
+        return self._codegen_until_valid(state)
+
+    def _codegen_until_valid(self, state: VideoJob) -> VideoJob:
+        while state.retry_count < 3:
             state = self.codegen_agent.run(state)
             if state.status == JobStatus.ERROR:
                 return state
@@ -217,63 +257,43 @@ class _FallbackPipeline:
             if passed:
                 state.has_build_error = False
                 state.build_error_trace = None
-                break
-            else:
-                state.has_build_error = True
-                state.build_error_trace = error_trace
-                state.retry_count += 1
-                print(f"[FallbackPipeline CI] Code check failed (retry {state.retry_count}): {error_trace}")
-                if state.retry_count >= 3:
-                    state.status = JobStatus.ERROR
-                    state.error_message = f"CODEGEN_MAX_RETRIES: Code generation failed after 3 attempts. Last error: {error_trace}"
-                    return state
-
-        state = self.renderer_agent.run(state)
-        if state.status == JobStatus.ERROR:
-            return state
-
-        state = self.uploader_agent.run(state)
+                return state
+            state.has_build_error = True
+            state.build_error_trace = error_trace
+            state.retry_count += 1
+            print(f"[FallbackPipeline CI] Code check failed (retry {state.retry_count}): {error_trace}")
+        state.status = JobStatus.ERROR
+        state.error_message = (
+            "CODEGEN_MAX_RETRIES: Code generation failed after 3 attempts. "
+            f"Last error: {state.build_error_trace}"
+        )
         return state
 
 
-# ── VideoGenerationPipeline facade ─────────────────────────────────────────────
-
 class VideoGenerationPipeline:
-    """
-    Public facade used by modal_app.py.
-    Wraps the compiled LangGraph (or fallback) and provides run_pipeline().
-    """
+    """Public facade used by local_server.py and modal_app.py."""
 
     def __init__(self, rag_store: Optional[QdrantRAGStore] = None):
         self._graph = build_graph(rag_store)
-       
 
     def run_pipeline(self, job: VideoJob) -> VideoJob:
         if hasattr(self._graph, "invoke"):
-            # LangGraph compiled graph
             result = self._graph.invoke(job)
-            # LangGraph returns a dict or the state object
             if isinstance(result, dict):
-                for k, v in result.items():
-                    setattr(job, k, v)
+                for key, value in result.items():
+                    setattr(job, key, value)
             else:
                 job = result
         else:
-            # _FallbackPipeline
             job = self._graph.invoke(job)
         return job
 
     def run_annotation_patch(self, job: VideoJob) -> VideoJob:
-        """
-        Lightweight pipeline path for annotation: codegen → ci → render → upload.
-        (DocumentEmbedder and StoryAgent are skipped; annotation_context is already set.)
-        """
-        rag = QdrantRAGStore()
+        """Legacy lightweight annotation repair path."""
         codegen_agent = CodeGenAgent()
         ci_harness = CIPipelineHarness()
         renderer_agent = RendererAgent()
         uploader_agent = UploaderAgent()
-
         job.version += 1
 
         for _ in range(3):
@@ -291,5 +311,4 @@ class VideoGenerationPipeline:
             return job
 
         job = renderer_agent.run(job)
-        job = uploader_agent.run(job)
-        return job
+        return uploader_agent.run(job)

@@ -44,7 +44,7 @@ class StoryAgent:
         if getattr(self, "_groq_client", None):
             try:
                 response = self._groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="qwen/qwen3.8-27b",
                     messages=[{"role": "user", "content": prompt}],
                 )
                 if response.choices and response.choices[0].message.content:
@@ -63,7 +63,7 @@ class StoryAgent:
         full_context = (context_text or doc_text or "No specific document context found.")
 
         print(f"[StoryAgent] RAG chunks retrieved: {len(relevant_chunks)} | doc_text length: {len(doc_text)}")
-        print(f"[StoryAgent] Context being used: {'PDF chunks' if relevant_chunks else 'doc_text fallback' if doc_text else 'NO CONTEXT — generic script likely'}")
+        print(f"[StoryAgent] Context being used: {'PDF chunks' if relevant_chunks else 'doc_text fallback' if doc_text else 'NO CONTEXT ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â generic script likely'}")
         print(f"[StoryAgent] api_key present: {bool(self.api_key)} | Gemini: {bool(self.google_api_key)} | Groq: {bool(self.groq_api_key)}")
 
         prompt = f"""You are an award-winning 3Blue1Brown mathematical animator and computer science educator.

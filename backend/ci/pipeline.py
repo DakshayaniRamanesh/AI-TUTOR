@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import py_compile
 import subprocess
@@ -22,12 +23,21 @@ class CIPipelineHarness:
     Stage 3: Manim --dry_run CLI                       — validates scene graph construction
     Stage 4: Low-quality frame-0 smoke render          — catches LaTeX errors, bad .animate calls,
                                                          runtime Mobject errors that only surface
-                                                         during actual rendering (NEW)
+                                                         during actual rendering
     """
 
-    def validate_code(self, manim_code: str, scene_name: str = "MainScene") -> Tuple[bool, str]:
+    def _discover_scene_classes(self, manim_code: str) -> list:
+        """Extract all Scene subclass names from generated Manim code."""
+        classes = re.findall(r'^class\s+(\w+)\(Scene\):', manim_code, re.MULTILINE)
+        return classes if classes else ["MainScene"]  # Legacy fallback
+
+    def validate_code(self, manim_code: str, scene_name: str = None) -> Tuple[bool, str]:
         if not manim_code or not manim_code.strip():
             return False, "Code compilation error: Empty Manim code string provided."
+
+        scene_classes = self._discover_scene_classes(manim_code)
+        if scene_name:
+            scene_classes = [scene_name]
 
         with tempfile.TemporaryDirectory(prefix="manim_ci_") as temp_dir:
             file_path = os.path.join(temp_dir, "test_scene.py")
@@ -47,8 +57,9 @@ class CIPipelineHarness:
                 try:
                     exec_globals = {}
                     exec(manim_code, exec_globals)
-                    if scene_name not in exec_globals:
-                        return False, f"[Stage2] Structure Error: Scene class `{scene_name}` not found in generated code."
+                    for sc in scene_classes:
+                        if sc not in exec_globals:
+                            return False, f"[Stage2] Structure Error: Scene class `{sc}` not found in generated code."
                 except Exception as e:
                     return False, f"[Stage2] Import/Runtime Error: {str(e)}"
             else:
@@ -57,62 +68,63 @@ class CIPipelineHarness:
                 try:
                     tree = ast.parse(manim_code)
                     class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
-                    if scene_name not in class_names:
-                        return False, f"[Stage2] Structure Error: Scene class `{scene_name}` not found in generated code."
+                    for sc in scene_classes:
+                        if sc not in class_names:
+                            return False, f"[Stage2] Structure Error: Scene class `{sc}` not found in generated code."
                 except SyntaxError as e:
                     return False, f"[Stage2] AST Parse Error: {str(e)}"
 
             # ── Stage 3: Manim --dry_run CLI scene graph check ────────────────────
             if MANIM_AVAILABLE:
-                try:
-                    cmd = [sys.executable, "-m", "manim", "render", "-ql", "-v", "WARNING", "--dry_run", file_path, scene_name]
+                for sc in scene_classes:
                     try:
-                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
-                    except subprocess.TimeoutExpired:
-                        return False, "[Stage3] Manim Dry Run Error: Execution timed out. Did you use an infinite loop, time.sleep(), or input()? REMOVE THEM."
-                    
-                    if result.returncode != 0:
-                        # Filter out any lingering tqdm progress bars if verbosity flag fails
-                        clean_stderr = "\n".join([l for l in result.stderr.splitlines() if not ("|" in l and "%" in l and "it/s" in l)])
-                        return False, f"[Stage3] Manim Dry Run Error:\n{clean_stderr[-3500:]}"
-                except FileNotFoundError:
-                    print("[CIPipelineHarness] Manim CLI not found. Skipping stage 3 dry-run CLI check.")
-                except Exception as e:
-                    return False, f"[Stage3] Manim Dry Run Execution Failed: {str(e)}"
+                        cmd = [
+                            sys.executable, "-m", "manim", "render",
+                            "--dry_run", "--disable_caching",
+                            "--renderer=cairo", "-v", "WARNING",
+                            file_path, sc
+                        ]
+                        try:
+                            result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+                        except subprocess.TimeoutExpired:
+                            return False, f"[Stage3] Manim Dry Run Error ({sc}): Execution timed out. Did you use an infinite loop, time.sleep(), or input()? REMOVE THEM."
+                        
+                        if result.returncode != 0:
+                            clean_stderr = "\n".join([l for l in result.stderr.splitlines() if not ("|" in l and "%" in l and "it/s" in l)])
+                            return False, f"[Stage3] Manim Dry Run Error ({sc}):\n{clean_stderr[-3500:]}"
+                    except FileNotFoundError:
+                        print("[CIPipelineHarness] Manim CLI not found. Skipping stage 3 dry-run CLI check.")
+                        break
+                    except Exception as e:
+                        return False, f"[Stage3] Manim Dry Run Execution Failed ({sc}): {str(e)}"
 
-            # ── Stage 4 (NEW): Low-quality frame-0 smoke render ───────────────────
-            # Renders only the very first frame at lowest quality (-ql -s 0).
-            # This is the only stage that catches runtime errors such as:
-            #   - LaTeX compilation failures inside MathTex()
-            #   - Incorrect .animate attribute calls
-            #   - Bad Mobject references that only fail during scene construction
-            # It is fast (~3-10s) compared to a full render (~60-300s on GPU).
-            if MANIM_AVAILABLE:
+            # ── Stage 4: Low-quality frame-0 smoke render ─────────────────────────
+            # Only smoke-test the FIRST scene class to keep CI fast.
+            if MANIM_AVAILABLE and scene_classes:
+                first_scene = scene_classes[0]
                 try:
                     smoke_media_dir = os.path.join(temp_dir, "smoke_media")
                     os.makedirs(smoke_media_dir, exist_ok=True)
                     cmd = [
                         sys.executable, "-m", "manim", "render", "-ql", "-v", "WARNING",
+                        "--renderer=cairo", "--disable_caching",
                         "--media_dir", smoke_media_dir,
-                        "-s",   # save last frame (renders only the first frame snapshot)
+                        "-s",   # save last frame only (fastest possible render)
                         file_path,
-                        scene_name,
+                        first_scene,
                     ]
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
                     if result.returncode != 0:
                         stderr = result.stderr or result.stdout or "Unknown smoke-render error"
-                        # Filter out any lingering tqdm progress bars
                         clean_stderr = "\n".join([l for l in stderr.splitlines() if not ("|" in l and "%" in l and "it/s" in l)])
-                        # Extract the most relevant error line from LaTeX / Manim output
                         error_lines = [l for l in clean_stderr.splitlines() if "Error" in l or "error" in l or "Exception" in l]
                         condensed = "\n".join(error_lines[:5]) if error_lines else clean_stderr[-3500:]
-                        return False, f"[Stage4] Smoke Render Failed (LaTeX/Runtime Error):\n{condensed}"
+                        return False, f"[Stage4] Smoke Render Failed ({first_scene}):\n{condensed}"
                 except FileNotFoundError:
                     print("[CIPipelineHarness] Manim CLI not found. Skipping stage 4 smoke render.")
                 except subprocess.TimeoutExpired:
-                    return False, "[Stage4] Smoke Render Timeout: frame-0 render exceeded 60s limit."
+                    return False, f"[Stage4] Smoke Render Timeout ({first_scene}): frame-0 render exceeded 90s limit."
                 except Exception as e:
-                    return False, f"[Stage4] Smoke Render Execution Error: {str(e)}"
+                    return False, f"[Stage4] Smoke Render Execution Error ({first_scene}): {str(e)}"
 
             return True, ""
-

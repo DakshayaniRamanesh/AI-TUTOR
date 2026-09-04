@@ -18,13 +18,13 @@ from qdrant_client.models import (
     VectorParams, Distance, PointStruct, Filter, FieldCondition, MatchValue,
 )
 
-COLLECTION_NAME = "manim-docs-v4"
-EMBEDDING_DIM = 768  # Gemini models/embedding-001 output dimension
+COLLECTION_NAME = "manim-docs-v5"
+EMBEDDING_DIM = 3072  # Gemini gemini-embedding-2 output dimension
 
 # Cross-student video cache collection
 # Keyed by hash(pdf_content + user_prompt) — serves repeat requests instantly
-CACHE_COLLECTION_NAME = "manim-video-cache-v3"
-CACHE_VECTOR_DIM = 768  # same embedding model
+CACHE_COLLECTION_NAME = "manim-video-cache-v4"
+CACHE_VECTOR_DIM = 3072  # same embedding model
 
 
 class GeminiEmbeddings:
@@ -39,7 +39,7 @@ class GeminiEmbeddings:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=api_key)
-                self.model_name = "models/text-embedding-004"
+                self.model_name = "models/gemini-embedding-2"
                 self._available = True
             except Exception as e:
                 print(f"[GeminiEmbeddings] Model load error: {e}")
@@ -108,9 +108,23 @@ class QdrantRAGStore:
         if qdrant_url == ":memory:":
             self.client = QdrantClient(location=":memory:")
         else:
-            self.client = QdrantClient(url=qdrant_url, api_key=qdrant_key)
+            # Try remote with a short timeout; fall back to in-memory if unreachable
+            try:
+                self.client = QdrantClient(
+                    url=qdrant_url,
+                    api_key=qdrant_key,
+                    timeout=5,
+                    check_compatibility=False,
+                )
+                # Probe the connection immediately so we catch failures here, not later
+                self.client.get_collections()
+                print(f"[QdrantRAGStore] Connected to remote Qdrant at {qdrant_url}")
+            except Exception as e:
+                print(f"[QdrantRAGStore] Remote Qdrant unreachable ({e}); using in-memory fallback")
+                self.client = QdrantClient(location=":memory:")
 
         self.create_collection_if_needed()
+
 
     def create_collection_if_needed(self):
         try:

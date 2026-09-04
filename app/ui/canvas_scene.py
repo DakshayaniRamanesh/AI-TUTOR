@@ -753,8 +753,16 @@ class CanvasScene(QGraphicsScene):
                         if point_in_polygon(center.x(), center.y(), self._lasso_points):
                             selected.append(item)
                 if selected:
+                    # Mark items as Qt-selected so selectedItems() works for video gen, etc.
+                    self.clearSelection()
+                    for item in selected:
+                        item.setSelected(True)
+                    # Store on scene for easy retrieval by lasso-video flow
+                    self._last_lasso_items = selected
                     overlay = PenechoLassoOverlay(self._lasso_points, selected)
                     self.addItem(overlay)
+                else:
+                    self._last_lasso_items = []
             self._lasso_points = []
             event.accept()
         elif self.active_tool == "shapes" and hasattr(self, '_shape_start_pos') and self._shape_start_pos:

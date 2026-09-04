@@ -181,10 +181,14 @@ class VideoPlayerWidget(QWidget):
         self.progress_bar.setValue(progress)
 
     def _on_video_ready(self, job_id, video_url):
+        if not video_url:
+            # Empty URL means polling ended without a result — keep loading screen visible
+            return
         self.video_path = video_url
-        if video_url:
-            self._load_video_source(video_url)
+        self._load_video_source(video_url)
         self.stack.setCurrentIndex(1)
+        self.player.play()
+        self.btn_play.setText("⏸ Pause")
 
     def _on_video_failed(self, job_id, err_msg):
         self.lbl_status.setText(f"⚠ {err_msg}")
@@ -222,10 +226,45 @@ class VideoPlayerWidget(QWidget):
         self.scrub_slider.setRange(0, dur)
 
     def _on_download(self):
+        if not self.video_path:
+            self.btn_download.setText("⚠ No Video")
+            return
+            
+        import shutil
+        import urllib.request
+        import base64
+        import time
+        from ...storage.downloads_manager import DownloadsManager, DOWNLOADS_DIR
+        
         dl_mgr = DownloadsManager()
-        entry = dl_mgr.add_download(self.title, self.video_path or "downloads/manim_video.mp4")
-        self.download_clicked.emit(self.title, entry["file_path"])
-        self.btn_download.setText("✓ Saved")
+        
+        if self.video_path and self.video_path.startswith("http"):
+            filename = self.video_path.split("/")[-1]
+        elif self.video_path and self.video_path.startswith("data:"):
+            filename = f"manim_video_{int(time.time())}.mp4"
+        elif self.video_path:
+            filename = os.path.basename(self.video_path)
+        else:
+            filename = "manim_video.mp4"
+            
+        local_path = os.path.join(DOWNLOADS_DIR, filename)
+        
+        try:
+            if self.video_path and self.video_path.startswith("http"):
+                urllib.request.urlretrieve(self.video_path, local_path)
+            elif self.video_path and self.video_path.startswith("data:"):
+                header, encoded = self.video_path.split(",", 1)
+                with open(local_path, "wb") as f:
+                    f.write(base64.b64decode(encoded))
+            elif self.video_path and os.path.exists(self.video_path):
+                shutil.copy2(self.video_path, local_path)
+                
+            entry = dl_mgr.add_download(self.title, local_path)
+            self.download_clicked.emit(self.title, entry["file_path"])
+            self.btn_download.setText("✓ Saved")
+        except Exception as e:
+            print(f"Download failed: {e}")
+            self.btn_download.setText("⚠ Failed")
 
 class VideoFloatItem(QGraphicsProxyWidget, BaseGraphicsItemMixin):
     def __init__(self, job_id: str = "", title: str = "Manim Video", video_url_or_path: str = "", parent=None):

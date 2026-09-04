@@ -109,7 +109,7 @@ class FloatingToolbar(QWidget):
         layout.addWidget(self.btn_shapes)
 
         # Lasso Selection (Penecho)
-        self.btn_lasso = self._make_btn('fa5s.object-ungroup', "Lasso Selection (L)")
+        self.btn_lasso = self._make_btn('fa5s.draw-polygon', "Lasso Selection (L)")
         self.btn_lasso.setCheckable(True)
         self.btn_lasso.clicked.connect(lambda: self._set_tool("lasso"))
         layout.addWidget(self.btn_lasso)
@@ -144,6 +144,22 @@ class FloatingToolbar(QWidget):
         self.btn_latex.setIcon(qta.icon('fa5s.file-export', color='#7c3aed'))
         self.btn_latex.clicked.connect(lambda: self.action_triggered.emit("latex"))
         layout.addWidget(self.btn_latex)
+
+        # Generate Video
+        self.btn_video = self._make_btn('fa5s.video', "Generate Video (Ctrl+Shift+V)")
+        self.btn_video.setStyleSheet("""
+            QPushButton {
+                background: #dcfce7;
+                border: none;
+                border-radius: 12px;
+                padding: 8px;
+            }
+            QPushButton:hover { background: #bbf7d0; }
+            QPushButton:pressed { background: #86efac; }
+        """)
+        self.btn_video.setIcon(qta.icon('fa5s.video', color='#16a34a'))
+        self.btn_video.clicked.connect(lambda: self.action_triggered.emit("video"))
+        layout.addWidget(self.btn_video)
 
         # Store all tool buttons for toggling
         self._tool_buttons = {
@@ -204,7 +220,7 @@ class FloatingToolbar(QWidget):
                 "highlighter": "fa5s.highlighter",
                 "eraser": "fa5s.eraser",
                 "shapes": "fa5s.shapes",
-                "lasso": "fa5s.object-ungroup"
+                "lasso": "fa5s.draw-polygon"
             }
             c = "#ffffff" if name == tool_name else "#475569"
             btn.setIcon(qta.icon(icon_map[name], color=c))

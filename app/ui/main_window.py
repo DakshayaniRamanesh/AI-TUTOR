@@ -762,6 +762,10 @@ class MainWindow(QMainWindow):
         btn_latex.clicked.connect(self._convert_to_latex)
         layout.addWidget(btn_latex)
 
+        btn_video = self._make_toolbar_btn('fa5s.video', " Video", tb, '#10b981', "Generate Video Lesson")
+        btn_video.clicked.connect(self._generate_video_from_canvas)
+        layout.addWidget(btn_video)
+
         layout.addWidget(self._make_toolbar_separator(tb))
 
         # Study/Classroom Mode
@@ -1053,6 +1057,8 @@ class MainWindow(QMainWindow):
             self._add_table()
         elif action == "latex":
             self._convert_to_latex()
+        elif action == "video":
+            self._generate_video_from_canvas()
         elif action == "more":
             self._show_overflow_menu()
             
@@ -1610,10 +1616,17 @@ class MainWindow(QMainWindow):
 
     def _on_generate_video_requested(self, selected_text: str):
         job_id = request_video_generation(selected_text)
-        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
-        v_item = VideoFloatItem(job_id=job_id, title=f"Manim: {selected_text[:18]}...", video_url_or_path="")
-        v_item.setPos(center_pos.x() + 300, center_pos.y())
-        self.scene.addItem(v_item)
+        
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.start_task("Generating Video...")
+            
+        from .items.video_float_item import VideoPlayerWidget
+        player_widget = VideoPlayerWidget(job_id=job_id, title=f"Manim: {selected_text[:18]}...", parent=self.canvas_tabs)
+        if hasattr(player_widget, 'worker') and hasattr(self, 'speedometer_widget'):
+            player_widget.worker.status_updated.connect(lambda job_id, stage, prog: self.speedometer_widget.update_progress(stage, prog))
+            
+        idx = self.canvas_tabs.addTab(player_widget, f"🎬 Video: {selected_text[:10]}...")
+        self.canvas_tabs.setCurrentIndex(idx)
 
     def _on_ink_written_detected(self, text: str, pos):
         clean_t = text.strip()
@@ -1640,13 +1653,19 @@ class MainWindow(QMainWindow):
         )
         
         title = "Markdown: Study Notes" if out_type == "notes" else "Manim: Video Lesson"
-        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
-        v_item = VideoFloatItem(job_id=job_id, title=title, video_url_or_path="")
-        v_item.setPos(center_pos.x() + 300, center_pos.y())
-        self.scene.addItem(v_item)
         
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.start_task(f"Generating {out_type}...")
+            
+        from .items.video_float_item import VideoPlayerWidget
+        player_widget = VideoPlayerWidget(job_id=job_id, title=title, parent=self.canvas_tabs)
+        if hasattr(player_widget, 'worker'):
+            player_widget.worker.status_updated.connect(self._on_latex_video_progress)
+            
         self.pdf_viewer_widget.video_generation_started()
-        v_item.player_widget.worker.status_updated.connect(self._on_latex_video_progress)
+        
+        idx = self.canvas_tabs.addTab(player_widget, "🎬 Video Lesson" if out_type != "notes" else "📝 Study Notes")
+        self.canvas_tabs.setCurrentIndex(idx)
 
 
     def _on_latex_video_progress(self, job_id, stage, progress):
@@ -1761,6 +1780,252 @@ class MainWindow(QMainWindow):
         self.latex_worker.start()
 
         self.ask_bar.input_field.setPlaceholderText(f"Converting to {template_type}...")
+
+    def _generate_video_from_canvas(self):
+        """Show a dialog asking the user how to select the whiteboard content for video generation."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+        from PyQt6.QtCore import Qt
+
+        # If user chose lasso mode previously, this second click finishes the selection
+        if getattr(self, '_pending_lasso_video', False):
+            self._pending_lasso_video = False
+            # Use the items captured by the last lasso draw (stored on the scene)
+            lasso_items = getattr(self.scene, '_last_lasso_items', None)
+            # Fallback: try Qt selectedItems() in case items were selected another way
+            if not lasso_items:
+                lasso_items = self.scene.selectedItems()
+            if not lasso_items:
+                QMessageBox.information(self, "No Selection",
+                    "No items were found in the lasso area.\n"
+                    "Please draw a lasso around some content and try again.")
+                return
+            selection_payload, prompt_text = self._serialize_items_to_selection(lasso_items)
+            # Capture raster of just the lasso region
+            try:
+                from PyQt6.QtCore import QRectF
+                rect = lasso_items[0].sceneBoundingRect()
+                for it in lasso_items[1:]:
+                    rect = rect.united(it.sceneBoundingRect())
+                rect = rect.adjusted(-16, -16, 16, 16)
+                size = rect.size().toSize()
+                pixmap = QPixmap(size)
+                pixmap.fill(Qt.GlobalColor.white)
+                painter = QPainter(pixmap)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                self.scene.render(painter, target=QRectF(pixmap.rect()), source=rect)
+                painter.end()
+                buf = QBuffer()
+                buf.open(QIODevice.OpenModeFlag.WriteOnly)
+                pixmap.save(buf, "PNG")
+                selection_payload["image_b64"] = "data:image/png;base64," + buf.data().toBase64().data().decode()
+            except Exception as e:
+                print(f"[VideoGen] Could not capture lasso raster: {e}")
+            self._start_video_generation(prompt_text, selection_payload)
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Generate Video Lesson")
+        dialog.setModal(True)
+        dialog.setFixedWidth(380)
+        dialog.setStyleSheet("""
+            QDialog {
+                background: #ffffff;
+                border-radius: 12px;
+            }
+            QLabel#title_label {
+                font-size: 15px;
+                font-weight: 700;
+                color: #0f172a;
+            }
+            QLabel#sub_label {
+                font-size: 12px;
+                color: #64748b;
+            }
+            QPushButton {
+                border-radius: 8px;
+                padding: 12px 16px;
+                font-size: 13px;
+                font-weight: 600;
+                text-align: left;
+            }
+            QPushButton#btn_board {
+                background: #f0fdf4;
+                border: 2px solid #86efac;
+                color: #166534;
+            }
+            QPushButton#btn_board:hover { background: #dcfce7; border-color: #4ade80; }
+            QPushButton#btn_lasso {
+                background: #eff6ff;
+                border: 2px solid #93c5fd;
+                color: #1d4ed8;
+            }
+            QPushButton#btn_lasso:hover { background: #dbeafe; border-color: #60a5fa; }
+            QPushButton#btn_cancel {
+                background: transparent;
+                border: 1px solid #e2e8f0;
+                color: #64748b;
+            }
+            QPushButton#btn_cancel:hover { background: #f8fafc; }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 24, 24, 20)
+        layout.setSpacing(12)
+
+        title = QLabel("🎬 Generate Video Lesson", dialog)
+        title.setObjectName("title_label")
+        layout.addWidget(title)
+
+        sub = QLabel("How would you like to select content from the whiteboard?", dialog)
+        sub.setObjectName("sub_label")
+        sub.setWordWrap(True)
+        layout.addWidget(sub)
+
+        layout.addSpacing(4)
+
+        btn_board = QPushButton("🖥️  Entire Board\n         Use all content on the canvas", dialog)
+        btn_board.setObjectName("btn_board")
+        btn_board.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_board)
+
+        btn_lasso = QPushButton("✂️  Lasso Select\n         Draw to select a region", dialog)
+        btn_lasso.setObjectName("btn_lasso")
+        btn_lasso.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_lasso)
+
+        layout.addSpacing(4)
+
+        btn_cancel = QPushButton("Cancel", dialog)
+        btn_cancel.setObjectName("btn_cancel")
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_cancel)
+
+        choice = {"value": None}
+
+        def pick_board():
+            choice["value"] = "board"
+            dialog.accept()
+
+        def pick_lasso():
+            choice["value"] = "lasso"
+            dialog.accept()
+
+        btn_board.clicked.connect(pick_board)
+        btn_lasso.clicked.connect(pick_lasso)
+        btn_cancel.clicked.connect(dialog.reject)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        if choice["value"] == "board":
+            self._generate_video_from_entire_board()
+        elif choice["value"] == "lasso":
+            self._start_lasso_video_selection()
+
+    def _serialize_items_to_selection(self, items) -> dict:
+        """Serialize canvas items into a board_selection payload dict."""
+        selected_items = []
+        all_texts = []
+        for item in items:
+            item_data = {"item_id": str(id(item)), "type": type(item).__name__}
+            text = ""
+            if hasattr(item, "text") and isinstance(item.text, str):
+                text = item.text
+            elif hasattr(item, "_text") and isinstance(item._text, str):
+                text = item._text
+            elif hasattr(item, "to_markdown"):
+                try:
+                    text = item.to_markdown()
+                except Exception:
+                    pass
+            elif hasattr(item, "full_text") and isinstance(item.full_text, str):
+                text = item.full_text
+            if text:
+                item_data["text"] = text[:2000]
+                all_texts.append(text)
+            # Capture scene bounding box
+            try:
+                brect = item.sceneBoundingRect()
+                item_data["scene_bbox"] = {
+                    "x": brect.x(), "y": brect.y(),
+                    "width": brect.width(), "height": brect.height()
+                }
+            except Exception:
+                pass
+            selected_items.append(item_data)
+
+        prompt_text = " | ".join(all_texts)[:500] or "Explain the whiteboard content."
+        return {
+            "board_id": getattr(self.current_board, "board_id", "canvas") if getattr(self, "current_board", None) else "canvas",
+            "selected_items": selected_items,
+            "nearby_items": [],
+            "user_instruction": prompt_text,
+        }, prompt_text
+
+    def _generate_video_from_entire_board(self):
+        """Generate a video from the entire board's content."""
+        all_items = self.scene.items()
+        if not all_items:
+            QMessageBox.warning(self, "Empty Canvas", "There is nothing on the canvas to generate a video from.")
+            return
+
+        selection_payload, prompt_text = self._serialize_items_to_selection(all_items)
+
+        # Also capture a raster crop of the whole canvas for the vision model
+        try:
+            rect = self.scene.itemsBoundingRect().adjusted(-20, -20, 20, 20)
+            if not rect.isEmpty():
+                from PyQt6.QtCore import QRectF
+                size = rect.size().toSize()
+                if size.width() > 1920 or size.height() > 1080:
+                    scale = min(1920.0 / size.width(), 1080.0 / size.height())
+                    size = (rect.size() * scale).toSize()
+                pixmap = QPixmap(size)
+                pixmap.fill(Qt.GlobalColor.white)
+                painter = QPainter(pixmap)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                self.scene.render(painter, target=QRectF(pixmap.rect()), source=rect)
+                painter.end()
+                buf = QBuffer()
+                buf.open(QIODevice.OpenModeFlag.WriteOnly)
+                pixmap.save(buf, "PNG")
+                image_b64 = "data:image/png;base64," + buf.data().toBase64().data().decode()
+                selection_payload["image_b64"] = image_b64
+        except Exception as e:
+            print(f"[VideoGen] Could not capture canvas raster: {e}")
+
+        self._start_video_generation(prompt_text, selection_payload)
+
+    def _start_lasso_video_selection(self):
+        """Activate lasso selection mode on the canvas; when complete, video is generated."""
+        # Switch to lasso mode and connect a one-shot signal
+        self.floating_toolbar._set_tool("lasso")
+        QMessageBox.information(
+            self, "Lasso Select Mode",
+            "Draw a selection area around the content you want to include in the video.\n\n"
+            "After making your selection, click the '🎬 Video' button again to generate."
+        )
+        # Store flag so next video button click uses current selected items
+        self._pending_lasso_video = True
+
+    def _start_video_generation(self, prompt_text: str, selection_payload: dict):
+        """Kick off video generation with a selection payload and open a new tab."""
+        job_id = request_video_generation(prompt_text, selection_payload=selection_payload)
+
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.start_task("Generating Video...")
+
+        from .items.video_float_item import VideoPlayerWidget
+        title = f"Manim: {prompt_text[:20]}..."
+        player_widget = VideoPlayerWidget(job_id=job_id, title=title, parent=self.canvas_tabs)
+        if hasattr(player_widget, 'worker') and hasattr(self, 'speedometer_widget'):
+            player_widget.worker.status_updated.connect(
+                lambda jid, stage, prog: self.speedometer_widget.update_progress(stage, prog)
+            )
+
+        tab_label = f"🎬 Video: {prompt_text[:10]}..."
+        idx = self.canvas_tabs.addTab(player_widget, tab_label)
+        self.canvas_tabs.setCurrentIndex(idx)
 
     def _toggle_theme(self):
         ThemeManager.instance().toggle_theme()
