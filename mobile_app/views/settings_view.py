@@ -80,17 +80,94 @@ def build_settings_view(page: ft.Page, update_app_cb=None) -> ft.Control:
         padding=14, dark=dark
     )
 
+    # ── Desktop Canvas Connection & Diagnostic Card ────────────────────────
+    from mobile_app import kestrel_bridge
+    conn_info = kestrel_bridge.check_desktop_connection()
+
+    diag_text = ft.Text(
+        f"Status: {'ONLINE (Connected to ' + conn_info.get('active_board_title', 'Canvas') + ')' if conn_info.get('desktop_online') else 'OFFLINE (Queue Active)'}\n"
+        f"Storage Link: {'Connected' if conn_info.get('storage_connected') else 'Error'}\n"
+        f"Canvas Items: {conn_info.get('canvas_items_count', 0)}\n"
+        f"Pending Queue: {conn_info.get('pending_inbox_count', 0)} item(s)",
+        size=11,
+        color=text_color
+    )
+
+    def run_diag_action(e):
+        fresh = kestrel_bridge.check_desktop_connection()
+        online = fresh.get("desktop_online", False)
+        diag_text.value = (
+            f"Status: {'ONLINE (Connected to ' + fresh.get('active_board_title', 'Canvas') + ')' if online else 'OFFLINE (Queue Active)'}\n"
+            f"Storage Link: {'Connected' if fresh.get('storage_connected') else 'Error'}\n"
+            f"Canvas Items: {fresh.get('canvas_items_count', 0)}\n"
+            f"Pending Queue: {fresh.get('pending_inbox_count', 0)} item(s)\n"
+            f"Last Ping: {fresh.get('last_ping')}"
+        )
+        page.snack_bar = ft.SnackBar(
+            ft.Text(f"Connection Diagnostic: {'SUCCESS - Canvas is ONLINE!' if online else 'Storage connected. Desktop Canvas currently offline.'}"),
+            bgcolor="#10B981" if online else "#1F2937"
+        )
+        page.snack_bar.open = True
+        try:
+            diag_text.update()
+            page.update()
+        except Exception:
+            pass
+
+    def send_note_action(e):
+        kestrel_bridge.send_test_item_to_canvas("sticky_note")
+        page.snack_bar = ft.SnackBar(ft.Text("Test Sticky Note queued to Desktop Canvas!"), bgcolor="#111111")
+        page.snack_bar.open = True
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    def send_scan_action(e):
+        kestrel_bridge.send_test_item_to_canvas("image")
+        page.snack_bar = ft.SnackBar(ft.Text("Test Photo Scan queued to Desktop Canvas!"), bgcolor="#111111")
+        page.snack_bar.open = True
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    canvas_conn_card = create_ios_card(
+        content=ft.Column([
+            ft.Row([
+                ft.Row([
+                    ft.Icon(ft.Icons.SCREEN_SHARE_ROUNDED, color="#10B981" if conn_info.get("desktop_online") else "#F59E0B", size=20),
+                    ft.Text("DESKTOP & CANVAS CONNECTION", size=12, weight=ft.FontWeight.W_700, color=sec_color),
+                ], spacing=8),
+                ft.Container(
+                    content=ft.Text("ONLINE" if conn_info.get("desktop_online") else "STANDBY", size=9, weight=ft.FontWeight.BOLD, color="#FFFFFF"),
+                    bgcolor="#10B981" if conn_info.get("desktop_online") else "#F59E0B",
+                    padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                    border_radius=4
+                )
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            diag_text,
+            ft.Row([
+                ft.OutlinedButton("Check Connection", icon=ft.Icons.REFRESH_ROUNDED, on_click=run_diag_action),
+                ft.ElevatedButton("Send Test Note", icon=ft.Icons.NOTE_ALT_ROUNDED, on_click=send_note_action, bgcolor="#111111" if not dark else "#2C2C2E", color="#FFFFFF"),
+                ft.ElevatedButton("Send Test Photo", icon=ft.Icons.IMAGE_ROUNDED, on_click=send_scan_action, bgcolor="#111111" if not dark else "#2C2C2E", color="#FFFFFF"),
+            ], wrap=True, spacing=6)
+        ], spacing=10),
+        padding=14, dark=dark
+    )
+
     about_card = create_ios_card(
         content=ft.Column([
             ft.Text("Kestrel Mobile iOS", size=14, weight=ft.FontWeight.BOLD, color=text_color),
             ft.Text("Version 1.0 • Built with Python & Flet", size=11, color=sec_color),
-            ft.Text("Designed for authentic iOS mobile screen ratio & HIG aesthetics.", size=11, color=sec_color),
+            ft.Text("Live bidirectional synchronization with Kestrel Desktop Canvas.", size=11, color=sec_color),
         ], spacing=4),
         padding=14, dark=dark
     )
 
     return ft.ListView([
         header,
+        canvas_conn_card,
         theme_card,
         api_card,
         storage_card,

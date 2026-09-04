@@ -147,11 +147,55 @@ def build_home_view(page: ft.Page, navigate_to_tab_cb) -> ft.Control:
 
     # Kestrel Dashboard Sync Status
     from mobile_app import kestrel_bridge
-    sync_summary = kestrel_bridge.get_sync_summary()
+    # ── Live Desktop Canvas Connection Check & Sync Card ────────────────────
+    conn_info = kestrel_bridge.check_desktop_connection()
+    is_desktop_online = conn_info.get("desktop_online", False)
 
-    def on_sync_clicked(e):
-        items = storage.get_all_items()
-        page.snack_bar = ft.SnackBar(ft.Text("Synced with Kestrel Desktop Dashboard!"), bgcolor="#111111")
+    status_dot = ft.Container(
+        width=10,
+        height=10,
+        border_radius=5,
+        bgcolor="#10B981" if is_desktop_online else "#F59E0B"
+    )
+    status_title = ft.Text(
+        f"Canvas Online • {conn_info.get('active_board_title', 'Notebook')}" if is_desktop_online else "Desktop Canvas Offline (Queue Active)",
+        size=12,
+        weight=ft.FontWeight.BOLD,
+        color=text_color
+    )
+    status_desc = ft.Text(
+        f"{conn_info.get('canvas_items_count', 0)} items on canvas • Uploads sync live" if is_desktop_online else "Uploads will queue & sync when Desktop opens",
+        size=10,
+        color=sec_color
+    )
+
+    def on_check_conn_clicked(e):
+        fresh = kestrel_bridge.check_desktop_connection()
+        online = fresh.get("desktop_online", False)
+        status_dot.bgcolor = "#10B981" if online else "#F59E0B"
+        status_title.value = f"Canvas Online • {fresh.get('active_board_title', 'Notebook')}" if online else "Desktop Canvas Offline (Queue Active)"
+        status_desc.value = f"{fresh.get('canvas_items_count', 0)} items on canvas • Checked at {fresh.get('checked_at')}" if online else f"Pending queue: {fresh.get('pending_inbox_count', 0)} items"
+        page.snack_bar = ft.SnackBar(
+            ft.Text(
+                f"Connection Check: Canvas is ONLINE on '{fresh.get('active_board_title')}'!" if online else "Connection Check: Storage linked! (Desktop Canvas is currently closed)."
+            ),
+            bgcolor="#10B981" if online else "#1F2937"
+        )
+        page.snack_bar.open = True
+        try:
+            status_dot.update()
+            status_title.update()
+            status_desc.update()
+            page.update()
+        except Exception:
+            pass
+
+    def on_send_test_note_clicked(e):
+        kestrel_bridge.send_test_item_to_canvas("sticky_note")
+        page.snack_bar = ft.SnackBar(
+            ft.Text("Test Sticky Note pushed to Canvas inbox! Check your desktop canvas."),
+            bgcolor="#111111"
+        )
         page.snack_bar.open = True
         try:
             page.update()
@@ -159,26 +203,40 @@ def build_home_view(page: ft.Page, navigate_to_tab_cb) -> ft.Control:
             pass
 
     sync_card = create_ios_card(
-        content=ft.Row([
+        content=ft.Column([
             ft.Row([
-                ft.Container(
-                    width=8,
-                    height=8,
-                    border_radius=4,
-                    bgcolor="#34C759" if sync_summary.get("synced") else "#8E8E93"
+                ft.Row([
+                    status_dot,
+                    ft.Column([
+                        ft.Text("KESTREL DESKTOP & CANVAS SYNC", size=10, weight=ft.FontWeight.BOLD, color=sec_color),
+                        status_title,
+                        status_desc,
+                    ], spacing=1),
+                ], spacing=10),
+                ft.IconButton(
+                    icon=ft.Icons.REFRESH_ROUNDED,
+                    icon_color=text_color,
+                    tooltip="Check Connection",
+                    on_click=on_check_conn_clicked
+                )
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ft.Row([
+                ft.OutlinedButton(
+                    "Check Connection",
+                    icon=ft.Icons.WIFI_ROUNDED,
+                    on_click=on_check_conn_clicked,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8), padding=ft.Padding.symmetric(horizontal=10, vertical=4))
                 ),
-                ft.Column([
-                    ft.Text("KESTREL DASHBOARD SYNC", size=10, weight=ft.FontWeight.BOLD, color=sec_color),
-                    ft.Text(f"{sync_summary['desktop_materials_count']} Reference PDFs • {sync_summary['desktop_boards_count']} Whiteboards", size=12, weight=ft.FontWeight.W_600, color=text_color),
-                ], spacing=1),
-            ], spacing=10),
-            ft.IconButton(
-                icon=ft.Icons.SYNC_ROUNDED,
-                icon_color=text_color,
-                tooltip="Sync with Kestrel Desktop",
-                on_click=on_sync_clicked
-            )
-        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.ElevatedButton(
+                    "Send Test Note to Canvas",
+                    icon=ft.Icons.SCREEN_SHARE_ROUNDED,
+                    on_click=on_send_test_note_clicked,
+                    color="#FFFFFF",
+                    bgcolor="#111111" if not dark else "#2C2C2E",
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8), padding=ft.Padding.symmetric(horizontal=10, vertical=4))
+                ),
+            ], alignment=ft.MainAxisAlignment.END, spacing=6)
+        ], spacing=8),
         padding=12,
         dark=dark
     )

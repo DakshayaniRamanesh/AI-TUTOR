@@ -193,6 +193,8 @@ def add_item(title: str, item_type: str, source_path: Optional[str] = None, cont
             kestrel_bridge.sync_pdf_to_kestrel_desktop(title, dest_path)
         elif item_type in ["image", "scan"]:
             kestrel_bridge.sync_image_to_kestrel_board(dest_path, title)
+        elif item_type == "note":
+            kestrel_bridge.queue_item_for_canvas("note", dest_path, title=title, text=summary)
     except Exception as e:
         print(f"[Storage] Notice: Sync to Kestrel desktop: {e}")
 

@@ -251,6 +251,9 @@ class MainWindow(QMainWindow):
         # Connect ThemeManager
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
 
+        # Start live Mobile App bidirectional sync listener
+        self._init_mobile_sync()
+
     def _setup_shortcuts(self):
         QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(lambda: self.floating_toolbar.action_triggered.emit("undo"))
         QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._on_toolbar_save)
@@ -891,6 +894,16 @@ class MainWindow(QMainWindow):
         )
         self.lbl_save_status.setVisible(False)
         layout.addWidget(self.lbl_save_status)
+
+        # ── Mobile Sync Live Indicator ────────────────────────────────────────
+        self.lbl_mobile_sync = QLabel("Mobile Sync Active", tb)
+        self.lbl_mobile_sync.setStyleSheet(
+            f"font-size: 10px; color: #10b981; font-weight: 600; "
+            f"font-family: {MONO_FONT}; letter-spacing: 0.5px; padding: 2px 6px; "
+            f"border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 2px; background: rgba(16, 185, 129, 0.06);"
+        )
+        self.lbl_mobile_sync.setToolTip("Mobile App Connected • Uploads appear live on this canvas")
+        layout.addWidget(self.lbl_mobile_sync)
 
         self.btn_save = self._make_toolbar_btn('ri.save-line', "Save", tb, None, "Save Notebook (Ctrl+S)")
         self.btn_save.setStyleSheet(primary_button_qss(c))
@@ -1636,6 +1649,133 @@ class MainWindow(QMainWindow):
             self.lbl_save_status.setVisible(False)
         if clear_after_ms > 0:
             self._save_status_clear_timer.start(clear_after_ms)
+
+    # ── Live Mobile App Bidirectional Canvas Sync ──────────────────────────────
+
+    def _init_mobile_sync(self):
+        """Initializes bidirectional live sync channel with Kestrel Mobile App."""
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        self._mobile_sync_dir = os.path.join(base_dir, "storage_data", "mobile_sync")
+        self._mobile_inbox_file = os.path.join(self._mobile_sync_dir, "inbox.json")
+        self._desktop_status_file = os.path.join(self._mobile_sync_dir, "desktop_status.json")
+        self._mobile_history_file = os.path.join(self._mobile_sync_dir, "history.json")
+        os.makedirs(self._mobile_sync_dir, exist_ok=True)
+
+        self._mobile_sync_timer = QTimer(self)
+        self._mobile_sync_timer.timeout.connect(self._on_mobile_sync_tick)
+        self._mobile_sync_timer.start(1000)
+
+    def _on_mobile_sync_tick(self):
+        self._write_desktop_heartbeat()
+        self._process_mobile_inbox()
+
+    def _write_desktop_heartbeat(self):
+        try:
+            import json, time
+            board_title = self.current_board.title if hasattr(self, 'current_board') and self.current_board else "Canvas"
+            items_count = len(self.scene.items()) if hasattr(self, 'scene') and self.scene else 0
+            status_payload = {
+                "status": "online",
+                "app": "Kestrel Desktop",
+                "timestamp": time.time(),
+                "last_ping": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "active_board_id": self._current_notebook_id or "default",
+                "active_board_title": board_title,
+                "canvas_items_count": items_count
+            }
+            with open(self._desktop_status_file, "w", encoding="utf-8") as f:
+                json.dump(status_payload, f, indent=2)
+        except Exception:
+            pass
+
+    def _process_mobile_inbox(self):
+        if not hasattr(self, '_mobile_inbox_file') or not os.path.exists(self._mobile_inbox_file):
+            return
+        try:
+            import json
+            with open(self._mobile_inbox_file, "r", encoding="utf-8") as f:
+                items = json.load(f)
+            if not items:
+                return
+
+            from PyQt6.QtGui import QPixmap
+            from .items.image_item import ImageItem
+            from .items.card_item import CardItem
+            from .items.sticky_note import StickyNote
+
+            processed = []
+            synced_count = 0
+
+            # Safe placement center in current viewport
+            center = self.view.mapToScene(self.view.viewport().rect().center())
+            base_x = center.x() - 140
+            base_y = center.y() - 120
+
+            for idx, item in enumerate(items):
+                itype = item.get("type", "image")
+                title = item.get("title", "Mobile Upload")
+                file_path = item.get("file_path", "")
+                text = item.get("text", "")
+                placed = False
+
+                if itype in ["image", "scan"] and file_path and os.path.exists(file_path):
+                    pixmap = QPixmap(file_path)
+                    if not pixmap.isNull():
+                        img_item = ImageItem(pixmap)
+                        if pixmap.width() > 700:
+                            img_item.setScale(700.0 / pixmap.width())
+                        img_item.setPos(base_x + (idx * 35), base_y + (idx * 35))
+                        img_item.setZValue(5)
+                        self.scene.addItem(img_item)
+                        placed = True
+
+                elif itype == "pdf":
+                    card = CardItem(title=title, subtitle="Synced from Mobile PDF Studio", source_url=file_path)
+                    card.setPos(base_x + (idx * 35), base_y + (idx * 35))
+                    self.scene.addItem(card)
+                    placed = True
+                    if hasattr(self, 'subject_detail_view'):
+                        self.subject_detail_view._load_materials()
+
+                elif itype in ["note", "sticky_note", "solution", "answer"]:
+                    content_str = text or title
+                    note = StickyNote(text=content_str, color_key="yellow")
+                    note.setPos(base_x + (idx * 35), base_y + (idx * 35))
+                    self.scene.addItem(note)
+                    placed = True
+
+                if placed:
+                    processed.append(item)
+                    synced_count += 1
+
+            if synced_count > 0:
+                self.scene.scene_changed.emit()
+                self._do_autosave()
+                last_title = processed[-1].get("title", "Item")
+                self._set_save_status(f"Mobile Synced: {last_title}", clear_after_ms=4000)
+                if hasattr(self, 'lbl_mobile_sync'):
+                    self.lbl_mobile_sync.setText(f" Synced: {synced_count} New")
+                    QTimer.singleShot(4000, lambda: self.lbl_mobile_sync.setText(" Mobile Sync"))
+
+                # Archive processed to history
+                history = []
+                if os.path.exists(self._mobile_history_file):
+                    try:
+                        with open(self._mobile_history_file, "r", encoding="utf-8") as hf:
+                            history = json.load(hf)
+                    except Exception:
+                        pass
+                history.extend(processed)
+                with open(self._mobile_history_file, "w", encoding="utf-8") as hf:
+                    json.dump(history, hf, indent=2)
+
+                # Remove processed from inbox
+                remaining = [it for it in items if it not in processed]
+                with open(self._mobile_inbox_file, "w", encoding="utf-8") as f:
+                    json.dump(remaining, f, indent=2)
+
+        except Exception as err:
+            print(f"[MainWindow] Notice processing mobile sync: {err}")
 
 
     def _on_load_notebook_requested(self, notebook_id: str):

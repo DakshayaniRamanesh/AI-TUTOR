@@ -54,6 +54,16 @@ def build_pdf_view(page: ft.Page, update_app_cb=None) -> ft.Control:
                     if update_app_cb:
                         update_app_cb()
 
+                def send_pdf_to_canvas_action(e, path=item["file_path"], title=item["title"]):
+                    from mobile_app import kestrel_bridge
+                    kestrel_bridge.queue_item_for_canvas("pdf", file_path=path, title=title)
+                    page.snack_bar = ft.SnackBar(ft.Text(f"PDF '{title}' sent to Desktop Canvas!"), bgcolor="#10B981")
+                    page.snack_bar.open = True
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+
                 pdf_card = create_ios_card(
                     content=ft.Row([
                         ft.Container(
@@ -74,6 +84,12 @@ def build_pdf_view(page: ft.Page, update_app_cb=None) -> ft.Control:
                             ], spacing=4),
                             ft.Text(f"{item['created_at']} • {item['size_str']}", size=11, color=sec_color),
                         ], expand=True, spacing=2),
+                        ft.IconButton(
+                            icon=ft.Icons.SCREEN_SHARE_ROUNDED,
+                            icon_color=IOS_BLUE,
+                            tooltip="Send to Desktop Canvas",
+                            on_click=send_pdf_to_canvas_action
+                        ),
                         ft.IconButton(
                             icon=ft.Icons.AUTO_AWESOME_ROUNDED,
                             icon_color=IOS_PURPLE,

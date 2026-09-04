@@ -52,12 +52,37 @@ def build_tutor_view(page: ft.Page, update_app_cb=None) -> ft.Control:
         border_box = None if is_user else ft.Border.all(1, "#E0E0E5" if not dark else "#3A3A3C")
         alignment = ft.MainAxisAlignment.END if is_user else ft.MainAxisAlignment.START
 
+        col_children = [
+            ft.Text(sender, size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.with_opacity(0.7, txt_c)),
+            ft.Text(text, size=13, color=txt_c, selectable=True),
+        ]
+
+        if not is_user and "Hello!" not in text:
+            def send_ans_to_canvas(e, ans_text=text):
+                from mobile_app import kestrel_bridge
+                kestrel_bridge.queue_item_for_canvas("note", title="AI Tutor Solution", text=ans_text)
+                page.snack_bar = ft.SnackBar(ft.Text("AI Answer sent to Desktop Canvas!"), bgcolor="#10B981")
+                page.snack_bar.open = True
+                try:
+                    page.update()
+                except Exception:
+                    pass
+
+            col_children.append(
+                ft.Row([
+                    ft.TextButton(
+                        "Send to Canvas",
+                        icon=ft.Icons.SCREEN_SHARE_ROUNDED,
+                        icon_color=IOS_BLUE,
+                        on_click=send_ans_to_canvas,
+                        style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=4, vertical=2))
+                    )
+                ], alignment=ft.MainAxisAlignment.END)
+            )
+
         bubble = ft.Row([
             ft.Container(
-                content=ft.Column([
-                    ft.Text(sender, size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.with_opacity(0.7, txt_c)),
-                    ft.Text(text, size=13, color=txt_c, selectable=True),
-                ], spacing=2),
+                content=ft.Column(col_children, spacing=2),
                 bgcolor=bg,
                 border=border_box,
                 padding=12,

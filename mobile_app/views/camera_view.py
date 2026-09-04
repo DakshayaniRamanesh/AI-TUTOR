@@ -49,13 +49,26 @@ def build_camera_view(page: ft.Page, update_app_cb=None) -> ft.Control:
                     if update_app_cb:
                         update_app_cb()
 
+                def send_to_canvas_action(e, path=item["file_path"], title=item["title"]):
+                    from mobile_app import kestrel_bridge
+                    kestrel_bridge.queue_item_for_canvas("image", file_path=path, title=title)
+                    page.snack_bar = ft.SnackBar(ft.Text(f"Photo '{title}' sent to Desktop Canvas!"), bgcolor="#10B981")
+                    page.snack_bar.open = True
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+
                 thumb_uri = storage.get_image_data_uri(item["file_path"])
                 gallery_grid.controls.append(
                     create_ios_card(
                         content=ft.Column([
                             ft.Image(src=thumb_uri, width=100, height=100, fit=ft.BoxFit.COVER, border_radius=8),
                             ft.Text(item["title"], size=10, weight=ft.FontWeight.BOLD, color=text_color, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1),
-                            ft.IconButton(icon=ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400, icon_size=16, on_click=delete_img)
+                            ft.Row([
+                                ft.IconButton(icon=ft.Icons.SCREEN_SHARE_ROUNDED, icon_color=IOS_BLUE, icon_size=18, tooltip="Send to Canvas", on_click=send_to_canvas_action),
+                                ft.IconButton(icon=ft.Icons.DELETE_OUTLINED, icon_color=ft.Colors.RED_400, icon_size=16, tooltip="Delete", on_click=delete_img),
+                            ], alignment=ft.MainAxisAlignment.CENTER, spacing=0)
                         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2),
                         padding=6,
                         dark=dark
