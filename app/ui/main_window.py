@@ -1030,14 +1030,15 @@ class MainWindow(QMainWindow):
         outer.addWidget(pill)
         return hud
 
-    def _on_auto_ai_requested(self, query: str, target_pos: QPointF):
+    def _on_auto_ai_requested(self, query: str, target_pos: QPointF, mode: str = None):
         from .penecho_integration.ai_canvas_bridge import AICanvasWorker, create_draft_from_payload
         self.magic_orb.set_state("thinking", "Feathering…")
 
         # Collision-free positioning
         clean_pos = self._find_non_overlapping_pos(target_pos, width=400.0, height=200.0)
+        active_mode = mode or (self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study")
 
-        worker = AICanvasWorker(query_text=query, target_pos=clean_pos, parent=self)
+        worker = AICanvasWorker(query_text=query, target_pos=clean_pos, mode=active_mode, parent=self)
 
         def _on_finished(payload_dict, pos, msg):
             draft_item = create_draft_from_payload(payload_dict)
@@ -1992,7 +1993,8 @@ class MainWindow(QMainWindow):
         if not question or not question.strip():
             return
         center_pos = self.view.mapToScene(self.view.viewport().rect().center())
-        self._on_auto_ai_requested(question.strip(), center_pos)
+        active_mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
+        self._on_auto_ai_requested(question.strip(), center_pos, mode=active_mode)
 
     def _show_or_update_tab(self, widget: QWidget, tab_title: str):
         idx = self.canvas_tabs.indexOf(widget)

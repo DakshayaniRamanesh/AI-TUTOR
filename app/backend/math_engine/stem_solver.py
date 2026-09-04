@@ -35,6 +35,47 @@ def to_pretty_math(expr_str: str) -> str:
     s = s.replace('*', '')
     return s
 
+def user_asked_for_explanation(q: str) -> bool:
+    """
+    Returns True only if the user explicitly requested an explanation or step-by-step breakdown.
+    """
+    q_lower = q.lower()
+    keywords = [
+        "explain", "explanation", "why", "how", "steps", "step by step",
+        "show work", "show steps", "elaborate", "detail", "details", "derive", "derivation", "proof", "prove"
+    ]
+    return any(k in q_lower for k in keywords)
+
+def clean_ai_response(text: str) -> str:
+    """
+    Strips internal thinking processes, reasoning monologue, and planning blocks emitted by reasoning LLMs.
+    """
+    if not text:
+        return ""
+    # 1. Strip <think>...</think>
+    text = re.sub(r'(?is)<think>.*?</think>', '', text).strip()
+
+    # 2. Check if model produced a thinking process with a "Draft:" or final answer section
+    if re.search(r'(?i)\bdraft\s*:', text):
+        parts = re.split(r'(?i)\bdraft\s*:\s*\n*', text, maxsplit=1)
+        draft_body = parts[1]
+        # Remove trailing constraints checks e.g. "4. Check Constraints:"
+        draft_clean = re.split(r'(?i)\n+\s*\d+\.\s*(?:check\s+constraints|verification|review)', draft_body)[0]
+        text = draft_clean.strip()
+    else:
+        # Strip thinking process headers up to Question: or Answer:
+        patterns = [
+            r"(?is)here'?s a thinking process\s*:.*?(?=(?:question\s*:|answer\s*:|###|\$\$|\Z))",
+            r"(?is)thinking process\s*:.*?(?=(?:question\s*:|answer\s*:|###|\$\$|\Z))",
+            r"(?is)\b1\.\s*analyze user input\s*:.*?(?=(?:question\s*:|answer\s*:|###|\$\$|\Z))"
+        ]
+        for p in patterns:
+            text = re.sub(p, '', text).strip()
+
+    text = re.sub(r'(?i)^draft\s*:\s*\n*', '', text).strip()
+    text = re.sub(r"(?is)here'?s a thinking process.*$", '', text).strip()
+    return text.strip()
+
 def clean_math_query(q: str) -> str:
     """
     Preprocesses natural language math input into clean SymPy expression string.
@@ -42,18 +83,30 @@ def clean_math_query(q: str) -> str:
     s = q.strip().rstrip(',.?!;=')
     s = re.sub(r'[\?=\s]+$', '', s)
     
-    s = re.sub(r'^(evaluate|calculate|compute|find|solve|what is)\s+', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'^(the\s+)?(integral|derivative|diff|antiderivative)\s+(of\s+)?', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'\s*d[xyt]\b', '', s, flags=re.IGNORECASE)
-    s = s.strip()
+    # Strip trailing explanation requests e.g. "and explain", "with steps", "show work"
+    s = re.sub(r'\s+(and\s+)?(please\s+)?(explain|show\s+steps?|steps?|with\s+steps?|in\s+detail|elaborate)\s*$', '', s, flags=re.IGNORECASE)
+    # Strip leading explanation requests e.g. "explain how to integrate 5x"
+    s = re.sub(r'^(please\s+)?(explain|show\s+steps?|steps?|elaborate)\s+(how\s+to\s+)?', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'^(evaluate|calculate|compute|find|solve|what is|please)\s+', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'^(the\s+)?(integral|integrate|integration|derivative|differentiate|diff|antiderivative)\s+(of\s+)?', '', s, flags=re.IGNORECASE)
     
+    # Differential stripping: dx, dy, dt, dz at end of expression (e.g. 5xdx, 5x dx)
+    s = re.sub(r'[\s\*]*d[xytz]\b\s*$', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'(?<=[a-zA-Z0-9\)])d[xytz]$', '', s, flags=re.IGNORECASE)
+    
+    # Derivative prefix stripping: d/dx(...)
+    s = re.sub(r'^d/d[xytz]\s*\(?', '', s, flags=re.IGNORECASE)
+    s = s.strip()
+    if s.endswith(')') and '(' not in s:
+        s = s[:-1].strip()
+        
     if s.startswith('f') and len(s) > 1 and s[1].isdigit():
         s = s[1:]
         
     s = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', s)
     s = re.sub(r'(\d)\(', r'\1*(', s)
     s = s.replace('^', '**')
-    return s
+    return s.strip()
 
 def should_generate_graph(raw_question: str, clean_expr_str: str) -> bool:
     """
@@ -395,6 +448,8 @@ def get_local_stem_answer(question: str, mode: str = "study") -> Optional[dict]:
     Checks built-in comprehensive STEM & chemistry knowledge base for instant 0ms offline response.
     """
     q_lower = question.lower()
+    asked_explain = user_asked_for_explanation(question)
+
     for key, data in CHEMISTRY_KNOWLEDGE_BASE.items():
         if key in q_lower:
             title = data["title"]
@@ -405,96 +460,125 @@ def get_local_stem_answer(question: str, mode: str = "study") -> Optional[dict]:
             color_chg = data.get("color_change", "")
             struct = data.get("structure", "")
 
+            short_sol = f"Question: {question}\nAnswer: {title} (${formula}$)"
+            lines = [short_sol, "", "Explanation:"]
+            if molar:
+                lines.append(f"• Molar Mass: {molar}")
+            if ctype:
+                lines.append(f"• Type: {ctype}")
+            if ph_rng:
+                lines.append(f"• pH Range: {ph_rng}")
+            if color_chg:
+                lines.append(f"• Color Transition: {color_chg}")
+            if struct:
+                lines.append(f"• Structure: {struct}")
+            full_sol = "\n".join(lines)
+
             if mode == "classroom":
                 ans = f"Answer: {title} formula is ${formula}$"
-                return {"is_direct_math": True, "hints": ans, "full_solution": ans, "solution": ans, "plot_path": ""}
+                return {"is_direct_math": True, "hints": ans, "short_solution": ans, "full_solution": ans, "solution": ans, "plot_path": ""}
 
-            lines = [f"### {title}"]
-            lines.append(f"$${formula}$$")
-            lines.append(f"• **Formula:** ${formula}$")
-            if molar:
-                lines.append(f"• **Molar Mass:** {molar}")
-            if ph_rng:
-                lines.append(f"• **pH Range:** {ph_rng}")
-            if color_chg:
-                lines.append(f"• **Color Transition:** {color_chg}")
-            if ctype:
-                lines.append(f"• **Type:** {ctype}")
-            if struct:
-                lines.append(f"• **Structure:** {struct}")
-
-            full_sol = "\n".join(lines)
-            hints = f"• Compound: {title}\n• Formula: ${formula}$"
-            return {"hints": hints, "full_solution": full_sol, "solution": full_sol, "plot_path": ""}
+            return {
+                "is_direct_math": not asked_explain,
+                "hints": short_sol,
+                "short_solution": short_sol,
+                "full_solution": full_sol,
+                "solution": full_sol if asked_explain else short_sol,
+                "plot_path": ""
+            }
 
     return None
 
 def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
     """
-    Calls Groq (Llama 3.3 70B) or Google Gemini AI LLM model to get answer based on active mode (Classroom vs Study).
-    - Classroom Mode: Direct straight answer only, no elaboration or step-by-step breakdown.
-    - Study Mode: Concise, clean, handwritten-style bullet points with rich LaTeX formulas.
+    Calls Groq or Google Gemini AI LLM model to get answer based on active mode (Classroom vs Study).
+    - Classroom Mode: Direct straight answer only.
+    - Ask AI (Study Mode): Concise Question + Answer by default, with step-by-step explanation available on expand.
     """
-    # 0. Check instant local STEM knowledge base first (0ms latency, zero timeouts)
     local_ans = get_local_stem_answer(question, mode=mode)
     if local_ans:
         return local_ans
 
-    groq_key = os.getenv("GROQ_API_KEY")
-    gemini_key = os.getenv("GOOGLE_API_KEY")
+    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    gemini_key = (
+        os.environ.get("GEMINI_API_KEY", "").strip() or
+        os.environ.get("GOOGLE_API_KEY", "").strip()
+    )
+
+    asked_explain = user_asked_for_explanation(question)
 
     if mode == "classroom":
         prompt = (
-            f"You are Kestrel AI Tutor operating in CLASSROOM MODE.\n"
-            f"For the student question below, provide ONLY the direct, straightforward final answer.\n"
-            f"DO NOT elaborate, DO NOT explain, DO NOT provide step-by-step solutions or background text.\n"
-            f"Give ONLY the straight direct answer concisely in 1 sentence or direct value.\n\n"
+            "You are a concise STEM solver for a classroom blackboard.\n"
+            "CRITICAL: Do NOT output any thinking process, reasoning steps, or analysis.\n"
+            "Output ONLY the direct answer.\n\n"
             f"Question: {question}\n\n"
-            f"Format strictly as:\n"
-            f"Answer: <straight direct answer>"
+            "Format strictly as:\n"
+            "Answer: <direct answer>"
         )
     else:
         prompt = (
-            f"You are a helpful AI tutor writing simple handwritten blackboard notes.\n"
-            f"For the question below, provide a VERY SIMPLE, direct, and concise answer (max 3-4 short bullet points).\n"
-            f"DO NOT write long essays, numbered section breakdowns, or boilerplate text.\n"
-            f"Use clean math notation ($...$) for formulas.\n\n"
+            "You are a helpful AI tutor in ASK AI.\n"
+            "CRITICAL: Do NOT output any internal thinking process, reasoning steps, analysis, or monologue.\n"
+            "Provide the question, direct answer, and then a clear, concise explanation with 2-3 bullet points.\n\n"
             f"Question: {question}\n\n"
-            f"Format strictly as:\n"
-            f"### <Topic or Title>\n"
-            f"$$<Primary Formula if applicable>$$\n"
-            f"• <Key point / Direct Definition / Formula>\n"
-            f"• <Property / Calculation / Concise explanation>\n"
+            "Format strictly as:\n"
+            f"Question: {question}\n"
+            "Answer: <direct answer with clean math notation>\n\n"
+            "Explanation:\n"
+            "• <concise step or key point 1>\n"
+            "• <concise step or key point 2>"
         )
 
-    # 1. Primary: Groq Llama 3.3 70B (Fast sub-second response)
+    def _parse_ai_output(raw_output: str) -> dict:
+        text_clean = clean_ai_response(raw_output)
+        text_pretty = to_pretty_math(text_clean)
+        if mode == "classroom":
+            return {
+                "hints": text_pretty,
+                "short_solution": text_pretty,
+                "full_solution": text_pretty,
+                "solution": text_pretty,
+                "is_direct_math": True
+            }
+        if "Explanation:" in text_pretty:
+            parts = text_pretty.split("Explanation:", 1)
+            short_sol = parts[0].strip()
+            full_sol = text_pretty.strip()
+        else:
+            short_sol = text_pretty.strip()
+            full_sol = text_pretty.strip()
+
+        return {
+            "hints": short_sol,
+            "short_solution": short_sol,
+            "full_solution": full_sol,
+            "solution": full_sol if asked_explain else short_sol,
+            "is_direct_math": not asked_explain
+        }
+
+    # 1. Primary: Groq (Fast sub-second response)
     if groq_key:
-        try:
-            resp = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {groq_key}"},
-                json={
-                    "model": "qwen/qwen3.6-27b",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,
-                    "max_tokens": 600
-                },
-                timeout=2.5
-            )
-            if resp.status_code == 200:
-                text = resp.json()["choices"][0]["message"]["content"].strip()
-                # Strip <think>...</think> from reasoning models (Qwen, etc.)
-                import re as _re
-                text = _re.sub(r'<think>.*?</think>', '', text, flags=_re.DOTALL).strip()
-                if text:
-                    text_pretty = to_pretty_math(text)
-                    if mode == "classroom":
-                        return {"hints": text_pretty, "full_solution": text_pretty, "is_direct_math": True}
-                    lines = [l for l in text_pretty.split("\n") if l.strip()]
-                    short_hints = "\n".join(lines[:2])
-                    return {"hints": short_hints, "full_solution": text_pretty}
-        except Exception:
-            pass
+        for model in ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "qwen/qwen3.8-27b"]:
+            try:
+                resp = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {groq_key}"},
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.2,
+                        "max_tokens": 500
+                    },
+                    timeout=3.0
+                )
+                if resp.status_code == 200:
+                    text = resp.json()["choices"][0]["message"]["content"].strip()
+                    parsed = _parse_ai_output(text)
+                    if parsed.get("hints"):
+                        return parsed
+            except Exception:
+                continue
 
     # 2. Secondary: Google Gemini models
     if gemini_key:
@@ -503,17 +587,13 @@ def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
         for model in models:
             try:
                 api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
-                resp = requests.post(api_url, json=payload, timeout=8.0)
+                resp = requests.post(api_url, json=payload, timeout=6.0)
                 if resp.status_code == 200:
                     result_json = resp.json()
                     text = result_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    if text:
-                        text_pretty = to_pretty_math(text)
-                        if mode == "classroom":
-                            return {"hints": text_pretty, "full_solution": text_pretty, "is_direct_math": True}
-                        lines = [l for l in text_pretty.split("\n") if l.strip()]
-                        short_hints = "\n".join(lines[:2])
-                        return {"hints": short_hints, "full_solution": text_pretty}
+                    parsed = _parse_ai_output(text)
+                    if parsed.get("hints"):
+                        return parsed
             except Exception:
                 continue
 
@@ -521,42 +601,30 @@ def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
 
 def solve_stem_question(question: str, mode: str = "study") -> dict:
     """
-    Evaluates questions using Gemini AI LLM and SymPy symbolic solver.
-    Modes:
-    - "classroom": Straight-to-the-point direct answer only (no elaboration/waiting).
-    - "study": Complete step-by-step solution with hints and core concepts.
+    Evaluates questions with SymPy symbolic solver and AI LLM.
+    Format is strictly:
+    - Classroom: Answer only
+    - Study (Ask AI): Question and Answer only, with Explanation ONLY if requested.
     """
     q_raw = question.strip()
     q_clean = clean_math_query(q_raw)
     x, y, z, t = sp.symbols('x y z t')
     plot_path = ""
+    asked_explain = user_asked_for_explanation(q_raw)
+
+    # 1. Instant built-in chemistry/STEM database check (0ms)
+    local_ans = get_local_stem_answer(q_raw, mode=mode)
+    if local_ans:
+        return local_ans
 
     # Check question tags for calculus operations
     is_integral = any(k in q_raw.lower() for k in ['integral', 'integrate', '∫'])
     is_derivative = any(k in q_raw.lower() for k in ['derivative', 'differentiate', 'diff', 'd/dx'])
     is_limit = any(k in q_raw.lower() for k in ['limit', 'lim'])
+    has_eq = '=' in q_raw and not any(k in q_raw.lower() for k in ['limit', 'as x->'])
+    is_simple = is_simple_math_query(q_raw)
 
-    # 1. Simple direct math (e.g. 2+2=?, 15 * 8, 100/5) -> return ONLY final direct answer
-    if is_simple_math_query(q_raw):
-        try:
-            parsed = sp.sympify(q_clean)
-            simplified = sp.simplify(parsed)
-            pretty_r = to_pretty_math(simplified)
-            ans_text = f"Answer: {pretty_r}"
-            return {
-                "is_direct_math": True,
-                "hints": ans_text,
-                "full_solution": ans_text,
-                "solution": ans_text,
-                "plot_path": ""
-            }
-        except Exception:
-            pass
-
-    # 2. Try Gemini AI LLM for AI answer according to mode
-    ai_data = get_gemini_ai_answer(q_raw, mode=mode)
-    
-    # Check if a function plot is relevant
+    # Check if graph generation is relevant
     if should_generate_graph(q_raw, q_clean):
         try:
             parsed = sp.sympify(q_clean)
@@ -565,79 +633,73 @@ def solve_stem_question(question: str, mode: str = "study") -> dict:
         except Exception:
             pass
 
-    if ai_data:
-        hints = ai_data.get("hints", "")
-        full_sol = ai_data.get("full_solution", "")
-        if mode == "classroom":
-            ans = full_sol or hints
-            if not ans.startswith("Answer:") and not ans.startswith("Ans:"):
-                ans = f"Answer: {ans}"
-            return {
-                "is_direct_math": True,
-                "hints": ans,
-                "full_solution": ans,
-                "solution": ans,
-                "plot_path": plot_path
-            }
-        return {
-            "is_direct_math": False,
-            "hints": hints,
-            "full_solution": full_sol,
-            "solution": full_sol,
-            "plot_path": plot_path
-        }
-
-    # Check if user explicitly asked to elaborate/explain/show steps
-    wants_elaborate = (mode == "study") or any(k in q_raw.lower() for k in ['elaborate', 'explain', 'steps', 'step by step', 'detail', 'how to', 'why'])
-
+    # 2. Try Exact SymPy Symbolic Solver FIRST for all Math / Calculus / Algebra
     try:
         if is_integral:
             parsed_expr = sp.sympify(q_clean)
             result = sp.integrate(parsed_expr, x)
             pretty_p = to_pretty_math(parsed_expr)
             pretty_r = to_pretty_math(result)
-            
+
             if not plot_path and should_generate_graph(q_raw, q_clean):
                 plot_path = generate_function_plot(str(parsed_expr), title=f"Integrand Graph: f(x) = {pretty_p}")
-            
-            if not wants_elaborate or mode == "classroom":
-                ans_text = f"Answer: ∫ {pretty_p} dx = {pretty_r} + C"
-                return {"is_direct_math": True, "hints": ans_text, "full_solution": ans_text, "solution": ans_text, "plot_path": plot_path}
 
-            solution = (
-                f"1. ▤ Core Concept & Integrand\n"
-                f"Identify f(x) = {pretty_p}\n\n"
-                f"2. ✦ Step-by-Step Integration\n"
-                f"Apply integration rules & anti-differentiation:\n"
-                f"∫ {pretty_p} dx = {pretty_r} + C\n\n"
-                f"3. ◈ Final Answer\n"
-                f"∫ {pretty_p} dx = {pretty_r} + C"
+            short_text = f"Question: {q_raw}\nAnswer: ∫ {pretty_p} dx = {pretty_r} + C"
+            full_text = (
+                f"Question: {q_raw}\n"
+                f"Answer: ∫ {pretty_p} dx = {pretty_r} + C\n\n"
+                f"Explanation:\n"
+                f"• Use the power rule of integration: ∫ xⁿ dx = (xⁿ⁺¹)/(n+1) + C\n"
+                f"• Integrate {pretty_p}: ∫ {pretty_p} dx = {pretty_r} + C"
             )
-            return {"hints": solution, "solution": solution, "plot_path": plot_path}
-            
+
+            if mode == "classroom":
+                ans_text = f"Answer: ∫ {pretty_p} dx = {pretty_r} + C"
+                short_text = ans_text
+            else:
+                ans_text = full_text if asked_explain else short_text
+
+            return {
+                "is_direct_math": not asked_explain,
+                "hints": short_text,
+                "short_solution": short_text,
+                "full_solution": full_text,
+                "solution": ans_text,
+                "plot_path": plot_path
+            }
+
         elif is_derivative:
             parsed_expr = sp.sympify(q_clean)
             result = sp.diff(parsed_expr, x)
             pretty_p = to_pretty_math(parsed_expr)
             pretty_r = to_pretty_math(result)
-            
-            if not plot_path and should_generate_graph(q_raw, q_clean):
-                plot_path = generate_function_plot(str(parsed_expr), title=f"Function & Derivative: {pretty_p}")
-            
-            if not wants_elaborate or mode == "classroom":
-                ans_text = f"Answer: d/dx({pretty_p}) = {pretty_r}"
-                return {"is_direct_math": True, "hints": ans_text, "full_solution": ans_text, "solution": ans_text, "plot_path": plot_path}
 
-            solution = (
-                f"1. ▤ Core Concept & Function\n"
-                f"Identify f(x) = {pretty_p}\n\n"
-                f"2. ✦ Step-by-Step Differentiation\n"
-                f"Apply differentiation rules:\n"
-                f"f'(x) = {pretty_r}\n\n"
-                f"3. ◈ Final Answer\n"
-                f"f'(x) = {pretty_r}"
+            if not plot_path and should_generate_graph(q_raw, q_clean):
+                plot_path = generate_function_plot(str(parsed_expr), title=f"Derivative Graph: f(x) = {pretty_p}")
+
+            short_text = f"Question: {q_raw}\nAnswer: d/dx({pretty_p}) = {pretty_r}"
+            full_text = (
+                f"Question: {q_raw}\n"
+                f"Answer: d/dx({pretty_p}) = {pretty_r}\n\n"
+                f"Explanation:\n"
+                f"• Apply the power rule of differentiation: d/dx(xⁿ) = n·xⁿ⁻¹\n"
+                f"• Derivative of {pretty_p}: f'(x) = {pretty_r}"
             )
-            return {"hints": solution, "solution": solution, "plot_path": plot_path}
+
+            if mode == "classroom":
+                ans_text = f"Answer: d/dx({pretty_p}) = {pretty_r}"
+                short_text = ans_text
+            else:
+                ans_text = full_text if asked_explain else short_text
+
+            return {
+                "is_direct_math": not asked_explain,
+                "hints": short_text,
+                "short_solution": short_text,
+                "full_solution": full_text,
+                "solution": ans_text,
+                "plot_path": plot_path
+            }
 
         elif is_limit:
             target_val = 0
@@ -650,59 +712,117 @@ def solve_stem_question(question: str, mode: str = "study") -> dict:
             result = sp.limit(parsed_expr, x, target_val)
             pretty_p = to_pretty_math(parsed_expr)
             pretty_r = to_pretty_math(result)
-            
+
             if not plot_path and should_generate_graph(q_raw, q_clean):
                 plot_path = generate_function_plot(str(parsed_expr), title=f"Limit Graph: {pretty_p}")
-            
+
+            short_text = f"Question: {q_raw}\nAnswer: lim_{{x→{target_val}}} {pretty_p} = {pretty_r}"
+            full_text = (
+                f"Question: {q_raw}\n"
+                f"Answer: lim_{{x→{target_val}}} {pretty_p} = {pretty_r}\n\n"
+                f"Explanation:\n"
+                f"• Evaluate limit of {pretty_p} as x → {target_val}\n"
+                f"• Result: {pretty_r}"
+            )
+
             if mode == "classroom":
                 ans_text = f"Answer: lim_{{x→{target_val}}} {pretty_p} = {pretty_r}"
-                return {"is_direct_math": True, "hints": ans_text, "full_solution": ans_text, "solution": ans_text, "plot_path": plot_path}
+                short_text = ans_text
+            else:
+                ans_text = full_text if asked_explain else short_text
 
-            solution = (
-                f"1. ▤ Core Concept & Limit Definition\n"
-                f"Evaluate limit of f(x) = {pretty_p} as x → {target_val}\n\n"
-                f"2. ✦ Step-by-Step Evaluation\n"
-                f"Apply limit laws and algebraic simplification.\n\n"
-                f"3. ◈ Final Answer\n"
-                f"lim_{{x→{target_val}}} {pretty_p} = {pretty_r}"
+            return {
+                "is_direct_math": not asked_explain,
+                "hints": short_text,
+                "short_solution": short_text,
+                "full_solution": full_text,
+                "solution": ans_text,
+                "plot_path": plot_path
+            }
+
+        elif has_eq:
+            sides = q_raw.split('=')
+            lhs = sp.sympify(clean_math_query(sides[0]))
+            rhs = sp.sympify(clean_math_query(sides[1]))
+            eq = sp.Eq(lhs, rhs)
+            free_s = list(eq.free_symbols)
+            var_sym = free_s[0] if free_s else x
+            sols = sp.solve(eq, var_sym)
+            sol_str = ", ".join(to_pretty_math(s) for s in sols)
+
+            short_text = f"Question: {q_raw}\nAnswer: {var_sym} = {sol_str}"
+            full_text = (
+                f"Question: {q_raw}\n"
+                f"Answer: {var_sym} = {sol_str}\n\n"
+                f"Explanation:\n"
+                f"• Balance equation: {clean_math_query(sides[0])} = {clean_math_query(sides[1])}\n"
+                f"• Solve for {var_sym}: {sol_str}"
             )
-            return {"hints": solution, "solution": solution, "plot_path": plot_path}
 
-        # General SymPy evaluation fallback (Arithmetic, Algebra, Constants)
-        parsed = sp.sympify(q_clean)
-        simplified = sp.simplify(parsed)
-        pretty_p = to_pretty_math(parsed)
-        pretty_r = to_pretty_math(simplified)
-        
-        if not plot_path and should_generate_graph(q_raw, q_clean):
-            plot_path = generate_function_plot(str(parsed), title=f"Function Graph: {pretty_p}")
-            
-        if not wants_elaborate or mode == "classroom":
-            ans_text = f"Answer: {pretty_p} = {pretty_r}"
-            return {"is_direct_math": True, "hints": ans_text, "full_solution": ans_text, "solution": ans_text, "plot_path": plot_path}
+            if mode == "classroom":
+                ans_text = f"Answer: {var_sym} = {sol_str}"
+                short_text = ans_text
+            else:
+                ans_text = full_text if asked_explain else short_text
 
-        solution = (
-            f"1. ▤ Core Concept\n"
-            f"Evaluate mathematical expression: {pretty_p}\n\n"
-            f"2. ✦ Step-by-Step Simplification\n"
-            f"Simplifying terms yields: {pretty_r}\n\n"
-            f"3. ◈ Final Answer\n"
-            f"{pretty_p} = {pretty_r}"
-        )
-        return {"hints": solution, "solution": solution, "plot_path": plot_path}
+            return {
+                "is_direct_math": not asked_explain,
+                "hints": short_text,
+                "short_solution": short_text,
+                "full_solution": full_text,
+                "solution": ans_text,
+                "plot_path": plot_path
+            }
+
+        elif is_simple:
+            parsed = sp.sympify(q_clean)
+            simplified = sp.simplify(parsed)
+            pretty_r = to_pretty_math(simplified)
+            short_text = f"Question: {q_raw}\nAnswer: {pretty_r}"
+            full_text = f"Question: {q_raw}\nAnswer: {pretty_r}\n\nExplanation:\n• Evaluate expression: {to_pretty_math(parsed)} = {pretty_r}"
+
+            if mode == "classroom":
+                ans_text = f"Answer: {pretty_r}"
+                short_text = ans_text
+            else:
+                ans_text = full_text if asked_explain else short_text
+
+            return {
+                "is_direct_math": not asked_explain,
+                "hints": short_text,
+                "short_solution": short_text,
+                "full_solution": full_text,
+                "solution": ans_text,
+                "plot_path": ""
+            }
 
     except Exception:
-        clean_title = re.sub(r'^(formula\s+for|what\s+is\s+the\s+formula\s+for|what\s+is|define|calculate|solve)\s+', '', q_raw, flags=re.IGNORECASE).strip().title()
-        if mode == "classroom":
-            ans_text = f"Answer: {clean_title or q_raw}"
-            return {"is_direct_math": True, "hints": ans_text, "full_solution": ans_text, "solution": ans_text, "plot_path": plot_path}
+        pass
 
-        solution = (
-            f"### {clean_title or q_raw}\n"
-            f"• **Topic:** {q_raw}\n"
-            f"• **Result:** Direct formulation & scientific definitions apply.\n"
-        )
-        return {"hints": solution, "solution": solution, "plot_path": plot_path}
+    # 3. Fall back to LLM (Groq / Gemini) for general queries or word problems
+    ai_data = get_gemini_ai_answer(q_raw, mode=mode)
+    if ai_data:
+        ai_data["plot_path"] = plot_path
+        return ai_data
+
+    # 4. Final safety fallback
+    clean_title = re.sub(r'^(formula\s+for|what\s+is\s+the\s+formula\s+for|what\s+is|define|calculate|solve)\s+', '', q_raw, flags=re.IGNORECASE).strip().title()
+    short_text = f"Question: {q_raw}\nAnswer: {clean_title or q_raw}"
+    full_text = f"Question: {q_raw}\nAnswer: {clean_title or q_raw}\n\nExplanation:\n• Direct definition applies to {q_raw}"
+    if mode == "classroom":
+        ans_text = f"Answer: {clean_title or q_raw}"
+        short_text = ans_text
+    else:
+        ans_text = full_text if asked_explain else short_text
+
+    return {
+        "is_direct_math": not asked_explain,
+        "hints": short_text,
+        "short_solution": short_text,
+        "full_solution": full_text,
+        "solution": ans_text,
+        "plot_path": plot_path
+    }
 
 from PyQt6.QtCore import QThread, pyqtSignal
 

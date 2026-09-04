@@ -48,7 +48,15 @@ def create_draft_from_payload(payload: Dict[str, Any]) -> PenechoDraftLayerItem:
             inner_item = draw_item
     else:  # "mixed_text"
         raw_text = data if isinstance(data, str) else str(data)
-        inner_item = PenechoMixedTextItem(raw_text=raw_text, font_size=15, width=360.0)
+        short_sol = payload.get("short_solution") or raw_text
+        full_sol = payload.get("full_solution") or raw_text
+        inner_item = PenechoMixedTextItem(
+            raw_text=raw_text,
+            font_size=15,
+            width=360.0,
+            short_text=short_sol,
+            full_text=full_sol
+        )
 
     return PenechoDraftLayerItem(inner_item, title=title)
 
@@ -61,11 +69,12 @@ class AICanvasWorker(QThread):
     finished = pyqtSignal(dict, QPointF, str)  # (payload_dict, target_pos, status_msg)
     error = pyqtSignal(str)
 
-    def __init__(self, query_text: str, target_pos: QPointF, stroke_count: int = 1, parent=None):
+    def __init__(self, query_text: str, target_pos: QPointF, stroke_count: int = 1, mode: str = "study", parent=None):
         super().__init__(parent)
         self.query_text = query_text.strip()
         self.target_pos = target_pos
         self.stroke_count = stroke_count
+        self.mode = mode
 
     def run(self):
         try:
@@ -107,21 +116,32 @@ class AICanvasWorker(QThread):
                     return
 
             # 3. Default STEM / Math Solver -> Clean Handwritten Ink Response
-            solution_res = solve_stem_question(self.query_text)
+            solution_res = solve_stem_question(self.query_text, mode=self.mode)
             if isinstance(solution_res, dict):
-                solution_text = (
-                    solution_res.get("full_solution") or
-                    solution_res.get("solution") or
+                short_sol = (
+                    solution_res.get("short_solution") or
                     solution_res.get("hints") or
+                    solution_res.get("solution") or
                     str(solution_res)
                 )
+                full_sol = (
+                    solution_res.get("full_solution") or
+                    solution_res.get("solution") or
+                    short_sol
+                )
+                display_sol = solution_res.get("solution") or short_sol
             else:
-                solution_text = str(solution_res)
+                short_sol = str(solution_res)
+                full_sol = str(solution_res)
+                display_sol = str(solution_res)
 
             payload = {
                 "kind": "mixed_text",
                 "title": "Handwritten Solution",
-                "data": solution_text
+                "data": display_sol,
+                "short_solution": short_sol,
+                "full_solution": full_sol,
+                "question": self.query_text
             }
             self.finished.emit(payload, self.target_pos, "Generated Handwritten Ink Solution")
 
@@ -131,7 +151,10 @@ class AICanvasWorker(QThread):
             payload = {
                 "kind": "mixed_text",
                 "title": "Draft Solution",
-                "data": fallback_text
+                "data": fallback_text,
+                "short_solution": fallback_text,
+                "full_solution": fallback_text,
+                "question": self.query_text
             }
             self.finished.emit(payload, self.target_pos, "Draft Generated")
 
