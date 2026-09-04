@@ -183,9 +183,8 @@ class TemplateApplyAgent:
 
             final_tex = template_content.replace("{{CONTENT_BODY}}", job.structured_latex or "")
             job.final_tex_code = final_tex
-            job.status = JobStatus.DONE
             job.step = "LaTeX Generated"
-            job.progress_percentage = 100
+            job.progress_percentage = 60
         except Exception as e:
             job.status = JobStatus.ERROR
             job.error_message = f"Template apply failed: {str(e)}"

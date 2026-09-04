@@ -92,7 +92,7 @@ class SettingsDialog(QDialog):
         from PyQt6.QtWidgets import QApplication
         QApplication.processEvents()
         
-        backend_url = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('PORT', '8888')}").rstrip("/")
+        backend_url = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('PORT', '8000')}").rstrip("/")
         try:
             resp = requests.get(f"{backend_url}{endpoint}", timeout=10)
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}

@@ -342,7 +342,7 @@ async def test_groq():
         from groq import Groq
         client = Groq(api_key=api_key)
         resp = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="qwen/qwen3.8-27b",
             messages=[{"role": "user", "content": "Ping"}],
             max_tokens=5
         )
