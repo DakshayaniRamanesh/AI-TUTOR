@@ -1,14 +1,30 @@
-"""AnnotationHandler — processes canvas annotation events for generated videos."""
+"""
+AnnotationHandler — processes canvas annotation events.
+
+Spec location: backend/pipeline/annotation_handler.py
+
+For each annotation:
+  1. Use gemini-embedding-2 vision to understand the frame_image (multimodal embed)
+  2. Qdrant semantic search for relevant document chunks
+  3. Fallback to ResearchAgent (web search) if no relevant chunks found
+  4. CodeGenAgent generates a standalone AnnotationScene
+  5. CI validates it (up to 2 retries)
+  6. RendererAgent renders the clip
+  7. ffmpeg stitch: stream-copy original + insert annotation clips at timestamps
+"""
 
 import os
+import base64
 import requests
 from typing import List, Optional, Tuple
 
-from backend.video_generation.models import VideoJob, AnnotationEvent
+from backend.video_generation.models import VideoJob, AnnotationEvent, JobStatus
 from backend.workspace.qdrant_store import QdrantRAGStore
 
 
 class ResearchAgent:
+    """Web search fallback for out-of-document queries (uses Tavily)."""
+
     def __init__(self):
         self.api_key = os.getenv("TAVILY_API_KEY")
 
@@ -16,20 +32,32 @@ class ResearchAgent:
         if not self.api_key:
             return f"General knowledge context for: {query}"
         try:
-            resp = requests.post(
-                "https://api.tavily.com/search",
-                json={"api_key": self.api_key, "query": query, "search_depth": "basic"},
-                timeout=10,
-            )
+            url = "https://api.tavily.com/search"
+            payload = {"api_key": self.api_key, "query": query, "search_depth": "basic"}
+            resp = requests.post(url, json=payload, timeout=10)
             if resp.status_code == 200:
                 results = resp.json().get("results", [])
-                return "\n".join(r.get("content", "") for r in results[:3])
+                snippets = [r.get("content", "") for r in results[:3]]
+                return "\n".join(snippets)
         except Exception as e:
             print(f"[ResearchAgent] Web search error: {e}")
         return f"Fallback context for: {query}"
 
 
 class AnnotationHandler:
+    """
+    Handles canvas annotation events submitted via POST /annotate.
+
+    Steps per annotation:
+      - gemini-embedding-2 vision embed of frame_image + comment → semantic query vector
+      - Qdrant search(top_k=3) filtered to this job's document chunks
+      - If no relevant chunks (score < 0.5) → ResearchAgent web search
+      - CodeGenAgent generates a standalone AnnotationScene Manim class
+      - CI harness validates (2 retries)
+      - RendererAgent renders the annotation clip
+    After all annotations: ffmpeg stitch (stream-copy original, insert clips at timestamps)
+    """
+
     def __init__(self, rag_store: Optional[QdrantRAGStore] = None):
         self.rag_store = rag_store or QdrantRAGStore()
         self.research_agent = ResearchAgent()
@@ -42,47 +70,50 @@ class AnnotationHandler:
         if not annotations:
             return job
 
+        # Sort by timestamp so stitching is chronological
         annotations = sorted(annotations, key=lambda a: a.timestamp)
+
         codegen_agent = CodeGenAgent()
         renderer_agent = RendererAgent()
         ci_harness = CIPipelineHarness()
-        annotation_clips: List[Tuple[float, str]] = []
+
+        annotation_clips: List[Tuple[float, str]] = []  # (timestamp, clip_path)
         annotation_results = []
 
         for idx, ann in enumerate(annotations):
+            # 1. Build query from frame_image + comment using Gemini vision
             query = ann.comment or "Explain this highlighted region."
             visual_description = self._describe_frame(ann.frame_image, ann.comment)
+
+            # 2. Qdrant semantic search
             results = self.rag_store.search(query, job.job_id, top_k=3)
             if results and results[0]["score"] > 0.5:
-                context = "\n".join(r["text"] for r in results)
+                context = "\n".join([r["text"] for r in results])
                 annotation_source = "rag"
             else:
+                # 3. Fallback to web search
                 context = self.research_agent.research(f"{query}. {visual_description}")
                 annotation_source = "web_search"
 
+            print(f"[AnnotationHandler] ann[{idx}] source={annotation_source}, query={query[:60]}")
+
+            # 4. Generate standalone AnnotationScene Manim code
             clip_job = VideoJob(
                 job_id=f"{job.job_id}_ann_{idx}",
                 user_prompt=(
-                    f"Create a short 5-15 second visual explanation for: {query}.\n"
+                    f"Create a short 5-15 second Manim annotation scene explaining: {query}.\n"
                     f"Visual context: {visual_description}\n"
                     f"Reference material: {context[:2000]}"
                 ),
                 document_text=context,
-                story_script=(
-                    "## Scene 1: Annotation focus\n"
-                    f"- Visual: Focus only on the highlighted idea: {query}\n"
-                    f"- Narration: {visual_description or query}\n"
-                    "## Scene 2: Clarification\n"
-                    "- Visual: Show the relationship or correction with a compact diagram."
-                ),
+                story_script=f"Annotation explanation: {query}",
             )
 
+            # CodeGen + CI loop (max 2 retries for annotation clips)
             for attempt in range(2):
                 clip_job = codegen_agent.run(clip_job)
-                # CodeGenAgent and RendererAgent both use MainScene. The old code
-                # validated AnnotationScene, causing a guaranteed class mismatch.
                 passed, error_trace = ci_harness.validate_code(
-                    clip_job.manim_code or "", scene_name="MainScene"
+                    clip_job.manim_code or "", scene_name="AnnotationScene"
                 )
                 if passed:
                     clip_job.has_build_error = False
@@ -90,13 +121,15 @@ class AnnotationHandler:
                 clip_job.has_build_error = True
                 clip_job.build_error_trace = error_trace
                 clip_job.retry_count += 1
-                print(f"[AnnotationHandler] CI retry {attempt+1} for ann[{idx}]: {error_trace[:120]}")
+                print(f"[AnnotationHandler] CI retry {attempt+1} for ann[{idx}]: {error_trace[:80]}")
 
             if clip_job.has_build_error:
                 print(f"[AnnotationHandler] Skipping ann[{idx}] — CI failed after retries.")
                 continue
 
+            # 5. Render annotation clip
             clip_job = renderer_agent.run(clip_job)
+
             if clip_job.video_path and os.path.exists(clip_job.video_path):
                 annotation_clips.append((ann.timestamp, clip_job.video_path))
                 annotation_results.append({
@@ -105,6 +138,7 @@ class AnnotationHandler:
                     "context_used": context[:200],
                 })
 
+        # 6. Stitch clips into original video
         if annotation_clips and job.video_path and os.path.exists(job.video_path):
             job.version += 1
             stitched_path = self._stitch(job.video_path, annotation_clips, job.job_id, job.version)
@@ -116,24 +150,39 @@ class AnnotationHandler:
         return job
 
     def _describe_frame(self, frame_image_b64: str, comment: str) -> str:
+        """
+        Use Gemini vision to get a natural-language description of the annotated frame.
+        Falls back to the comment text if vision fails or is unavailable.
+        """
         if not frame_image_b64:
             return comment
+
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
             return comment
+
         try:
             from groq import Groq
             client = Groq(api_key=api_key)
+            # Ensure the frame_image_b64 is a proper data URL
             image_url = frame_image_b64 if frame_image_b64.startswith("data:image") else f"data:image/png;base64,{frame_image_b64}"
+            
             response = client.chat.completions.create(
                 model="llama-3.2-11b-vision-preview",
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"Describe only what is highlighted/circled in this video frame. User question: {comment}"},
-                        {"type": "image_url", "image_url": {"url": image_url}},
-                    ],
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"Describe what is highlighted/circled in this video frame. User question: {comment}"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": image_url,
+                                },
+                            },
+                        ],
+                    }
+                ]
             )
             return response.choices[0].message.content or comment
         except Exception as e:
@@ -147,42 +196,56 @@ class AnnotationHandler:
         job_id: str,
         version: int,
     ) -> Optional[str]:
+        """
+        ffmpeg stream-copy stitch:
+          original[0→T1] + ann_clip_1 + original[T1→T2] + ann_clip_2 + ...
+        Only new annotation clips are re-encoded; original segments are stream-copied.
+        """
         import subprocess
         import tempfile
 
         output_path = os.path.join(tempfile.gettempdir(), f"{job_id}-v{version}.mp4")
+
         try:
+            # Build ffmpeg concat input list
             concat_list_path = os.path.join(tempfile.gettempdir(), f"{job_id}_concat.txt")
-            with open(concat_list_path, "w", encoding="utf-8") as f:
+            with open(concat_list_path, "w") as f:
                 prev_end = 0.0
-                for ann_idx, (timestamp, clip_path) in enumerate(sorted(clips, key=lambda x: x[0])):
-                    seg_path = os.path.join(tempfile.gettempdir(), f"{job_id}_seg_{ann_idx}.mp4")
+                for timestamp, clip_path in sorted(clips, key=lambda x: x[0]):
+                    # Original segment before this annotation
+                    seg_path = os.path.join(
+                        tempfile.gettempdir(), f"{job_id}_seg_{int(prev_end)}.mp4"
+                    )
                     subprocess.run([
                         "ffmpeg", "-y", "-i", original_path,
                         "-ss", str(prev_end), "-to", str(timestamp),
-                        "-c", "copy", seg_path,
+                        "-c", "copy", seg_path
                     ], capture_output=True, timeout=60)
-                    if os.path.exists(seg_path) and timestamp > prev_end:
-                        f.write(f"file '{seg_path}'\n")
+                    f.write(f"file '{seg_path}'\n")
                     f.write(f"file '{clip_path}'\n")
                     prev_end = timestamp
 
+                # Final tail of original
                 tail_path = os.path.join(tempfile.gettempdir(), f"{job_id}_tail.mp4")
                 subprocess.run([
                     "ffmpeg", "-y", "-i", original_path,
-                    "-ss", str(prev_end), "-c", "copy", tail_path,
+                    "-ss", str(prev_end),
+                    "-c", "copy", tail_path
                 ], capture_output=True, timeout=60)
-                if os.path.exists(tail_path):
-                    f.write(f"file '{tail_path}'\n")
+                f.write(f"file '{tail_path}'\n")
 
             result = subprocess.run([
                 "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                "-i", concat_list_path, "-c", "copy", output_path,
+                "-i", concat_list_path, "-c", "copy", output_path
             ], capture_output=True, text=True, timeout=120)
+
             if result.returncode != 0:
                 print(f"[AnnotationHandler] ffmpeg stitch error: {result.stderr}")
                 return None
+
+            print(f"[AnnotationHandler] Stitched video: {output_path}")
             return output_path
+
         except Exception as e:
             print(f"[AnnotationHandler] Stitch failed: {e}")
             return None

@@ -1,19 +1,18 @@
 """
-Floating Toolbar Widget (Technical / Monochrome Aesthetic)
-A sharp-bordered, centered bottom toolbar with core canvas tools.
+Floating Toolbar Widget (Microsoft Whiteboard Style)
+A pill-shaped, centered bottom toolbar with core canvas tools.
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QPushButton, QGraphicsDropShadowEffect, QFrame
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 import qtawesome as qta
-from .theme_manager import ThemeManager
 
 
 class FloatingToolbar(QWidget):
-    """Floating sharp-bordered toolbar that hovers over the canvas bottom-center."""
+    """Floating pill-shaped toolbar that hovers over the canvas bottom-center."""
     
     # Signals emitted when tools are clicked
     tool_changed = pyqtSignal(str)  # "select", "pen", "highlighter", "eraser", "pan"
@@ -21,7 +20,7 @@ class FloatingToolbar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(48)
+        self.setFixedHeight(52)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._active_tool = "select"
         self._drag_pos = None
@@ -47,64 +46,70 @@ class FloatingToolbar(QWidget):
             event.accept()
 
     def _init_ui(self):
-        c = ThemeManager.instance().get_colors()
-        
-        # Main container with sharp / minimal 4px border radius
+        from .theme_manager import ThemeManager
+        # Main container with pill shape
         self.container = QFrame(self)
         ThemeManager.instance().theme_changed.connect(self._apply_theme)
         self._apply_theme(ThemeManager.instance().current_theme)
         
+        # Drop shadow for floating effect
+        shadow = QGraphicsDropShadowEffect(self.container)
+        shadow.setBlurRadius(20)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 40))
+        self.container.setGraphicsEffect(shadow)
+        
         layout = QHBoxLayout(self.container)
-        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(2)
 
-        # ── Tool Buttons (Remix Icons outline set) ──
+        # ── Tool Buttons ──
         # Undo
-        btn_undo = self._make_btn('ri.arrow-go-back-line', "Undo (Ctrl+Z)")
+        btn_undo = self._make_btn('fa5s.undo', "Undo (Ctrl+Z)")
         btn_undo.clicked.connect(lambda: self.action_triggered.emit("undo"))
         layout.addWidget(btn_undo)
 
         self._add_separator(layout)
 
         # Select (cursor)
-        self.btn_select = self._make_btn('ri.cursor-line', "Select (V)")
+        self.btn_select = self._make_btn('fa5s.mouse-pointer', "Select (V)")
         self.btn_select.setCheckable(True)
         self.btn_select.setChecked(True)
         self.btn_select.clicked.connect(lambda: self._set_tool("select"))
         layout.addWidget(self.btn_select)
 
         # Pan (hand)
-        self.btn_pan = self._make_btn('ri.drag-move-line', "Pan (H)")
+        self.btn_pan = self._make_btn('fa5s.hand-paper', "Pan (H)")
         self.btn_pan.setCheckable(True)
         self.btn_pan.clicked.connect(lambda: self._set_tool("pan"))
         layout.addWidget(self.btn_pan)
 
         # Pen
-        self.btn_pen = self._make_btn('ri.pen-nib-line', "Pen (P)")
+        self.btn_pen = self._make_btn('fa5s.pen', "Pen (P)")
         self.btn_pen.setCheckable(True)
         self.btn_pen.clicked.connect(lambda: self._set_tool("pen"))
         layout.addWidget(self.btn_pen)
 
         # Highlighter
-        self.btn_highlighter = self._make_btn('ri.mark-pen-line', "Highlighter (Alt+H)")
+        self.btn_highlighter = self._make_btn('fa5s.highlighter', "Highlighter (Alt+H)")
         self.btn_highlighter.setCheckable(True)
         self.btn_highlighter.clicked.connect(lambda: self._set_tool("highlighter"))
         layout.addWidget(self.btn_highlighter)
 
         # Eraser
-        self.btn_eraser = self._make_btn('ri.eraser-line', "Eraser (E)")
+        self.btn_eraser = self._make_btn('fa5s.eraser', "Eraser (E)")
         self.btn_eraser.setCheckable(True)
         self.btn_eraser.clicked.connect(lambda: self._set_tool("eraser"))
         layout.addWidget(self.btn_eraser)
         
         # Shapes
-        self.btn_shapes = self._make_btn('ri.shape-line', "Shapes (S)")
+        self.btn_shapes = self._make_btn('fa5s.shapes', "Shapes (S)")
         self.btn_shapes.setCheckable(True)
         self.btn_shapes.clicked.connect(lambda: self._set_tool("shapes"))
         layout.addWidget(self.btn_shapes)
 
         # Lasso Selection (Penecho)
-        self.btn_lasso = self._make_btn('ri.scissors-cut-line', "Lasso Selection (L)")
+        self.btn_lasso = self._make_btn('fa5s.draw-polygon', "Lasso Selection (L)")
         self.btn_lasso.setCheckable(True)
         self.btn_lasso.clicked.connect(lambda: self._set_tool("lasso"))
         layout.addWidget(self.btn_lasso)
@@ -112,21 +117,49 @@ class FloatingToolbar(QWidget):
         self._add_separator(layout)
 
         # Text
-        btn_text = self._make_btn('ri.text', "Text (T)")
+        btn_text = self._make_btn('fa5s.font', "Text (T)")
         btn_text.clicked.connect(lambda: self.action_triggered.emit("text"))
         layout.addWidget(btn_text)
 
         # More menu (...)
-        self.btn_more = self._make_btn('ri.more-line', "More Options")
+        self.btn_more = self._make_btn('fa5s.ellipsis-h', "More Options")
         self.btn_more.clicked.connect(lambda: self.action_triggered.emit("more"))
         layout.addWidget(self.btn_more)
 
         self._add_separator(layout)
 
         # LaTeX Export
-        self.btn_latex = self._make_btn('ri.file-upload-line', "Convert to LaTeX (Ctrl+E)")
+        self.btn_latex = self._make_btn('fa5s.file-export', "Convert to LaTeX (Ctrl+E)")
+        self.btn_latex.setStyleSheet("""
+            QPushButton {
+                background: #f3e8ff;
+                border: none;
+                border-radius: 12px;
+                padding: 8px;
+            }
+            QPushButton:hover { background: #e9d5ff; }
+            QPushButton:pressed { background: #d8b4fe; }
+        """)
+        # Using a custom purple icon for latex button
+        self.btn_latex.setIcon(qta.icon('fa5s.file-export', color='#7c3aed'))
         self.btn_latex.clicked.connect(lambda: self.action_triggered.emit("latex"))
         layout.addWidget(self.btn_latex)
+
+        # Generate Video
+        self.btn_video = self._make_btn('fa5s.video', "Generate Video (Ctrl+Shift+V)")
+        self.btn_video.setStyleSheet("""
+            QPushButton {
+                background: #dcfce7;
+                border: none;
+                border-radius: 12px;
+                padding: 8px;
+            }
+            QPushButton:hover { background: #bbf7d0; }
+            QPushButton:pressed { background: #86efac; }
+        """)
+        self.btn_video.setIcon(qta.icon('fa5s.video', color='#16a34a'))
+        self.btn_video.clicked.connect(lambda: self.action_triggered.emit("video"))
+        layout.addWidget(self.btn_video)
 
         # Store all tool buttons for toggling
         self._tool_buttons = {
@@ -146,85 +179,60 @@ class FloatingToolbar(QWidget):
         outer.addWidget(self.container)
         outer.addStretch()
 
-        # Set default active icon state
-        self._set_tool("select")
-
-    def _make_btn(self, icon_name: str, tooltip: str) -> QPushButton:
-        c = ThemeManager.instance().get_colors()
-        btn = QPushButton(qta.icon(icon_name, color=c['text_secondary']), "", self)
-        btn.setIconSize(QSize(17, 17))
-        btn.setFixedSize(34, 34)
+    def _make_btn(self, icon_name: str, tooltip: str, color: str = '#475569') -> QPushButton:
+        btn = QPushButton(qta.icon(icon_name, color=color), "", self)
+        btn.setIconSize(QSize(18, 18))
+        btn.setFixedSize(38, 38)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setToolTip(tooltip)
-        btn._icon_name = icon_name
-        btn.setStyleSheet(f"""
-            QPushButton {{
+        btn.setStyleSheet("""
+            QPushButton {
                 background: transparent;
                 border: none;
-                border-radius: 2px;
-            }}
-            QPushButton:hover {{
-                background-color: {c['panel_card_bg']};
-            }}
-            QPushButton:checked {{
-                background-color: {c['accent']};
-            }}
+                border-radius: 10px;
+            }
+            QPushButton:hover {
+                background-color: #f1f5f9;
+            }
+            QPushButton:checked {
+                background-color: #1e293b;
+            }
         """)
         return btn
 
     def _add_separator(self, layout):
-        c = ThemeManager.instance().get_colors()
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFixedHeight(20)
-        sep.setStyleSheet(f"color: {c['border_color']}; margin: 0 2px;")
+        sep.setFixedHeight(28)
+        sep.setStyleSheet("color: #e2e8f0;")
         layout.addWidget(sep)
 
     def _set_tool(self, tool_name: str):
         self._active_tool = tool_name
-        if not hasattr(self, '_tool_buttons'):
-            return
-        c = ThemeManager.instance().get_colors()
-        icon_map = {
-            "select": "ri.cursor-line",
-            "pan": "ri.drag-move-line",
-            "pen": "ri.pen-nib-line",
-            "highlighter": "ri.mark-pen-line",
-            "eraser": "ri.eraser-line",
-            "shapes": "ri.shape-line",
-            "lasso": "ri.scissors-cut-line"
-        }
+        # Uncheck all, then check the active one
         for name, btn in self._tool_buttons.items():
-            is_active = (name == tool_name)
-            btn.setChecked(is_active)
-            col = c['accent_text'] if is_active else c['text_secondary']
-            btn.setIcon(qta.icon(icon_map.get(name, 'ri.cursor-line'), color=col))
+            btn.setChecked(name == tool_name)
+            # Swap icon color: white when active, grey when not
+            icon_map = {
+                "select": "fa5s.mouse-pointer",
+                "pan": "fa5s.hand-paper",
+                "pen": "fa5s.pen",
+                "highlighter": "fa5s.highlighter",
+                "eraser": "fa5s.eraser",
+                "shapes": "fa5s.shapes",
+                "lasso": "fa5s.draw-polygon"
+            }
+            c = "#ffffff" if name == tool_name else "#475569"
+            btn.setIcon(qta.icon(icon_map[name], color=c))
         self.tool_changed.emit(tool_name)
 
     def _apply_theme(self, theme_name: str = "light"):
+        from .theme_manager import ThemeManager
         c = ThemeManager.instance().get_colors()
-        if hasattr(self, 'container'):
-            self.container.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {c['bg_toolbar']};
-                    border: 1px solid {c['border_color']};
-                    border-radius: 4px;
-                }}
-            """)
-        # Refresh buttons styles
-        for name, btn in getattr(self, '_tool_buttons', {}).items():
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    border: none;
-                    border-radius: 2px;
-                }}
-                QPushButton:hover {{
-                    background-color: {c['panel_card_bg']};
-                }}
-                QPushButton:checked {{
-                    background-color: {c['accent']};
-                }}
-            """)
-        if hasattr(self, '_active_tool') and hasattr(self, '_tool_buttons'):
-            self._set_tool(self._active_tool)
+        self.container.setStyleSheet(f"""
+            QFrame {{
+                background-color: {c['bg_toolbar']};
+                border: 1px solid {c['border_color']};
+                border-radius: 16px;
+            }}
+        """)
