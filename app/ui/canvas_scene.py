@@ -326,6 +326,8 @@ class CanvasScene(QGraphicsScene):
                 item.setPos(x, y)
                 if "z_value" in data:
                     item.setZValue(data["z_value"])
+                if "item_id" in data and data["item_id"]:
+                    item.item_id = data["item_id"]
                 self.addItem(item)
 
     def create_item_from_dict(self, data: dict):

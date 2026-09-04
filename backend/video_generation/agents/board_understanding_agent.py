@@ -95,9 +95,11 @@ class BoardUnderstandingAgent:
         if not elements and selection.image_b64:
             ambiguities.append("Only a raster crop was available; spatial object semantics are limited.")
 
+        relations = self._extract_relations(elements)
+
         job.board_ir = BoardIR(
             elements=elements,
-            relations=[],
+            relations=relations,
             concepts=concepts,
             equations=equations,
             questions=questions,
@@ -176,7 +178,43 @@ class BoardUnderstandingAgent:
 
     def _find_equations(self, text: str) -> List[str]:
         lines = [line.strip() for line in re.split(r"[\n|]", text) if line.strip()]
-        return [line for line in lines if any(tok in line for tok in ("=", "Ã¢Ë†Â«", "Ã¢Ë†â€˜", "Ã¢Ë†â€š", "Ã¢Ë†â€¡", "Ã¢â€ â€™", "^")) and len(line) <= 180]
+        math_symbols = ("=", "∫", "Σ", "∑", "∂", "∇", "→", "^", "frac")
+        return [line for line in lines if any(tok in line for tok in math_symbols) and len(line) <= 180]
+
+    def _extract_relations(self, elements: List[BoardElement]) -> List[Any]:
+        from backend.video_generation.models import BoardRelation
+        import math
+        
+        relations = []
+        for i, el1 in enumerate(elements):
+            for j, el2 in enumerate(elements):
+                if i == j: continue
+                # Simple bounding box near heuristic
+                x1, y1 = el1.bbox.get("x", 0), el1.bbox.get("y", 0)
+                x2, y2 = el2.bbox.get("x", 0), el2.bbox.get("y", 0)
+                dist = math.hypot(x1 - x2, y1 - y2)
+                
+                # if one is a line/arrow and another is an object
+                if el1.type in ["arrow", "line"]:
+                    p1 = el1.properties.get("fit_data", {}).get("p1", (x1, y1))
+                    p2 = el1.properties.get("fit_data", {}).get("p2", (x1, y1))
+                    dist_to_start = math.hypot(p1[0] - x2, p1[1] - y2)
+                    dist_to_end = math.hypot(p2[0] - x2, p2[1] - y2)
+                    if dist_to_start < 100:
+                        relations.append(BoardRelation(source=el1.id, target=el2.id, relation="arrow_from", confidence=0.9))
+                    elif dist_to_end < 100:
+                        relations.append(BoardRelation(source=el1.id, target=el2.id, relation="arrow_to", confidence=0.9))
+                
+                # Spatial "contains"
+                w1, h1 = el1.bbox.get("width", 0), el1.bbox.get("height", 0)
+                w2, h2 = el2.bbox.get("width", 0), el2.bbox.get("height", 0)
+                if x1 <= x2 and y1 <= y2 and x1 + w1 >= x2 + w2 and y1 + h1 >= y2 + h2 and el1.type != "ink_stroke":
+                    relations.append(BoardRelation(source=el1.id, target=el2.id, relation="contains", confidence=0.9))
+                    
+                # Near / Label
+                if dist < 150 and el1.type == "text" and el2.type != "text":
+                    relations.append(BoardRelation(source=el1.id, target=el2.id, relation="label_for", confidence=0.7))
+        return relations
 
     def _find_questions(self, text: str) -> List[str]:
         chunks = re.split(r"(?<=[?.!])\s+|\n", text)

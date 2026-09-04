@@ -97,6 +97,19 @@ class SceneCompileAgent:
         return lines
 
     def _compile_object(self, var: str, obj: Dict[str, Any]) -> List[str]:
+        lines = self._compile_object_base(var, obj)
+        
+        # Enable exact element width scaling via VGroup (or direct Mobject scale)
+        width = obj.get("width")
+        if width is not None and str(obj.get("type")) != "rectangle":
+            try:
+                w = max(0.1, min(14.0, float(width)))
+                lines.append(f"        if {var}.width > 0: {var}.scale_to_fit_width({w})")
+            except (ValueError, TypeError):
+                pass
+        return lines
+
+    def _compile_object_base(self, var: str, obj: Dict[str, Any]) -> List[str]:
         otype = str(obj.get("type", "text"))
         position = self._position_expr(str(obj.get("position", "center")))
         color = self._color(obj.get("color"))

@@ -194,6 +194,7 @@ class StickyNote(QGraphicsProxyWidget, BaseGraphicsItemMixin):
 
     def to_dict(self) -> dict:
         return {
+            "item_id": getattr(self, "item_id", ""),
             "type": "StickyNote",
             "x": self.x(),
             "y": self.y(),

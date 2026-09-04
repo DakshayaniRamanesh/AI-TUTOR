@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Dict, Any, Tuple
+from pydantic import BaseModel
 
 
 class JobStatus(str, Enum):
@@ -202,6 +203,7 @@ class VideoJob:
     emphasis_note: Optional[str] = None
     output_type: str = "video"
     subject_id: Optional[str] = None
+    material_id: Optional[str] = None
 
     # Whiteboard-aware input / semantic state
     board_selection: Optional[BoardSelection] = None
@@ -275,4 +277,65 @@ class LatexJob:
     has_build_error: bool = False
     build_error_trace: Optional[str] = None
 
+    error_message: Optional[str] = None
+
+@dataclass
+class DocumentBlock:
+    type: str  # "heading", "paragraph", "equation", "list", "slide_title"
+    content: str
+    level: int = 1
+    items: List[str] = field(default_factory=list)
+
+@dataclass
+class DocumentIR:
+    title: str = ""
+    blocks: List[DocumentBlock] = field(default_factory=list)
+
+# ── API Contracts (Phase 3) ────────────────────────────────────────────────
+
+class VideoGenerationRequest(BaseModel):
+    user_prompt: str
+    document_text: str = ""
+    pdf_path: str = ""
+    page_range: Optional[str] = None
+    emphasis_note: Optional[str] = None
+    output_type: str = "video"
+    subject_id: Optional[str] = None
+    board_selection: Optional[Dict[str, Any]] = None
+
+class VideoGenerationResponse(BaseModel):
+    job_id: str
+    backend: str
+    status_endpoint: str
+
+class VideoJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    step: str
+    progress_percentage: int
+    video_url: Optional[str] = None
+    stitched_video_url: Optional[str] = None
+    error_message: Optional[str] = None
+    friendly_step: str = ""
+
+class LatexGenerationRequest(BaseModel):
+    image_b64: str
+    template_type: str
+    mode: str = "study"
+    classroom_action: str = "Solve Question"
+
+class LatexGenerationResponse(BaseModel):
+    job_id: str
+    backend: str
+    status_endpoint: str
+
+class LatexJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    step: str
+    progress_percentage: int
+    raw_transcription: Optional[str] = None
+    structured_latex: Optional[str] = None
+    final_tex_code: Optional[str] = None
+    pdf_url: Optional[str] = None
     error_message: Optional[str] = None

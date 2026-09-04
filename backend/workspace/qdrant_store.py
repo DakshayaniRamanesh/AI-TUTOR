@@ -97,7 +97,7 @@ class QdrantRAGStore:
     Collection schema (from spec):
       - size=3072 (gemini-embedding-2)
       - distance=COSINE
-    Point payload: {job_id, chunk_index, text, page}
+    Point payload: {material_id, chunk_index, text, page}
     """
 
     def __init__(self, host: Optional[str] = None, api_key: Optional[str] = None):
@@ -148,7 +148,7 @@ class QdrantRAGStore:
             try:
                 self.client.create_payload_index(
                     collection_name=COLLECTION_NAME,
-                    field_name="job_id",
+                    field_name="material_id",
                     field_schema="keyword",
                 )
             except Exception:
@@ -288,7 +288,7 @@ class QdrantRAGStore:
                     id=str(uuid.uuid4()),
                     vector=vector,
                     payload={
-                        "job_id": job_id,
+                        "material_id": job_id,
                         "chunk_index": index,
                         "text": text,
                         "page": chunk.get("page", 1),
@@ -298,14 +298,28 @@ class QdrantRAGStore:
 
         if points:
             self.client.upsert(collection_name=COLLECTION_NAME, points=points)
-            print(f"[QdrantRAGStore] Upserted {len(points)} chunks for job {job_id}")
+            print(f"[QdrantRAGStore] Upserted {len(points)} chunks for material {job_id}")
 
-    def search(self, query: str, job_id: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Semantic search restricted to a single job's document chunks."""
+    def has_material(self, material_id: str) -> bool:
+        """Check if a material is already embedded."""
+        try:
+            results = self.client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=Filter(
+                    must=[FieldCondition(key="material_id", match=MatchValue(value=material_id))]
+                ),
+                limit=1,
+            )
+            return len(results[0]) > 0
+        except Exception:
+            return False
+
+    def search(self, query: str, material_id: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Semantic search restricted to a single material's document chunks."""
         query_vector = self.embeddings.embed_text(query)
         job_filter = Filter(
             must=[
-                FieldCondition(key="job_id", match=MatchValue(value=job_id))
+                FieldCondition(key="material_id", match=MatchValue(value=material_id))
             ]
         )
 

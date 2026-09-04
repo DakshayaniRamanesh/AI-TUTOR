@@ -2,9 +2,7 @@ import os
 import shutil
 from backend.video_generation.models import VideoJob, JobStatus
 
-# Permanent media directory — lives inside the backend folder so it's not cleaned by the OS.
-_MEDIA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "media")
-os.makedirs(_MEDIA_DIR, exist_ok=True)
+from backend.workspace.artifact_store import artifact_store
 
 
 class UploaderAgent:
@@ -33,16 +31,17 @@ class UploaderAgent:
             print(f"[UploaderAgent] {job.error_message}")
             return job
 
-        # --- 2. Copy to permanent media directory so the temp dir can be cleaned ---
-        dest_filename = f"{job.job_id}_v{job.version}.mp4"
-        dest_path = os.path.join(_MEDIA_DIR, dest_filename)
-        try:
-            shutil.copy2(job.video_path, dest_path)
-            print(f"[UploaderAgent] Copied {job.video_path} -> {dest_path} ({os.path.getsize(dest_path)} bytes)")
-            job.video_path = dest_path  # Update to the permanent path
-        except Exception as e:
-            print(f"[UploaderAgent] Copy to media dir failed: {e}")
-            # Keep the temp path; at least status endpoint can still serve it
+        # --- 2. Artifact already stored by RendererAgent ---
+        # The video path is already in the artifact store.
+        # We can just verify it exists.
+        dest_key = f"v{job.version}.mp4"
+        dest_path = artifact_store.get(job.job_id, dest_key)
+        if not dest_path:
+            # Fallback to copy if it's not already in the store
+            dest_path = artifact_store.put(job.job_id, dest_key, job.video_path)
+            job.video_path = dest_path
+        
+        print(f"[UploaderAgent] Using artifact store path: {job.video_path}")
 
         # --- 3. Try DigitalOcean Spaces (only if real credentials are set) ---
         real_creds = (
@@ -75,8 +74,8 @@ class UploaderAgent:
             except Exception as e:
                 print(f"[UploaderAgent] DO Spaces upload error: {e}")
 
-        # --- 4. Local fallback: serve via the FastAPI /video/<filename> endpoint ---
-        job.video_url = f"http://localhost:8000/video/{os.path.basename(job.video_path)}"
+        # --- 4. Local fallback: serve via the FastAPI artifact endpoint ---
+        job.video_url = artifact_store.get_url(job.job_id, dest_key)
         print(f"[UploaderAgent] Serving locally at {job.video_url}")
         job.status = JobStatus.DONE
         job.progress_percentage = 100

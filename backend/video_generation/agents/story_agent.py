@@ -102,7 +102,7 @@ class StoryAgent:
                 if self.google_api_key:
                     genai.configure(api_key=self.google_api_key)
                     # Try preferred model, fall back to stable alternative
-                    for model_name in ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"]:
+                    for model_name in ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-1.5-flash", "gemini-3.5-flash"]:
                         try:
                             self.gemini_model = genai.GenerativeModel(model_name)
                             self._gemini_model_name = model_name
@@ -138,7 +138,7 @@ class StoryAgent:
         if self._groq_client:
             try:
                 response = self._groq_client.chat.completions.create(
-                    model="qwen/qwen3.6-27b",
+                    model="qwen/qwen3.8-27b",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=2048,
                 )
@@ -147,7 +147,7 @@ class StoryAgent:
                     # Strip <think>...</think> tokens from reasoning models
                     import re as _re
                     raw = _re.sub(r'<think>.*?</think>', '', raw, flags=_re.DOTALL).strip()
-                    return raw, "groq/qwen3.6-27b"
+                    return raw, "groq/qwen3.8-27b"
             except Exception as e:
                 print(f"[StoryAgent] Groq error: {e}")
         return "", ""
@@ -166,7 +166,7 @@ class StoryAgent:
         # ── 2. Retrieve RAG context ───────────────────────────────────────────
         relevant_chunks = []
         try:
-            relevant_chunks = self.rag_store.search(job.user_prompt, job.job_id, top_k=5)
+            relevant_chunks = self.rag_store.search(job.user_prompt, job.material_id or job.job_id, top_k=5)
         except Exception as e:
             print(f"[StoryAgent] RAG search failed: {e}. Will use document_text fallback.")
 

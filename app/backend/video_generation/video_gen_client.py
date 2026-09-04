@@ -13,21 +13,25 @@ import uuid
 import requests
 from PyQt6.QtCore import QThread, pyqtSignal
 
-# Ensure root workspace directory is on Python path
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+try:
+    from backend.config import BACKEND_URL, MODAL_VIDEO_GENERATE_URL, MODAL_VIDEO_STATUS_URL
+except ImportError:
+    BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+    MODAL_VIDEO_GENERATE_URL = os.getenv("MODAL_URL", "https://dakshayaniramanesh--manim-app-generate.modal.run")
+    MODAL_VIDEO_STATUS_URL = MODAL_VIDEO_GENERATE_URL.replace("/generate", "/status")
+
 LOCAL_SERVERS = [
-    os.getenv("BACKEND_URL", "").rstrip("/"),
+    BACKEND_URL.rstrip("/"),
     "http://127.0.0.1:8000",
     "http://localhost:8000",
     "http://127.0.0.1:8888",
     "http://localhost:8888"
 ]
-LOCAL_SERVERS = [s for s in LOCAL_SERVERS if s]
-
-MODAL_ENDPOINT_URL = os.getenv("MODAL_URL", "https://dakshayaniramanesh--manim-app-generate.modal.run")
+LOCAL_SERVERS = list(dict.fromkeys([s for s in LOCAL_SERVERS if s]))
 
 _PENDING_JOBS: dict[str, dict] = {}
 
@@ -108,11 +112,11 @@ def request_video_generation(
             with open(pdf_path, "rb") as f:
                 pdf_b64 = base64.b64encode(f.read()).decode("ascii")
         resp = requests.post(
-            MODAL_ENDPOINT_URL,
+            MODAL_VIDEO_GENERATE_URL,
             json={
-                "job_id": job_id,
-                "prompt": selected_text,
-                "pdf_bytes": pdf_b64,
+                "user_prompt": selected_text,
+                "pdf_path": "", 
+                "document_text": pdf_b64,
                 "page_range": page_range,
                 "emphasis_note": emphasis_note,
                 "output_type": output_type,

@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from typing import Optional
 from backend.video_generation.models import LatexJob, JobStatus
+from backend.workspace.artifact_store import artifact_store
 
 # Try to import groq
 try:
@@ -401,11 +402,9 @@ class TemplateApplyAgent:
                     f"{job.structured_latex or ''}\n\n"
                     "\\end{document}\n"
                 )
-
             job.final_tex_code = final_tex
-            job.status = JobStatus.DONE
             job.step = "LaTeX Generated"
-            job.progress_percentage = 100
+            job.progress_percentage = 60
         except Exception as e:
             job.status = JobStatus.ERROR
             job.error_message = f"Template apply failed: {str(e)}"
@@ -427,6 +426,7 @@ class TectonicCompileAgent:
             return job
 
         # Create a temporary directory for the build
+        import shutil
         temp_dir = tempfile.mkdtemp()
         tex_path = os.path.join(temp_dir, "document.tex")
         pdf_path = os.path.join(temp_dir, "document.pdf")
@@ -477,20 +477,27 @@ class TectonicCompileAgent:
                 job.has_build_error = False
                 job.build_error_trace = None
                 
-                # Copy the PDF to tempdir for FastAPI serving
-                import shutil
-                final_pdf_path = os.path.join(tempfile.gettempdir(), f"{job.job_id}.pdf")
-                if os.path.exists(pdf_path):
-                    shutil.copy2(pdf_path, final_pdf_path)
+                # Copy the PDF to tempdir or artifact store for serving
+                try:
+                    final_pdf_path = artifact_store.put(job.job_id, "document.pdf", pdf_path)
                     job.pdf_path = final_pdf_path
+                except Exception:
+                    final_pdf_path = os.path.join(tempfile.gettempdir(), f"{job.job_id}.pdf")
+                    if os.path.exists(pdf_path):
+                        shutil.copy2(pdf_path, final_pdf_path)
+                        job.pdf_path = final_pdf_path
                 
                 job.status = JobStatus.DONE
                 job.progress_percentage = 100
                 print(f"[{job.job_id}] PDF compiled successfully: {job.pdf_path}")
         except Exception as e:
             print(f"[{job.job_id}] Compilation process notice: {e}")
-            # Ensure LaTeX code is still delivered to user
             job.status = JobStatus.DONE
             job.progress_percentage = 100
+        finally:
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
 
         return job
