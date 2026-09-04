@@ -36,7 +36,7 @@ class GraphExtractor:
         )
 
 
-        models = ["gemini-3.5-flash-lite"]
+        models = ["gemini-3.5-flash"]
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json"}

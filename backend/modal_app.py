@@ -52,7 +52,7 @@ artifact_volume = modal.Volume.from_name("manim-artifacts-vol", create_if_missin
 secrets = [modal.Secret.from_dotenv()]
 
 
-@app.function(image=manim_image, gpu="A10G", timeout=600, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
+@app.function(image=manim_image, gpu="A10G", timeout=1800, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 def _process_generation_job(job_dict: Dict[str, Any], pdf_bytes: bytes) -> Dict[str, Any]:
     from backend.video_generation.models import VideoJob, BoardSelection
     from backend.video_generation.graph import VideoGenerationPipeline

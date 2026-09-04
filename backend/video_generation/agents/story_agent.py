@@ -102,7 +102,7 @@ class StoryAgent:
                 if self.google_api_key:
                     genai.configure(api_key=self.google_api_key)
                     # Try preferred model, fall back to stable alternative
-                    for model_name in ["gemini-3.5-flash-lite", "gemini-1.5-flash"]:
+                    for model_name in ["gemini-3.5-flash", "gemini-1.5-flash"]:
                         try:
                             self.gemini_model = genai.GenerativeModel(model_name)
                             self._gemini_model_name = model_name

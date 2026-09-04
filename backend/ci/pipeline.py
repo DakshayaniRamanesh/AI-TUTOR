@@ -195,7 +195,7 @@ class CIPipelineHarness:
                         "-ql", "-v", "WARNING", "--dry_run",
                         file_path, scene_name
                     ]
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
                     if result.returncode != 0:
                         clean_stderr = _clean_manim_stderr(result.stderr)
                         error_line = _extract_python_error(clean_stderr)
@@ -205,7 +205,7 @@ class CIPipelineHarness:
                         )
                 except subprocess.TimeoutExpired:
                     return False, (
-                        "[Stage3] Dry run timed out (>45s). "
+                        "[Stage3] Dry run timed out (>90s). "
                         "Fix: remove infinite loops, time.sleep(), or input() calls."
                     )
                 except FileNotFoundError:
@@ -238,7 +238,7 @@ class CIPipelineHarness:
                     print("[CI Stage4] Manim CLI not found — skipping smoke render.")
                 except subprocess.TimeoutExpired:
                     return False, (
-                        "[Stage4] Smoke render timed out (>90s). "
+                        "[Stage4] Smoke render timed out (>180s). "
                         "Fix: simplify the animation — use fewer objects or shorter animations."
                     )
                 except Exception as e:

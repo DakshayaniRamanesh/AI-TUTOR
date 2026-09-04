@@ -254,7 +254,7 @@ class BoardUnderstandingAgent:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=google_key)
-                model = genai.GenerativeModel("gemini-3.5-flash-lite")
+                model = genai.GenerativeModel("gemini-3.5-flash")
                 prompt = (
                     "Analyze this selected smart-whiteboard region for a tutoring system. "
                     "Identify visible handwriting, equations, diagrams, arrows, labels, and the likely concept. "

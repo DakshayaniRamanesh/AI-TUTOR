@@ -89,23 +89,40 @@ class SettingsDialog(QDialog):
         button.setEnabled(False)
         status_lbl.setText("")
         
-        from PyQt6.QtWidgets import QApplication
-        QApplication.processEvents()
-        
         backend_url = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('PORT', '8000')}").rstrip("/")
-        try:
-            resp = requests.get(f"{backend_url}{endpoint}", timeout=10)
-            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            if resp.status_code == 200 and data.get("status") == "ok":
-                status_lbl.setText("✓")
-                status_lbl.setToolTip(data.get("message", "Connected successfully"))
-            else:
-                msg = data.get("message", f"HTTP {resp.status_code}: {resp.text}")
+        
+        from PyQt6.QtCore import QThread, pyqtSignal
+        class TestWorker(QThread):
+            result = pyqtSignal(object, object, object)
+            def run(self):
+                try:
+                    resp = requests.get(f"{backend_url}{endpoint}", timeout=10)
+                    data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                    self.result.emit(resp.status_code, data, None)
+                except Exception as e:
+                    self.result.emit(None, None, str(e))
+                    
+        worker = TestWorker(self)
+        if not hasattr(self, "_workers"):
+            self._workers = []
+        self._workers.append(worker)
+        
+        def on_result(status_code, data, error):
+            if error:
                 status_lbl.setText("✕")
-                status_lbl.setToolTip(msg)
-        except Exception as e:
-            status_lbl.setText("✕")
-            status_lbl.setToolTip(f"Connection failed: {str(e)}")
-        finally:
+                status_lbl.setToolTip(f"Connection failed: {error}")
+            else:
+                if status_code == 200 and data.get("status") == "ok":
+                    status_lbl.setText("✓")
+                    status_lbl.setToolTip(data.get("message", "Connected successfully"))
+                else:
+                    msg = data.get("message", f"HTTP {status_code}")
+                    status_lbl.setText("✕")
+                    status_lbl.setToolTip(msg)
             button.setText("TEST")
             button.setEnabled(True)
+            if worker in self._workers:
+                self._workers.remove(worker)
+                
+        worker.result.connect(on_result)
+        worker.start()

@@ -5,7 +5,7 @@ from backend.video_generation.models import VideoJob, JobStatus
 class NotesGeneratorAgent:
     def __init__(self):
         # Assumes GOOGLE_API_KEY is already set in your environment
-        self.model = genai.GenerativeModel('gemini-3.5-flash-lite')
+        self.model = genai.GenerativeModel('gemini-3.5-flash')
 
     def run(self, job: VideoJob) -> VideoJob:
         job.step = "notes_generator"

@@ -41,6 +41,8 @@ Rules:
 - list items go in items.
 - no Markdown fences.
 - do not invent source content in transcription mode.
+- IMPORTANT: In 'paragraph' and 'list' blocks, ALL inline math must be wrapped in $...$.
+- IMPORTANT: Escape special LaTeX text characters (like \_ and \&) outside of math mode.
 
 Template: {template_type}
 Raw transcription:
@@ -94,7 +96,7 @@ class LatexTranscribeAgent:
 
     def __init__(self):
         self.api_key = os.getenv("GOOGLE_API_KEY")
-        self.model_name = os.getenv("GEMINI_VISION_MODEL", "gemini-3.5-flash-lite")
+        self.model_name = os.getenv("GEMINI_VISION_MODEL", "gemini-3.5-flash")
 
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Transcribing Handwriting"
@@ -121,7 +123,9 @@ class LatexTranscribeAgent:
             prompt = (
                 "Faithfully transcribe the handwritten math and text. Preserve ordering "
                 "and mathematical notation. Return plain transcription/LaTeX fragments only; "
-                "do not solve or expand the content."
+                "do not solve or expand the content. "
+                "IMPORTANT: Make sure ALL inline math is wrapped in $...$ and block math in $$...$$. "
+                "Escape normal text underscores as \\_ to prevent LaTeX errors."
             )
             response = model.generate_content(
                 [prompt, {"mime_type": "image/png", "data": image_bytes}]
@@ -144,7 +148,7 @@ class LatexStructureAgent:
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
         self.groq_model = os.getenv("GROQ_TEXT_MODEL", "qwen/qwen3.8-27b")
-        self.gemini_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.5-flash-lite")
+        self.gemini_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.5-flash")
 
     def _call_groq(self, prompt: str) -> str:
         if not self.groq_api_key or Groq is None:

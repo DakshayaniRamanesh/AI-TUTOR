@@ -132,7 +132,7 @@ class PdfRAGManager:
 
         # Call Gemini API
         if GOOGLE_API_KEY:
-            models = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]
+            models = ["gemini-3.5-flash"]
             payload = {"contents": [{"parts": [{"text": prompt}]}]}
             for model in models:
                 try:
@@ -180,7 +180,7 @@ class PdfRAGManager:
         )
 
         if GOOGLE_API_KEY:
-            for m in ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]:
+            for m in ["gemini-3.5-flash"]:
                 try:
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={GOOGLE_API_KEY}"
                     payload = {"contents": [{"parts": [{"text": prompt}]}]}

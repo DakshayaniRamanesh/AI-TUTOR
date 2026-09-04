@@ -35,7 +35,9 @@ class StoryboardPlannerAgent:
         context = job.metadata.get("teaching_context", {})
         prompt = f"""You are designing the most efficient visual storyboard for a smart-whiteboard tutor.
 The output is NOT Python. Use only the declarative scene vocabulary below.
-Create at least one scene per TeachingStep to animate the rule and transition. Every scene must teach something; avoid decorative filler.
+Create the SHORTEST sufficient lesson: normally 2-4 scenes total. Merge related TeachingSteps when possible.
+Every scene must teach something; avoid decorative filler.
+PERFORMANCE BUDGET: max 12 objects and 20 actions per scene. Prefer transforms/highlights of existing objects over creating duplicates.
 
 TEXT RULES:
 - SEPARATE NARRATION: 'narration' is spoken aloud. Visible text (e.g., AskQuestion, RevealRule) must be extremely concise. Do not dump the narration onto the screen.
@@ -115,7 +117,7 @@ Return ONLY JSON in this exact structure:
             return []
 
         out: List[SceneSpec] = []
-        for idx, raw in enumerate(raw_scenes[:6]):
+        for idx, raw in enumerate(raw_scenes[:4]):
             if not isinstance(raw, dict):
                 continue
 
@@ -131,7 +133,7 @@ Return ONLY JSON in this exact structure:
                     value = f"obj_{value}"
                 return value
 
-            for obj_idx, obj in enumerate(raw.get("objects", [])[:24]):
+            for obj_idx, obj in enumerate(raw.get("objects", [])[:12]):
                 if not isinstance(obj, dict):
                     continue
                 obj_type = str(obj.get("type", "text"))
@@ -163,7 +165,7 @@ Return ONLY JSON in this exact structure:
 
                 if obj_type == "term_equation":
                     clean_terms = []
-                    for term_idx, term in enumerate(obj.get("terms", [])[:24]):
+                    for term_idx, term in enumerate(obj.get("terms", [])[:12]):
                         if not isinstance(term, dict):
                             continue
                         tid = clean_id(term.get("id"), f"{oid}_term_{term_idx}")
@@ -182,7 +184,7 @@ Return ONLY JSON in this exact structure:
                 continue
 
             actions: List[Dict[str, Any]] = []
-            for action in raw.get("actions", [])[:40]:
+            for action in raw.get("actions", [])[:20]:
                 if not isinstance(action, dict):
                     continue
                 atype = str(action.get("type", "create"))
@@ -287,7 +289,7 @@ Return ONLY JSON in this exact structure:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.google_api_key)
-                response = genai.GenerativeModel("gemini-3.5-flash-lite").generate_content(prompt)
+                response = genai.GenerativeModel("gemini-3.5-flash").generate_content(prompt)
                 text = response.text if response else ""
                 if text:
                     print("[StoryboardPlannerAgent] Gemini JSON generation succeeded")

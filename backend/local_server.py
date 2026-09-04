@@ -389,7 +389,7 @@ async def serve_pdf(filename: str):
     return JSONResponse({"error": "PDF file not found"}, status_code=404)
 
 @app.get("/api/diagnostics/groq")
-async def test_groq():
+def test_groq():
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key or api_key.startswith("your_"):
         return JSONResponse({"status": "error", "message": "GROQ_API_KEY is not configured (placeholder detected in backend/.env)"}, status_code=400)
@@ -406,7 +406,7 @@ async def test_groq():
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 @app.get("/api/diagnostics/gemini")
-async def test_gemini():
+def test_gemini():
     api_key = os.getenv("GOOGLE_API_KEY", "").strip()
     if not api_key or api_key.startswith("your_"):
         return JSONResponse({"status": "error", "message": "GOOGLE_API_KEY is not configured (placeholder detected in backend/.env)"}, status_code=400)
@@ -415,7 +415,7 @@ async def test_gemini():
         genai.configure(api_key=api_key)
         # Try available Gemini models
         last_err = None
-        for m in ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.5-flash-lite']:
+        for m in ['gemini-3.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash']:
             try:
                 model = genai.GenerativeModel(m)
                 resp = model.generate_content("Ping")
@@ -428,7 +428,7 @@ async def test_gemini():
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 @app.get("/api/diagnostics/tectonic")
-async def test_tectonic():
+def test_tectonic():
     import shutil
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     local_tectonic = os.path.join(project_root, "tectonic.exe")

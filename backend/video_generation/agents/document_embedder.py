@@ -62,7 +62,7 @@ TEXT:
 {combined_text}
 """
         try:
-            model = genai.GenerativeModel('gemini-3.5-flash-lite')
+            model = genai.GenerativeModel('gemini-3.5-flash')
             response = model.generate_content(prompt)
             raw_json = response.text.strip()
             if raw_json.startswith("```json"):

@@ -160,13 +160,7 @@ class FeatherAIButton(QWidget):
         svg_path = os.path.join(assets_dir, svg_filename)
 
         if os.path.exists(svg_path):
-            renderer = QSvgRenderer(svg_path)
-            pixmap = QPixmap(36, 36)
-            pixmap.fill(Qt.GlobalColor.transparent)
-            painter = QPainter(pixmap)
-            renderer.render(painter)
-            painter.end()
-            self.btn_feather.setIcon(QIcon(pixmap))
+            self.btn_feather.setIcon(QIcon(svg_path))
         else:
             png_filename = "feather_icon_dark.png" if is_dark else "feather_icon_light.png"
             png_path = os.path.join(assets_dir, png_filename)

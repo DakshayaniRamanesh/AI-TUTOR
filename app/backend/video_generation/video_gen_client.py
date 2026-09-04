@@ -133,15 +133,16 @@ class ManimVideoPollWorker(QThread):
         self._running = False
 
     def run(self):
-        # 240 * 1.5 s = 6 minutes. Long enough for a real render without leaving
-        # a dead poller alive for 30 minutes.
-        max_attempts = 240
+        # UI polling must outlive the backend render deadline.
+        poll_interval_ms = int(os.getenv("VIDEO_POLL_INTERVAL_MS", "1500"))
+        poll_timeout_seconds = int(os.getenv("VIDEO_POLL_TIMEOUT_SECONDS", "1200"))
+        max_attempts = max(1, (poll_timeout_seconds * 1000) // poll_interval_ms)
         request_failures = 0
 
         for attempt in range(1, max_attempts + 1):
             if not self._running:
                 return
-            self.msleep(1500)
+            self.msleep(poll_interval_ms)
 
             try:
                 r = requests.get(self.status_url, timeout=4)

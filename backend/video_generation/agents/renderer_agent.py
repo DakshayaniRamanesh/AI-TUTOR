@@ -19,6 +19,10 @@ from backend.video_generation.models import JobStatus, VideoJob
 from backend.workspace.artifact_store import artifact_store
 
 
+MANIM_RENDER_TIMEOUT_SECONDS = int(os.getenv("MANIM_RENDER_TIMEOUT_SECONDS", "900"))
+MANIM_LOW_RENDER_TIMEOUT_SECONDS = int(os.getenv("MANIM_LOW_RENDER_TIMEOUT_SECONDS", "300"))
+
+
 def _find_mp4(media_dir: str) -> str | None:
     candidates: list[str] = []
     for root, dirs, filenames in os.walk(media_dir):
@@ -75,13 +79,19 @@ class RendererAgent:
                 script_path,
                 media_dir,
                 quality="-qm",
-                timeout=300,
+                timeout=MANIM_RENDER_TIMEOUT_SECONDS,
                 scene_name="MainScene",
             )
             job.render_quality = "medium"
 
             # A production-quality failure can still be recoverable at low
             # quality; this is a single bounded fallback, not another loop.
+            if not ok and str(output).startswith("Render timed out"):
+                # Do not throw away a long render and immediately restart it.
+                job.status = JobStatus.ERROR
+                job.error_message = str(output)
+                return job
+
             if not ok:
                 print(f"[RendererAgent] Medium render failed; one low-quality fallback: {output[:200]}")
                 low_dir = os.path.join(temp_dir, "media_ql")
@@ -89,7 +99,7 @@ class RendererAgent:
                     script_path,
                     low_dir,
                     quality="-ql",
-                    timeout=180,
+                    timeout=MANIM_LOW_RENDER_TIMEOUT_SECONDS,
                     scene_name="MainScene",
                 )
                 job.render_quality = "low"

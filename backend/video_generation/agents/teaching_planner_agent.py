@@ -161,7 +161,7 @@ Return ONLY JSON matching this format:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.google_api_key)
-                response = genai.GenerativeModel("gemini-3.5-flash-lite").generate_content(prompt)
+                response = genai.GenerativeModel("gemini-3.5-flash").generate_content(prompt)
                 text = response.text if response else ""
                 if text:
                     print("[TeachingPlannerAgent] Gemini JSON generation succeeded")
