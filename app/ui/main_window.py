@@ -895,15 +895,10 @@ class MainWindow(QMainWindow):
         self.lbl_save_status.setVisible(False)
         layout.addWidget(self.lbl_save_status)
 
-        # ── Mobile Sync Live Indicator ────────────────────────────────────────
-        self.lbl_mobile_sync = QLabel("Mobile Sync Active", tb)
-        self.lbl_mobile_sync.setStyleSheet(
-            f"font-size: 10px; color: #10b981; font-weight: 600; "
-            f"font-family: {MONO_FONT}; letter-spacing: 0.5px; padding: 2px 6px; "
-            f"border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 2px; background: rgba(16, 185, 129, 0.06);"
-        )
-        self.lbl_mobile_sync.setToolTip("Mobile App Connected • Uploads appear live on this canvas")
-        layout.addWidget(self.lbl_mobile_sync)
+        # ── Small Simple Mobile Sync Button ───────────────────────────────────
+        self.btn_mobile_sync = self._make_toolbar_btn('ri.smartphone-line', "Mobile", tb, '#10b981', "Mobile Companion Sync • Click for QR Code & Status")
+        self.btn_mobile_sync.clicked.connect(self._show_mobile_sync_dialog)
+        layout.addWidget(self.btn_mobile_sync)
 
         self.btn_save = self._make_toolbar_btn('ri.save-line', "Save", tb, None, "Save Notebook (Ctrl+S)")
         self.btn_save.setStyleSheet(primary_button_qss(c))
@@ -1753,9 +1748,9 @@ class MainWindow(QMainWindow):
                 self._do_autosave()
                 last_title = processed[-1].get("title", "Item")
                 self._set_save_status(f"Mobile Synced: {last_title}", clear_after_ms=4000)
-                if hasattr(self, 'lbl_mobile_sync'):
-                    self.lbl_mobile_sync.setText(f" Synced: {synced_count} New")
-                    QTimer.singleShot(4000, lambda: self.lbl_mobile_sync.setText(" Mobile Sync"))
+                if hasattr(self, 'btn_mobile_sync'):
+                    self.btn_mobile_sync.setText(f"Mobile ({synced_count})")
+                    QTimer.singleShot(4000, lambda: self.btn_mobile_sync.setText("Mobile"))
 
                 # Archive processed to history
                 history = []
@@ -1776,6 +1771,137 @@ class MainWindow(QMainWindow):
 
         except Exception as err:
             print(f"[MainWindow] Notice processing mobile sync: {err}")
+
+    def _show_mobile_sync_dialog(self):
+        """Displays the sleek mobile sync status and QR code popup dialog."""
+        import socket
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QApplication
+        from PyQt6.QtGui import QPixmap, QDesktopServices
+        from PyQt6.QtCore import QUrl, Qt
+
+        c = ThemeManager.instance().get_colors()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Kestrel Mobile Companion Sync")
+        dlg.setFixedWidth(380)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 8px;
+            }}
+            QLabel {{
+                color: {c['text_primary']};
+                font-family: {MONO_FONT};
+            }}
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        # Header
+        h_row = QHBoxLayout()
+        icon_lbl = QLabel(dlg)
+        icon_lbl.setPixmap(qta.icon('ri.smartphone-line', color="#10b981").pixmap(22, 22))
+        h_row.addWidget(icon_lbl)
+
+        title_lbl = QLabel("Mobile Companion Sync", dlg)
+        title_lbl.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {c['text_primary']};")
+        h_row.addWidget(title_lbl)
+        h_row.addStretch()
+
+        badge_lbl = QLabel("ONLINE", dlg)
+        badge_lbl.setStyleSheet("""
+            background-color: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+            font-size: 10px;
+            font-weight: bold;
+            padding: 3px 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(16, 185, 129, 0.4);
+        """)
+        h_row.addWidget(badge_lbl)
+        layout.addLayout(h_row)
+
+        desc_lbl = QLabel(
+            "Scan this QR code with your iPhone or Android camera to open Kestrel Mobile on Wi-Fi.\n"
+            "Any photo scan or PDF uploaded in mobile drops directly onto this canvas.",
+            dlg
+        )
+        desc_lbl.setWordWrap(True)
+        desc_lbl.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']}; line-height: 1.4;")
+        layout.addWidget(desc_lbl)
+
+        # QR Code Display
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        qr_path = os.path.join(base_dir, "mobile_app", "assets", "mobile_qr.png")
+
+        if os.path.exists(qr_path):
+            qr_frame = QFrame(dlg)
+            qr_frame.setStyleSheet(f"background: #ffffff; border-radius: 8px; padding: 6px; border: 1px solid {c['border_color']};")
+            qr_layout = QVBoxLayout(qr_frame)
+            qr_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            qr_layout.setContentsMargins(8, 8, 8, 8)
+            qr_lbl = QLabel(qr_frame)
+            qr_pix = QPixmap(qr_path).scaled(160, 160, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            qr_lbl.setPixmap(qr_pix)
+            qr_layout.addWidget(qr_lbl)
+            layout.addWidget(qr_frame, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Network URL info
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            lan_ip = "127.0.0.1"
+        lan_url = f"http://{lan_ip}:8550"
+
+        url_box = QFrame(dlg)
+        url_box.setStyleSheet(f"background: {c['bg_subtle']}; border: 1px solid {c['border_color']}; border-radius: 4px; padding: 6px;")
+        url_layout = QHBoxLayout(url_box)
+        url_layout.setContentsMargins(6, 4, 6, 4)
+        url_lbl = QLabel(lan_url, url_box)
+        url_lbl.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {c['text_primary']};")
+        url_layout.addWidget(url_lbl)
+        url_layout.addStretch()
+
+        btn_copy = QPushButton("Copy", url_box)
+        btn_copy.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_copy.setStyleSheet(f"background: transparent; color: #3b82f6; border: none; font-size: 11px; font-weight: bold;")
+        btn_copy.clicked.connect(lambda: [QApplication.clipboard().setText(lan_url), btn_copy.setText("Copied!")])
+        url_layout.addWidget(btn_copy)
+        layout.addWidget(url_box)
+
+        # Status Summary
+        board_title = self.current_board.title if hasattr(self, 'current_board') and self.current_board else "Canvas"
+        items_cnt = len(self.scene.items()) if hasattr(self, 'scene') and self.scene else 0
+        info_lbl = QLabel(f"Active Canvas: {board_title} • {items_cnt} items on screen", dlg)
+        info_lbl.setStyleSheet(f"font-size: 10px; color: {c['text_secondary']};")
+        layout.addWidget(info_lbl)
+
+        # Action Buttons
+        btn_row = QHBoxLayout()
+        btn_sync_now = QPushButton("Sync Now", dlg)
+        btn_sync_now.setIcon(qta.icon('ri.refresh-line', color=c['text_primary']))
+        btn_sync_now.setStyleSheet(ghost_button_qss(c))
+        btn_sync_now.clicked.connect(lambda: [self._process_mobile_inbox(), btn_sync_now.setText("Processed!")])
+        btn_row.addWidget(btn_sync_now)
+
+        btn_open_web = QPushButton("Open in Browser", dlg)
+        btn_open_web.setIcon(qta.icon('ri.external-link-line', color="#ffffff"))
+        btn_open_web.setStyleSheet(primary_button_qss(c))
+        btn_open_web.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(lan_url)))
+        btn_row.addWidget(btn_open_web)
+
+        btn_close = QPushButton("Close", dlg)
+        btn_close.setStyleSheet(ghost_button_qss(c))
+        btn_close.clicked.connect(dlg.accept)
+        btn_row.addWidget(btn_close)
+
+        layout.addLayout(btn_row)
+        dlg.exec()
 
 
     def _on_load_notebook_requested(self, notebook_id: str):
