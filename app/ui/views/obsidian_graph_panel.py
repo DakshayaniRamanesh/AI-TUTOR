@@ -168,32 +168,37 @@ class ObsidianGraphPanel(QWidget):
         panel = QWidget(self.splitter)
         panel.setObjectName("InspectorPanel")
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
 
         # Header Badge
         h_box = QHBoxLayout()
         self.lbl_insp_badge = QLabel("NODE INSPECTOR", panel)
+        self.lbl_insp_badge.setObjectName("lbl_insp_badge")
         h_box.addWidget(self.lbl_insp_badge)
         h_box.addStretch()
         self.lbl_insp_status = QLabel("● Grounded", panel)
+        self.lbl_insp_status.setObjectName("lbl_insp_status")
         h_box.addWidget(self.lbl_insp_status)
         layout.addLayout(h_box)
 
         # Title & Subtitle
         self.lbl_node_title = QLabel("Select a concept...", panel)
+        self.lbl_node_title.setObjectName("lbl_node_title")
         self.lbl_node_title.setWordWrap(True)
         layout.addWidget(self.lbl_node_title)
 
-        self.lbl_node_subtitle = QLabel("Knowledge Graph Concept", panel)
+        self.lbl_node_subtitle = QLabel("Knowledge Graph Node", panel)
+        self.lbl_node_subtitle.setObjectName("lbl_node_subtitle")
         layout.addWidget(self.lbl_node_subtitle)
 
-        # Formula / Core Snippet Box
+        # Formula / Core Notation Box (Clean, borderless with left accent)
         self.box_formula = QFrame(panel)
         self.box_formula.setObjectName("FormulaBox")
         fb_layout = QVBoxLayout(self.box_formula)
-        fb_layout.setContentsMargins(10, 10, 10, 10)
+        fb_layout.setContentsMargins(12, 10, 12, 10)
         self.lbl_formula = QLabel("∀ x ∈ Concept: f(x) → L", self.box_formula)
+        self.lbl_formula.setObjectName("lbl_formula")
         fb_layout.addWidget(self.lbl_formula)
         layout.addWidget(self.box_formula)
 
@@ -203,29 +208,41 @@ class ObsidianGraphPanel(QWidget):
             "interconnected relationships, and derivations.",
             panel
         )
+        self.lbl_concept_desc.setObjectName("lbl_concept_desc")
         self.lbl_concept_desc.setWordWrap(True)
         layout.addWidget(self.lbl_concept_desc)
 
-        # Metadata Details Table
+        # Clean Key-Value Details (Borderless, Modern Stat Rows)
         self.meta_frame = QFrame(panel)
         self.meta_frame.setObjectName("MetaFrame")
         mf_layout = QVBoxLayout(self.meta_frame)
-        mf_layout.setContentsMargins(10, 10, 10, 10)
-        mf_layout.setSpacing(6)
+        mf_layout.setContentsMargins(0, 8, 0, 8)
+        mf_layout.setSpacing(8)
 
-        self.lbl_meta_connections = QLabel("Direct Connections:    0 Edges", self.meta_frame)
-        self.lbl_meta_type = QLabel("Concept Classification: Core Hub", self.meta_frame)
-        self.lbl_meta_confidence = QLabel("Extraction Confidence:  99.8%", self.meta_frame)
+        def make_stat_row(label_text: str):
+            row = QHBoxLayout()
+            lbl_key = QLabel(label_text, self.meta_frame)
+            lbl_key.setObjectName("StatKey")
+            lbl_val = QLabel("—", self.meta_frame)
+            lbl_val.setObjectName("StatVal")
+            lbl_val.setAlignment(Qt.AlignmentFlag.AlignRight)
+            row.addWidget(lbl_key)
+            row.addStretch()
+            row.addWidget(lbl_val)
+            mf_layout.addLayout(row)
+            return lbl_val
 
-        mf_layout.addWidget(self.lbl_meta_connections)
-        mf_layout.addWidget(self.lbl_meta_type)
-        mf_layout.addWidget(self.lbl_meta_confidence)
+        self.lbl_val_connections = make_stat_row("Direct Connections")
+        self.lbl_val_type = make_stat_row("Classification")
+        self.lbl_val_confidence = make_stat_row("Confidence Score")
+
         layout.addWidget(self.meta_frame)
 
         layout.addStretch()
 
         # Action Button
         self.btn_open_board = QPushButton("Drill Down Into Concept", panel)
+        self.btn_open_board.setObjectName("btn_open_board")
         self.btn_open_board.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_open_board.clicked.connect(self._on_drill_down_clicked)
         layout.addWidget(self.btn_open_board)
@@ -680,7 +697,16 @@ class ObsidianGraphPanel(QWidget):
 
         self.selected_node_name = name
         self.lbl_node_title.setText(name)
-        self.lbl_node_subtitle.setText(f"Type: {node.type.capitalize()} • Knowledge Map")
+
+        type_display = {
+            "subject": "Subject Domain",
+            "board": "Notebook Board",
+            "tag": "Topic Category",
+            "note": "Document Note",
+            "concept": "Concept Node"
+        }.get(node.type, node.type.capitalize())
+
+        self.lbl_node_subtitle.setText(f"Type: {type_display} • Knowledge Graph")
 
         # Formula / Definition text
         self.lbl_formula.setText(f"∀ x ∈ {name}: f(x) → L")
@@ -688,15 +714,16 @@ class ObsidianGraphPanel(QWidget):
 
         # Connection counts
         conns = sum(1 for e in self.all_edges if e.source_name == name or e.target_name == name)
-        self.lbl_meta_connections.setText(f"Direct Connections:    {conns} Edges")
-        self.lbl_meta_type.setText(f"Classification:        {node.type.capitalize()}")
-        self.lbl_meta_confidence.setText("Confidence Score:      99.8%")
+        self.lbl_val_connections.setText(f"{conns} {'Edge' if conns == 1 else 'Edges'}")
+        self.lbl_val_type.setText(type_display)
+        self.lbl_val_confidence.setText("99.8%")
         self.btn_open_board.setText(f"Drill Down Into '{name}'")
 
     # ── Theme Application ─────────────────────────────────────────────────
 
     def _apply_theme(self, theme_name: str = "light"):
         c = ThemeManager.instance().get_colors()
+        is_dark = ThemeManager.instance().is_dark()
 
         self.setStyleSheet(f"background-color: {c['bg_app']}; color: {c['text_primary']};")
         self.header_bar.setStyleSheet(f"""
@@ -708,8 +735,8 @@ class ObsidianGraphPanel(QWidget):
                 background-color: {c['bg_card']};
                 color: {c['text_primary']};
                 border: 1px solid {c['border_color']};
-                border-radius: 2px;
-                padding: 4px 10px;
+                border-radius: 4px;
+                padding: 5px 12px;
                 font-family: {MONO_FONT};
                 font-size: 11px;
                 font-weight: 600;
@@ -727,8 +754,8 @@ class ObsidianGraphPanel(QWidget):
                 background-color: {c['bg_card']};
                 color: {c['text_primary']};
                 border: 1px solid {c['border_color']};
-                border-radius: 2px;
-                padding: 4px 8px;
+                border-radius: 4px;
+                padding: 5px 10px;
                 font-family: {MONO_FONT};
                 font-size: 11px;
             }}
@@ -748,11 +775,11 @@ class ObsidianGraphPanel(QWidget):
                 color: {c['text_secondary']};
                 background: {c['bg_app']};
                 border-top: 1px solid {c['border_color']};
-                padding: 4px 12px;
+                padding: 5px 14px;
             }}
         """)
 
-        # Inspector Panel Styling
+        # Clean Borderless Inspector Panel Styling
         self.inspector_panel.setStyleSheet(f"""
             QWidget#InspectorPanel {{
                 background-color: {c['bg_card']};
@@ -765,31 +792,43 @@ class ObsidianGraphPanel(QWidget):
                 letter-spacing: 1.5px;
                 color: {c['text_secondary']};
             }}
+            QLabel#lbl_insp_status {{
+                font-family: {MONO_FONT};
+                font-size: 10px;
+                font-weight: 600;
+                color: #10b981;
+            }}
             QFrame#FormulaBox {{
                 background-color: {c['panel_card_bg']};
-                border: 1px solid {c['border_color']};
-                border-radius: 2px;
+                border: none;
+                border-left: 3px solid {c['accent']};
+                border-radius: 4px;
             }}
-            QFrame#FormulaBox QLabel {{
+            QFrame#FormulaBox QLabel#lbl_formula {{
                 font-family: {MONO_FONT};
                 font-size: 11px;
                 font-weight: bold;
-                color: {c['accent'] if not ThemeManager.instance().is_dark() else '#60a5fa'};
+                color: {c['text_primary']};
             }}
             QFrame#MetaFrame {{
-                background-color: {c['panel_card_bg']};
-                border: 1px solid {c['border_color']};
-                border-radius: 2px;
+                background-color: transparent;
+                border: none;
             }}
-            QFrame#MetaFrame QLabel {{
+            QLabel#StatKey {{
                 font-family: {MONO_FONT};
-                font-size: 10px;
+                font-size: 11px;
                 color: {c['text_secondary']};
+            }}
+            QLabel#StatVal {{
+                font-family: {MONO_FONT};
+                font-size: 11px;
+                font-weight: 700;
+                color: {c['text_primary']};
             }}
         """)
 
         self.lbl_node_title.setStyleSheet(f"""
-            font-size: 18px;
+            font-size: 20px;
             font-weight: 800;
             color: {c['text_primary']};
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -805,7 +844,8 @@ class ObsidianGraphPanel(QWidget):
         self.lbl_concept_desc.setStyleSheet(f"""
             font-size: 12px;
             line-height: 1.5;
-            color: {c['text_primary']};
+            color: {c['text_secondary']};
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         """)
 
         self.btn_open_board.setStyleSheet(primary_button_qss(c))
