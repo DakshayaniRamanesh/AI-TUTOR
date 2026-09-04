@@ -317,9 +317,28 @@ async def compile_pdf(payload: dict):
     if not latex_code:
         return JSONResponse({"status": "error", "message": "No LaTeX code provided."}, status_code=400)
 
+    import shutil
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     local_tectonic = os.path.join(project_root, "tectonic.exe")
-    tectonic_cmd = local_tectonic if os.path.exists(local_tectonic) else "tectonic"
+    tectonic_cmd = None
+    if config.TECTONIC_BIN and os.path.isfile(config.TECTONIC_BIN):
+        tectonic_cmd = config.TECTONIC_BIN
+    elif os.path.isfile(local_tectonic):
+        tectonic_cmd = local_tectonic
+    else:
+        tectonic_cmd = shutil.which("tectonic") or shutil.which("tectonic.exe")
+
+    if not tectonic_cmd:
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": (
+                    "Tectonic compiler is not installed. Put tectonic on PATH "
+                    "or set TECTONIC_BIN to the executable path."
+                ),
+            },
+            status_code=503,
+        )
 
     temp_dir = tempfile.mkdtemp()
     tex_path = os.path.join(temp_dir, "document.tex")
@@ -336,7 +355,7 @@ async def compile_pdf(payload: dict):
             cwd=temp_dir,
             capture_output=True,
             text=True,
-            timeout=300
+            timeout=180
         )
         if res.returncode == 0 and os.path.exists(pdf_path):
             with open(pdf_path, "rb") as pf:
@@ -410,9 +429,28 @@ async def test_gemini():
 
 @app.get("/api/diagnostics/tectonic")
 async def test_tectonic():
+    import shutil
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     local_tectonic = os.path.join(project_root, "tectonic.exe")
-    tectonic_cmd = local_tectonic if os.path.exists(local_tectonic) else "tectonic"
+    tectonic_cmd = None
+    if config.TECTONIC_BIN and os.path.isfile(config.TECTONIC_BIN):
+        tectonic_cmd = config.TECTONIC_BIN
+    elif os.path.isfile(local_tectonic):
+        tectonic_cmd = local_tectonic
+    else:
+        tectonic_cmd = shutil.which("tectonic") or shutil.which("tectonic.exe")
+
+    if not tectonic_cmd:
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": (
+                    "Tectonic compiler is not installed. Put tectonic on PATH "
+                    "or set TECTONIC_BIN to the executable path."
+                ),
+            },
+            status_code=503,
+        )
 
     try:
         result = subprocess.run([tectonic_cmd, "--version"], capture_output=True, text=True, timeout=5)

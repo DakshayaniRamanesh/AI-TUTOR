@@ -251,10 +251,19 @@ class NotebookStorage:
             "updated_at": now_str,
             "items": items_data or [],
         }
+        tmp_path = file_path + ".tmp"
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
+            # Large boards contain thousands of stroke points and sometimes base64 images.
+            # Compact JSON cuts autosave allocations and disk I/O substantially.
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+            os.replace(tmp_path, file_path)
         except Exception as err:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
             print(f"[NotebookStorage] ERROR writing notebook {notebook_id} to disk: {err}")
             traceback.print_exc()
             raise

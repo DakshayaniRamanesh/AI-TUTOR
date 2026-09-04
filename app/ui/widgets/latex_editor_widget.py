@@ -110,11 +110,11 @@ class LatexEditorWidget(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
 
-        lbl_preview = QLabel("PDF Page Live Preview (Pure Black & White):", right_container)
+        lbl_preview = QLabel("Approximate Preview (compiled PDF may differ):", right_container)
         lbl_preview.setFont(QFont("-apple-system", 11, QFont.Weight.Bold))
 
         self.preview_browser = QTextBrowser(right_container)
-        self.preview_browser.setOpenExternalLinks(True)
+        self.preview_browser.setOpenExternalLinks(False)
 
         right_layout.addWidget(lbl_preview)
         right_layout.addWidget(self.preview_browser)
@@ -129,7 +129,7 @@ class LatexEditorWidget(QWidget):
         from PyQt6.QtCore import QTimer
         self._update_timer = QTimer(self)
         self._update_timer.setSingleShot(True)
-        self._update_timer.setInterval(300)
+        self._update_timer.setInterval(600)
         self._update_timer.timeout.connect(self.update_preview)
 
     def set_latex_code(self, code: str, title: str = "LaTeX Document"):
@@ -283,11 +283,11 @@ class LatexEditorWidget(QWidget):
             <div class="pdf-page">
                 <div class="pdf-header">
                     <h1>{self.doc_title}</h1>
-                    <div class="meta">PDF Document Live Preview • Pure Black & White Render</div>
+                    <div class="meta">Approximate HTML Preview • Export uses real Tectonic compilation</div>
                 </div>
                 {formatted_body}
                 <div class="pdf-footer">
-                    Page 1 of 1 • PDF Preview Mode (Uncompiled)
+                    Approximate Preview • Not the compiled PDF
                 </div>
             </div>
         </body>
@@ -302,7 +302,7 @@ class LatexEditorWidget(QWidget):
         QTimer.singleShot(1500, lambda: self.btn_copy.setText("📋 Copy Code"))
 
     def confirm_close(self) -> bool:
-        if not self.is_dirty and not self.editor.toPlainText().strip():
+        if not self.is_dirty:
             return True
 
         msg_box = QMessageBox(self)

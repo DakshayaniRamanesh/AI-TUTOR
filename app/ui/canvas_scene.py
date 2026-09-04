@@ -86,6 +86,7 @@ class CanvasScene(QGraphicsScene):
         # Freehand Lasso Tool State
         self._lasso_path_item = None
         self._lasso_points = []
+        self._lasso_painter_path = None
 
         # PenEcho Auto-AI Engine (Post-stroke attention detection)
         # Disabled by default — only the explicit "Ask AI" button (or the user opting
@@ -617,13 +618,13 @@ class CanvasScene(QGraphicsScene):
             event.accept()
         elif self.active_tool == "lasso" and event.button() == Qt.MouseButton.LeftButton:
             self._lasso_points = [(pos.x(), pos.y())]
-            path = QPainterPath()
-            path.moveTo(pos)
+            self._lasso_painter_path = QPainterPath()
+            self._lasso_painter_path.moveTo(pos)
             self._lasso_path_item = QGraphicsPathItem()
             lasso_pen = QPen(QColor("#3b82f6"), 1.5, Qt.PenStyle.DashLine)
             self._lasso_path_item.setPen(lasso_pen)
             self._lasso_path_item.setBrush(QBrush(QColor(59, 130, 246, 25)))
-            self._lasso_path_item.setPath(path)
+            self._lasso_path_item.setPath(self._lasso_painter_path)
             self._lasso_path_item.setZValue(9998)
             self.addItem(self._lasso_path_item)
             event.accept()
@@ -677,11 +678,13 @@ class CanvasScene(QGraphicsScene):
             event.accept()
         elif self.active_tool == "lasso" and self._lasso_path_item and self._lasso_points:
             self._lasso_points.append((pos.x(), pos.y()))
-            path = QPainterPath()
-            path.moveTo(QPointF(self._lasso_points[0][0], self._lasso_points[0][1]))
-            for pt in self._lasso_points[1:]:
-                path.lineTo(QPointF(pt[0], pt[1]))
-            self._lasso_path_item.setPath(path)
+            if self._lasso_painter_path is None:
+                self._lasso_painter_path = QPainterPath()
+                self._lasso_painter_path.moveTo(pos)
+            else:
+                # O(1) incremental update instead of rebuilding the full path every mouse event.
+                self._lasso_painter_path.lineTo(pos)
+            self._lasso_path_item.setPath(self._lasso_painter_path)
             event.accept()
         elif self.active_tool == "shapes" and hasattr(self, '_shape_start_pos') and self._shape_start_pos:
             st = self.active_shape_type
@@ -745,6 +748,7 @@ class CanvasScene(QGraphicsScene):
             if self._lasso_path_item.scene() == self:
                 self.removeItem(self._lasso_path_item)
             self._lasso_path_item = None
+            self._lasso_painter_path = None
             
             if len(self._lasso_points) >= 3:
                 # Find all items enclosed by the lasso polygon
@@ -800,6 +804,9 @@ class CanvasScene(QGraphicsScene):
                 self.addItem(final_item)
                 if self.active_tool == "pen":
                     self._recent_ink_strokes.append(final_item)
+                    self._recent_ink_strokes = [
+                        s for s in self._recent_ink_strokes if s.scene() == self
+                    ][-80:]
                     if self.auto_ai_enabled:
                         self._auto_ai_timer.start(int(self.auto_ai_delay_sec * 1000))
                 self.scene_changed.emit()

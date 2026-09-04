@@ -1,164 +1,231 @@
 """
-Latex Client
-Connects the frontend to the backend LaTeX generation endpoints.
+Desktop LaTeX client.
+
+The local and Modal endpoints use the same JSON contract. A job ID is only
+returned after a backend actually accepts the request.
 """
 
+from __future__ import annotations
+
+import base64
 import os
 import sys
-import uuid
+from urllib.parse import quote
+
 import requests
-import base64
 from PyQt6.QtCore import QThread, pyqtSignal
 
-# Ensure root workspace is on Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
-LOCAL_SERVER_URL = os.getenv("BACKEND_URL", f"http://localhost:{os.getenv('PORT', '8888')}")
-MODAL_ENDPOINT_URL = os.getenv("MODAL_URL", "https://dakshayaniramanesh--manim-app-generate.modal.run")
-# Replace modal url to the specific endpoints for latex if needed. 
-# We'll use local server URL for now, modal fallback can be added if endpoints match.
+from backend.config import (
+    BACKEND_URL,
+    MODAL_LATEX_GENERATE_URL,
+    MODAL_LATEX_STATUS_URL,
+)
 
-def request_latex_generation(image_b64: str, template_type: str,  mode: str = "study", classroom_action: str= "Solve Question") -> str:
-    """
-    Submits a LaTeX generation request.
-    """
-    job_id = f"latex_{uuid.uuid4().hex[:8]}"
-    
-    # 1. Try local server
-    try:
-        resp = requests.post(
-            f"{LOCAL_SERVER_URL}/generate_latex",
-            data={"image_b64": image_b64, "template_type": template_type, "mode": mode, "classroom_action": classroom_action},
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("job_id", job_id)
-    except Exception:
-        pass
 
-    # 2. Try Modal web endpoint if local fails
-    try:
-        # Using the same domain but /generate_latex path 
-        modal_url = MODAL_ENDPOINT_URL.replace("/generate", "/generate_latex")
-        resp = requests.post(
-            modal_url,
-            json={"job_id": job_id, "image_b64": image_b64, "template_type": template_type},
-            timeout=10
-        )
-        if resp.status_code in [200, 201, 202]:
-            data = resp.json()
-            return data.get("job_id", job_id)
-    except Exception as e:
-        print(f"Modal request failed: {e}")
+class LatexSubmissionError(RuntimeError):
+    pass
 
+
+_LATEX_STATUS_ENDPOINTS: dict[str, str] = {}
+
+
+def _register_status(job_id: str, endpoint: str) -> str:
+    if not job_id:
+        raise LatexSubmissionError("Backend accepted the LaTeX request but returned no job_id.")
+    _LATEX_STATUS_ENDPOINTS[job_id] = endpoint
     return job_id
 
 
-def compile_custom_latex_pdf(latex_code: str, target_path: str) -> tuple[bool, str]:
-    """
-    Submits raw LaTeX code to backend /compile_pdf endpoint on demand, and saves the result to target_path.
-    """
+def request_latex_generation(
+    image_b64: str,
+    template_type: str,
+    mode: str = "study",
+    classroom_action: str = "Solve Question",
+) -> str:
+    payload = {
+        "image_b64": image_b64,
+        "template_type": template_type,
+        "mode": mode,
+        "classroom_action": classroom_action,
+    }
+    failures: list[str] = []
+
+    # New local_server.py expects JSON/Pydantic, not multipart form data.
     try:
         resp = requests.post(
-            f"{LOCAL_SERVER_URL}/compile_pdf",
+            f"{BACKEND_URL}/generate_latex",
+            json=payload,
+            timeout=12,
+        )
+        if resp.status_code in (200, 201, 202):
+            data = resp.json()
+            job_id = str(data.get("job_id") or "")
+            endpoint = str(
+                data.get("status_endpoint")
+                or f"{BACKEND_URL}/latex_status/{quote(job_id)}"
+            )
+            return _register_status(job_id, endpoint)
+        failures.append(f"local HTTP {resp.status_code}: {resp.text[:180]}")
+    except Exception as exc:
+        failures.append(f"local: {type(exc).__name__}: {exc}")
+
+    # Modal fallback with all mode fields preserved.
+    try:
+        resp = requests.post(
+            MODAL_LATEX_GENERATE_URL,
+            json=payload,
+            timeout=12,
+        )
+        if resp.status_code in (200, 201, 202):
+            data = resp.json()
+            job_id = str(data.get("job_id") or "")
+            endpoint = str(
+                data.get("status_endpoint")
+                or f"{MODAL_LATEX_STATUS_URL}?job_id={quote(job_id)}"
+            )
+            return _register_status(job_id, endpoint)
+        failures.append(f"modal HTTP {resp.status_code}: {resp.text[:180]}")
+    except Exception as exc:
+        failures.append(f"modal: {type(exc).__name__}: {exc}")
+
+    raise LatexSubmissionError(
+        "LaTeX submission failed on both local and Modal backends. "
+        + " | ".join(failures)
+    )
+
+
+def compile_custom_latex_pdf(latex_code: str, target_path: str) -> tuple[bool, str]:
+    """Compile edited LaTeX through the local backend and save the returned PDF."""
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/compile_pdf",
             json={"latex_code": latex_code},
-            timeout=60
+            timeout=90,
         )
         if resp.status_code == 200:
             data = resp.json()
             pdf_b64 = data.get("pdf_b64")
-            if pdf_b64:
-                pdf_bytes = base64.b64decode(pdf_b64)
-                os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
-                with open(target_path, "wb") as f:
-                    f.write(pdf_bytes)
-                return True, target_path
-            return False, "No PDF data returned from compiler."
-        else:
-            err_msg = resp.json().get("message", "Compilation failed")
-            return False, err_msg
-    except Exception as e:
-        return False, str(e)
+            if not pdf_b64:
+                return False, "No PDF data returned from compiler."
+            pdf_bytes = base64.b64decode(pdf_b64)
+            os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
+            with open(target_path, "wb") as f:
+                f.write(pdf_bytes)
+            return True, target_path
+
+        try:
+            message = resp.json().get("message", "Compilation failed")
+        except Exception:
+            message = resp.text[:500] or "Compilation failed"
+        return False, message
+    except Exception as exc:
+        return False, str(exc)
 
 
 class LatexPollWorker(QThread):
-    """
-    Background worker that polls the LaTeX generation pipeline asynchronously.
-    """
-    status_updated = pyqtSignal(str, str, int) # job_id, stage, progress_percent
-    pdf_ready = pyqtSignal(str, str, str)      # job_id, pdf_url (if local), pdf_b64 (if modal)
-    latex_ready = pyqtSignal(str, str)         # job_id, latex_code
-    pdf_failed = pyqtSignal(str, str)          # job_id, error_message
+    status_updated = pyqtSignal(str, str, int)
+    pdf_ready = pyqtSignal(str, str, str)
+    latex_ready = pyqtSignal(str, str)
+    pdf_failed = pyqtSignal(str, str)
 
     def __init__(self, job_id: str, parent=None):
         super().__init__(parent)
         self.job_id = job_id
         self._running = True
+        self.status_url = _LATEX_STATUS_ENDPOINTS.get(
+            job_id, f"{BACKEND_URL}/latex_status/{quote(job_id)}"
+        )
+
+    def stop(self):
+        self._running = False
 
     def run(self):
-        attempts = 0
-        max_attempts = 1200
-        
-        while self._running and attempts < max_attempts:
-            attempts += 1
+        max_attempts = 240
+        request_failures = 0
+
+        for attempt in range(1, max_attempts + 1):
+            if not self._running:
+                return
             self.msleep(1500)
 
-            # Check local server
             try:
-                r = requests.get(f"{LOCAL_SERVER_URL}/latex_status/{self.job_id}", timeout=2)
-                if r.status_code == 200:
-                    data = r.json()
-                    status = data.get("status", "processing")
-                    pdf_url = data.get("pdf_url")
-                    pdf_b64 = data.get("pdf_b64")
-                    latex_code = data.get("latex_code")
-                    progress = data.get("progress_percentage", min(95, attempts * 5))
-                    stage = data.get("step", "Processing")
+                r = requests.get(self.status_url, timeout=4)
+            except Exception as exc:
+                request_failures += 1
+                if request_failures >= 8:
+                    self.pdf_failed.emit(
+                        self.job_id,
+                        f"Lost connection while polling LaTeX job: {exc}",
+                    )
+                    return
+                continue
 
-                    self.status_updated.emit(self.job_id, f"LaTeX: {stage}", int(progress))
+            if r.status_code == 404:
+                self.pdf_failed.emit(
+                    self.job_id,
+                    "LaTeX job was not found by the backend that accepted it.",
+                )
+                return
 
-                    if status in ["completed", "done", "success"]:
-                        if latex_code:
-                            self.latex_ready.emit(self.job_id, latex_code)
-                        if pdf_url or pdf_b64:
-                            self.pdf_ready.emit(self.job_id, pdf_url or "", pdf_b64 or "")
-                        return
-                    elif status == "error":
-                        err_msg = data.get("error_message", "LaTeX pipeline error")
-                        self.pdf_failed.emit(self.job_id, err_msg)
-                        return
-                    continue
+            if r.status_code >= 400:
+                request_failures += 1
+                if request_failures >= 5:
+                    self.pdf_failed.emit(
+                        self.job_id,
+                        f"LaTeX status endpoint returned HTTP {r.status_code}: {r.text[:200]}",
+                    )
+                    return
+                continue
+
+            request_failures = 0
+            try:
+                data = r.json()
             except Exception:
-                try:
-                    modal_url = MODAL_ENDPOINT_URL.replace("/generate", "/latex_status")
-                    r = requests.get(f"{modal_url}?job_id={self.job_id}", timeout=2)
-                    if r.status_code == 200:
-                        data = r.json()
-                        status = data.get("status", "processing")
-                        pdf_b64 = data.get("pdf_b64")
-                        latex_code = data.get("latex_code")
-                        progress = data.get("progress_percentage", min(95, attempts * 5))
-                        stage = data.get("step", "Processing")
-                        
-                        self.status_updated.emit(self.job_id, f"LaTeX: {stage}", int(progress))
-                        
-                        if status in ["completed", "done", "success"]:
-                            if latex_code:
-                                self.latex_ready.emit(self.job_id, latex_code)
-                            if pdf_b64:
-                                self.pdf_ready.emit(self.job_id, "", pdf_b64)
-                            return
-                        elif status == "error":
-                            err_msg = data.get("error_message", "LaTeX pipeline error")
-                            self.pdf_failed.emit(self.job_id, err_msg)
-                            return
-                        continue
-                except Exception:
-                    pass
+                self.pdf_failed.emit(self.job_id, "LaTeX status response was not valid JSON.")
+                return
 
-            stage_name = "Transcribing & Structuring" if attempts < 10 else "Processing LaTeX"
-            self.status_updated.emit(self.job_id, f"📝 {stage_name} ({attempts*2}s)...", min(95, attempts * 3))
+            status = str(data.get("status", "processing")).lower()
+            stage = data.get("step") or data.get("current_stage") or "Processing LaTeX"
+            progress = data.get("progress_percentage")
+            if progress is None:
+                progress = min(95, 5 + attempt // 2)
 
-        self.pdf_failed.emit(self.job_id, "Timeout while generating LaTeX document.")
+            self.status_updated.emit(self.job_id, f"LaTeX: {stage}", int(progress))
 
+            if status in {"completed", "done", "success"}:
+                latex_code = (
+                    data.get("final_tex_code")
+                    or data.get("latex_code")
+                    or data.get("structured_latex")
+                    or ""
+                )
+                if latex_code:
+                    self.latex_ready.emit(self.job_id, str(latex_code))
+
+                pdf_url = str(data.get("pdf_url") or "")
+                pdf_b64 = str(data.get("pdf_b64") or "")
+                if pdf_url or pdf_b64:
+                    self.pdf_ready.emit(self.job_id, pdf_url, pdf_b64)
+
+                if latex_code or pdf_url or pdf_b64:
+                    return
+
+                self.pdf_failed.emit(
+                    self.job_id,
+                    "Backend marked the LaTeX job complete but returned neither LaTeX nor PDF output.",
+                )
+                return
+
+            if status in {"error", "failed", "not_found"}:
+                self.pdf_failed.emit(
+                    self.job_id,
+                    str(data.get("error_message") or "LaTeX pipeline failed."),
+                )
+                return
+
+        self.pdf_failed.emit(
+            self.job_id,
+            "Timed out waiting for LaTeX generation. Check backend logs for the job ID.",
+        )

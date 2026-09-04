@@ -1,334 +1,401 @@
+from __future__ import annotations
+
+import base64
+import json
 import os
+import re
+import shutil
 import subprocess
 import tempfile
-from typing import Optional
-from backend.video_generation.models import LatexJob, JobStatus
+from pathlib import Path
+from typing import Any
+
+from backend.video_generation.models import JobStatus, LatexJob
 from backend.workspace.artifact_store import artifact_store
 
-# Try to use groq, which should be installed
 try:
     from groq import Groq
 except ImportError:
     Groq = None
 
-STRUCTURE_PROMPT_TEMPLATE = """You are an expert Document Structurer. I will provide raw transcribed math and text fragments extracted via OCR from handwritten notes.
 
-Your task is to organize and structure these fragments into a JSON DocumentIR.
+STRUCTURE_PROMPT_TEMPLATE = """You are an expert document structurer.
+Convert the supplied transcription into JSON DocumentIR.
 
-CRITICAL RULES:
-1. Output ONLY valid JSON conforming to the following structure:
+Return ONLY valid JSON:
 {{
-  "title": "Inferred Document Title",
+  "title": "Document title",
   "blocks": [
     {{
       "type": "heading|paragraph|equation|list|slide_title",
-      "content": "Text or LaTeX math content",
+      "content": "text or LaTeX math",
       "level": 1,
-      "items": ["list item 1", "list item 2"] 
+      "items": ["item"]
     }}
   ]
 }}
-2. Use "heading" for sections. Set "level": 1 for main sections, 2 for subsections.
-3. Use "slide_title" to delineate new slides if the template is "Lecture Slides".
-4. Use "equation" for standalone math equations.
-5. Use "list" for bullet points, and put the points in the "items" array.
-6. Use "paragraph" for regular text. You may use inline math ($...$) within text.
-7. Do NOT include Markdown formatting like **bold** or # headings.
-8. NEVER wrap your JSON in ```json blocks. Output RAW JSON ONLY.
 
-Template Type: {template_type}
+Rules:
+- heading level 1 = main section, level 2 = subsection.
+- equation contains only equation content, without $$ or \\[ \\] wrappers.
+- list items go in items.
+- no Markdown fences.
+- do not invent source content in transcription mode.
 
+Template: {template_type}
 Raw transcription:
 {raw_text}
 """
 
 
+def _strip_data_url(value: str) -> str:
+    value = (value or "").strip()
+    if value.startswith("data:") and "," in value:
+        return value.split(",", 1)[1]
+    return value
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    text = (text or "").strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+    text = re.sub(r"\s*```$", "", text)
+    first = text.find("{")
+    last = text.rfind("}")
+    if first < 0 or last <= first:
+        raise ValueError("Model did not return a JSON object.")
+    data = json.loads(text[first : last + 1])
+    if not isinstance(data, dict) or not isinstance(data.get("blocks", []), list):
+        raise ValueError("DocumentIR JSON has an invalid shape.")
+    return data
+
+
+def _mode_instruction(job: LatexJob) -> str:
+    mode = (getattr(job, "mode", "study") or "study").lower()
+    action = getattr(job, "classroom_action", "Solve Question") or "Solve Question"
+
+    if mode == "study":
+        return (
+            "\nMODE: STUDY. Build clear study notes grounded in the transcription. "
+            "You may explain detected concepts, but do not invent unrelated sections."
+        )
+    if action == "Solve Question":
+        return (
+            "\nMODE: SOLVE. Solve the detected question with concise, correct steps "
+            "and a direct final answer."
+        )
+    return (
+        "\nMODE: TRANSCRIBE. Preserve the source faithfully. Do not solve questions "
+        "or add explanations that were not present."
+    )
+
+
 class LatexTranscribeAgent:
-    """Uses Gemini 3.5 Flash Lite to extract raw LaTeX from the handwritten image (Groq Vision was decommissioned)."""
-    
+    """Vision OCR/transcription only. It does not perform study expansion."""
+
     def __init__(self):
         self.api_key = os.getenv("GOOGLE_API_KEY")
+        self.model_name = os.getenv("GEMINI_VISION_MODEL", "gemini-3.5-flash-lite")
 
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Transcribing Handwriting"
         job.progress_percentage = 10
-        print(f"[{job.job_id}] Transcribing handwriting with Gemini...")
 
         if not self.api_key:
             job.status = JobStatus.ERROR
             job.error_message = "GOOGLE_API_KEY missing from environment."
             return job
+        if not job.image_b64:
+            job.status = JobStatus.ERROR
+            job.error_message = "No image data was supplied for LaTeX transcription."
+            return job
 
         try:
             import google.generativeai as genai
+
+            image_bytes = base64.b64decode(_strip_data_url(job.image_b64), validate=False)
+            if not image_bytes:
+                raise ValueError("Decoded image is empty.")
+
             genai.configure(api_key=self.api_key)
-            model = genai.GenerativeModel("gemini-3.5-flash-lite")
-            
-            prompt = "Transcribe this handwritten math and text into LaTeX, preserving structure. Output only the LaTeX, no explanation."
-            image_part = {
-                "mime_type": "image/png",
-                "data": job.image_b64
-            }
-            
-            response = model.generate_content([prompt, image_part])
-            job.raw_transcription = response.text
-        except Exception as e:
+            model = genai.GenerativeModel(self.model_name)
+            prompt = (
+                "Faithfully transcribe the handwritten math and text. Preserve ordering "
+                "and mathematical notation. Return plain transcription/LaTeX fragments only; "
+                "do not solve or expand the content."
+            )
+            response = model.generate_content(
+                [prompt, {"mime_type": "image/png", "data": image_bytes}]
+            )
+            text = (getattr(response, "text", "") or "").strip()
+            if not text:
+                raise ValueError("Vision model returned an empty transcription.")
+            job.raw_transcription = text
+            return job
+        except Exception as exc:
             job.status = JobStatus.ERROR
-            job.error_message = f"Transcription failed: {str(e)}"
-
-        return job
-
+            job.error_message = f"Transcription failed: {exc}"
+            return job
 
 
 class LatexStructureAgent:
-    """Uses Groq text LLM to structure the fragments and fix ordering."""
+    """Turn transcription into DocumentIR. Groq is primary; Gemini is a real fallback."""
 
     def __init__(self):
-        self.api_key = os.getenv("GROQ_API_KEY")
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
+        self.google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.groq_model = os.getenv("GROQ_TEXT_MODEL", "qwen/qwen3.8-27b")
+        self.gemini_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.5-flash-lite")
+
+    def _call_groq(self, prompt: str) -> str:
+        if not self.groq_api_key or Groq is None:
+            return ""
+        client = Groq(api_key=self.groq_api_key)
+        response = client.chat.completions.create(
+            model=self.groq_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            timeout=45.0,
+        )
+        return response.choices[0].message.content or ""
+
+    def _call_gemini(self, prompt: str) -> str:
+        if not self.google_api_key:
+            return ""
+        import google.generativeai as genai
+
+        genai.configure(api_key=self.google_api_key)
+        response = genai.GenerativeModel(self.gemini_model).generate_content(prompt)
+        return getattr(response, "text", "") or ""
 
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Structuring Document"
         job.progress_percentage = 30
-        print(f"[{job.job_id}] Structuring document...")
 
-        if not self.api_key or not Groq:
+        if not job.raw_transcription:
             job.status = JobStatus.ERROR
-            job.error_message = "GROQ_API_KEY missing or Groq package not installed."
+            job.error_message = "No transcription is available to structure."
+            return job
+
+        prompt = STRUCTURE_PROMPT_TEMPLATE.format(
+            template_type=job.template_type,
+            raw_text=job.raw_transcription,
+        )
+        prompt += _mode_instruction(job)
+
+        if job.has_build_error and job.build_error_trace:
+            prompt += (
+                "\nThe previous deterministic LaTeX render failed. Correct the structured "
+                "content that caused this compiler diagnostic:\n"
+                + job.build_error_trace[-3000:]
+            )
+
+        errors: list[str] = []
+        content = ""
+
+        try:
+            content = self._call_groq(prompt)
+        except Exception as exc:
+            errors.append(f"Groq: {exc}")
+
+        if not content:
+            try:
+                content = self._call_gemini(prompt)
+            except Exception as exc:
+                errors.append(f"Gemini: {exc}")
+
+        if not content:
+            job.status = JobStatus.ERROR
+            job.error_message = (
+                "Document structuring failed: no text model was available. "
+                + " | ".join(errors)
+            )
             return job
 
         try:
-            client = Groq(api_key=self.api_key)
-            prompt = STRUCTURE_PROMPT_TEMPLATE.format(
-                template_type=job.template_type,
-                raw_text=job.raw_transcription or ""
-            )
-
-            if getattr(job, "mode", "study") == "study":
-                prompt += (
-                    "\n\n**CRITICAL INSTRUCTION: STUDY MODE**\n"
-                    "The user is in STUDY MODE. Treat this as a comprehensive study guide. "
-                    "Expand heavily on the concepts mentioned, provide detailed step-by-step breakdowns, "
-                    "and create a 'proper note' format for the user to learn from. Add rich, clear explanations."
-                )
-            else:
-                action = getattr(job, "classroom_action", "Solve Question")
-                if action == "Solve Question":
-                    prompt += (
-                        "\n\n**CRITICAL INSTRUCTION: CLASSROOM MODE - SOLVE**\n"
-                        "The user wants you to solve the math problem or answer the question present in the text. "
-                        "Provide a DIRECT ANSWER and show relevant steps, but keep the explanation minimal and straight-to-the-point without over-explaining."
-                    )
-                else:
-                    prompt += (
-                        "\n\n**CRITICAL INSTRUCTION: CLASSROOM MODE - TRANSCRIBE**\n"
-                        "The user wants you to strictly format the text and math exactly as written to create a LaTeX document. "
-                        "DO NOT answer any questions and DO NOT hallucinate explanations. Just transcribe."
-                    )
-
-            # If retrying after a build error, pass the error to the LLM to fix
-            if job.has_build_error and job.build_error_trace:
-                prompt += f"\n\nPREVIOUS COMPILATION ERROR:\nThe previous LaTeX code failed to compile with the following error:\n{job.build_error_trace}\n\nPlease fix the LaTeX syntax errors."
-
-            response = client.chat.completions.create(
-                model="qwen/qwen3.8-27b",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                timeout=30.0
-            )
-            content = response.choices[0].message.content or ""
-            
-            # Post-process: strip markdown blocks and get json
-            content = content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            elif content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            
-            content = content.strip()
-            
-            # Validate JSON
-            import json
-            try:
-                json.loads(content)
-            except json.JSONDecodeError as e:
-                # Basic fallback
-                content = json.dumps({
-                    "title": "Transcription",
-                    "blocks": [{"type": "paragraph", "content": content}]
-                })
-            
-            job.structured_latex = content
-
-        except Exception as e:
+            ir = _extract_json_object(content)
+            job.structured_latex = json.dumps(ir, ensure_ascii=False)
+            return job
+        except Exception as exc:
             job.status = JobStatus.ERROR
-            job.error_message = f"Structuring failed: {str(e)}"
+            job.error_message = f"Document structuring returned invalid JSON: {exc}"
+            return job
 
-        return job
+
+def _normalize_equation(value: str) -> str:
+    value = (value or "").strip()
+    if value.startswith("$$") and value.endswith("$$"):
+        value = value[2:-2].strip()
+    if value.startswith(r"\[") and value.endswith(r"\]"):
+        value = value[2:-2].strip()
+    return value
 
 
 class TemplateApplyAgent:
-    """Merges structured content into the selected .tex template."""
+    """Deterministically render DocumentIR into one of the known templates."""
+
+    TEMPLATE_MAP = {
+        "Assignment": "assignment.tex",
+        "Research Paper": "research_paper.tex",
+        "Homework": "homework.tex",
+        "Lecture Slides": "lecture_slides.tex",
+    }
 
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Applying Template"
         job.progress_percentage = 50
-        print(f"[{job.job_id}] Applying template: {job.template_type}")
 
-        # Map frontend template names to files
-        template_map = {
-            "Assignment": "assignment.tex",
-            "Research Paper": "research_paper.tex",
-            "Homework": "homework.tex",
-            "Lecture Slides": "lecture_slides.tex"
-        }
-        
-        filename = template_map.get(job.template_type, "assignment.tex")
-        template_path = os.path.join(os.path.dirname(__file__), "..", "templates", filename)
-        template_path = os.path.abspath(template_path)
+        filename = self.TEMPLATE_MAP.get(job.template_type)
+        if not filename:
+            job.status = JobStatus.ERROR
+            job.error_message = f"Unknown LaTeX template: {job.template_type!r}"
+            return job
+
+        template_path = (
+            Path(__file__).resolve().parent.parent / "templates" / filename
+        )
 
         try:
-            import json
             ir = json.loads(job.structured_latex or "{}")
-            
             blocks = ir.get("blocks", [])
-            latex_parts = []
-            
+            if not isinstance(blocks, list):
+                raise ValueError("DocumentIR.blocks must be a list.")
+
+            latex_parts: list[str] = []
             is_slides = job.template_type == "Lecture Slides"
             in_frame = False
-            
+
             for block in blocks:
-                b_type = block.get("type", "paragraph")
-                content = block.get("content", "")
-                level = block.get("level", 1)
+                if not isinstance(block, dict):
+                    continue
+                block_type = str(block.get("type", "paragraph"))
+                content = str(block.get("content", "") or "").strip()
+                level = int(block.get("level", 1) or 1)
                 items = block.get("items", [])
-                
-                if b_type == "slide_title":
+                if not isinstance(items, list):
+                    items = []
+
+                if block_type == "slide_title":
                     if in_frame:
-                        latex_parts.append("\\end{frame}\n")
-                    latex_parts.append(f"\\begin{{frame}}{{{content}}}\n")
+                        latex_parts.append(r"\end{frame}")
+                    latex_parts.append(rf"\begin{{frame}}{{{content}}}")
                     in_frame = True
-                elif b_type == "heading":
+                elif block_type == "heading":
                     if is_slides:
                         if in_frame:
-                            latex_parts.append("\\end{frame}\n")
-                        latex_parts.append(f"\\begin{{frame}}{{{content}}}\n")
+                            latex_parts.append(r"\end{frame}")
+                        latex_parts.append(rf"\begin{{frame}}{{{content}}}")
                         in_frame = True
+                    elif level <= 1:
+                        latex_parts.append(rf"\section*{{{content}}}")
                     else:
-                        if level == 1:
-                            latex_parts.append(f"\\section*{{{content}}}")
-                        else:
-                            latex_parts.append(f"\\subsection*{{{content}}}")
-                elif b_type == "equation":
-                    latex_parts.append(f"\\begin{{equation}}\n{content}\n\\end{{equation}}")
-                elif b_type == "list":
-                    latex_parts.append("\\begin{itemize}")
+                        latex_parts.append(rf"\subsection*{{{content}}}")
+                elif block_type == "equation":
+                    eq = _normalize_equation(content)
+                    if eq:
+                        latex_parts.append(
+                            "\\begin{equation}\n" + eq + "\n\\end{equation}"
+                        )
+                elif block_type == "list":
+                    latex_parts.append(r"\begin{itemize}")
                     for item in items:
-                        latex_parts.append(f"    \\item {item}")
-                    latex_parts.append("\\end{itemize}")
-                else: # paragraph
+                        latex_parts.append(r"    \item " + str(item))
+                    latex_parts.append(r"\end{itemize}")
+                elif content:
                     latex_parts.append(content)
-            
+
             if is_slides and in_frame:
-                latex_parts.append("\\end{frame}\n")
-                
+                latex_parts.append(r"\end{frame}")
+
             body_tex = "\n\n".join(latex_parts)
-
-            with open(template_path, "r", encoding="utf-8") as f:
-                template_content = f.read()
-
-            final_tex = template_content.replace("{{CONTENT_BODY}}", body_tex)
-            job.final_tex_code = final_tex
+            template_content = template_path.read_text(encoding="utf-8")
+            if "{{CONTENT_BODY}}" not in template_content:
+                raise ValueError(f"Template {filename} is missing {{CONTENT_BODY}}.")
+            job.final_tex_code = template_content.replace("{{CONTENT_BODY}}", body_tex)
             job.step = "LaTeX Generated"
             job.progress_percentage = 60
-        except Exception as e:
+            return job
+        except Exception as exc:
             job.status = JobStatus.ERROR
-            job.error_message = f"Template apply failed: {str(e)}"
+            job.error_message = f"Template apply failed: {exc}"
+            return job
 
-        return job
+
+def _find_tectonic() -> str | None:
+    explicit = os.getenv("TECTONIC_BIN", "").strip()
+    if explicit and os.path.isfile(explicit):
+        return explicit
+
+    project_root = Path(__file__).resolve().parents[3]
+    legacy = project_root / "tectonic.exe"
+    if legacy.is_file():
+        return str(legacy)
+
+    return shutil.which("tectonic") or shutil.which("tectonic.exe")
 
 
 class TectonicCompileAgent:
-    """Compiles the LaTeX document via tectonic and catches any build errors."""
+    MAX_RETRIES = 2
 
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Compiling PDF"
         job.progress_percentage = 70
-        print(f"[{job.job_id}] Compiling PDF with tectonic...")
 
         if not job.final_tex_code:
             job.status = JobStatus.ERROR
             job.error_message = "No LaTeX code to compile."
             return job
 
-        # Create a temporary directory for the build
-        import shutil
-        temp_dir = tempfile.mkdtemp()
-        tex_path = os.path.join(temp_dir, "document.tex")
-        pdf_path = os.path.join(temp_dir, "document.pdf")
-
-        with open(tex_path, "w", encoding="utf-8") as f:
-            f.write(job.final_tex_code)
+        tectonic_cmd = _find_tectonic()
+        if not tectonic_cmd:
+            job.status = JobStatus.ERROR
+            job.error_message = (
+                "Tectonic compiler is not installed. Install Tectonic and put it on PATH, "
+                "or set TECTONIC_BIN to the executable path."
+            )
+            return job
 
         try:
-            # Run tectonic
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-            local_tectonic = os.path.join(project_root, "tectonic.exe")
-            
-            # Prefer local tectonic.exe if it exists, else assume it's in PATH
-            tectonic_cmd = local_tectonic if os.path.exists(local_tectonic) else "tectonic"
-            
-            out_file_path = os.path.join(temp_dir, "stdout.txt")
-            try:
-                with open(out_file_path, "w") as outf:
-                    result = subprocess.run(
-                        [tectonic_cmd, tex_path],
-                        cwd=temp_dir,
-                        stdout=outf,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=1200
-                    )
-            except FileNotFoundError:
-                job.status = JobStatus.ERROR
-                job.error_message = "Tectonic compiler not found on this system.\nPlease install tectonic (e.g., 'winget install tectonic' on Windows or 'brew install tectonic' on macOS) and ensure it is in your system PATH."
-                return job
+            with tempfile.TemporaryDirectory(prefix=f"latex_{job.job_id}_") as temp_dir:
+                tex_path = os.path.join(temp_dir, "document.tex")
+                pdf_path = os.path.join(temp_dir, "document.pdf")
+                with open(tex_path, "w", encoding="utf-8") as f:
+                    f.write(job.final_tex_code)
 
-            if result.returncode != 0:
-                print(f"[{job.job_id}] Tectonic compilation failed.")
-                job.has_build_error = True
-                
-                # Read the trace from the output file
-                trace_content = ""
-                if os.path.exists(out_file_path):
-                    with open(out_file_path, "r") as outf:
-                        trace_content = outf.read()
-                
-                job.build_error_trace = trace_content
-                job.retry_count += 1
-                
-                if job.retry_count >= 2:
-                    job.status = JobStatus.ERROR
-                    job.error_message = f"Compilation failed after max retries. Last error: {job.build_error_trace}"
-            else:
+                result = subprocess.run(
+                    [tectonic_cmd, tex_path],
+                    cwd=temp_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+
+                if result.returncode != 0 or not os.path.isfile(pdf_path):
+                    job.has_build_error = True
+                    job.build_error_trace = (
+                        result.stderr or result.stdout or "Tectonic produced no PDF."
+                    )[-6000:]
+                    job.retry_count += 1
+                    if job.retry_count >= self.MAX_RETRIES:
+                        job.status = JobStatus.ERROR
+                        job.error_message = (
+                            "Compilation failed after 2 attempts. Last compiler error:\n"
+                            + job.build_error_trace[-2500:]
+                        )
+                    return job
+
                 job.has_build_error = False
                 job.build_error_trace = None
-                
-                # Copy the PDF to the artifact store so FastAPI can serve it
-                final_pdf_path = artifact_store.put(job.job_id, "document.pdf", pdf_path)
-                
-                job.pdf_path = final_pdf_path
+                job.pdf_path = artifact_store.put(
+                    job.job_id, "document.pdf", pdf_path
+                )
                 job.status = JobStatus.DONE
                 job.progress_percentage = 100
-                print(f"[{job.job_id}] PDF compiled successfully: {final_pdf_path}")
-        except Exception as e:
+                return job
+        except subprocess.TimeoutExpired:
             job.status = JobStatus.ERROR
-            job.error_message = f"Compilation process failed: {str(e)}"
-        finally:
-            try:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            except Exception:
-                pass
-
-        return job
+            job.error_message = "Tectonic compilation timed out after 180 seconds."
+            return job
+        except Exception as exc:
+            job.status = JobStatus.ERROR
+            job.error_message = f"Compilation process failed: {exc}"
+            return job

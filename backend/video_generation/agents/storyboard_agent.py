@@ -110,73 +110,133 @@ Return ONLY JSON in this exact structure:
         return job
 
     def _normalize_scenes(self, raw_scenes: Any) -> List[SceneSpec]:
+        """Normalize SceneSpec JSON without deleting pedagogical actions."""
         if not isinstance(raw_scenes, list):
             return []
+
         out: List[SceneSpec] = []
-        for idx, raw in enumerate(raw_scenes[:5]):
+        for idx, raw in enumerate(raw_scenes[:6]):
             if not isinstance(raw, dict):
                 continue
-            objects = []
+
+            objects: List[Dict[str, Any]] = []
             seen_ids = set()
-            for obj_idx, obj in enumerate(raw.get("objects", [])[:20]):
+            valid_targets = set()
+
+            def clean_id(value: Any, fallback: str) -> str:
+                value = re.sub(r"[^A-Za-z0-9_]", "_", str(value or fallback))[:50]
+                if not value:
+                    value = fallback
+                if value and value[0].isdigit():
+                    value = f"obj_{value}"
+                return value
+
+            for obj_idx, obj in enumerate(raw.get("objects", [])[:24]):
                 if not isinstance(obj, dict):
                     continue
                 obj_type = str(obj.get("type", "text"))
                 if obj_type not in _ALLOWED_OBJECT_TYPES:
-                    obj_type = "text"
-                oid = re.sub(r"[^A-Za-z0-9_]", "_", str(obj.get("id") or f"obj_{obj_idx}"))[:50]
-                if not oid or oid[0].isdigit():
-                    oid = f"obj_{oid}"
+                    continue
+
+                oid = clean_id(obj.get("id"), f"obj_{obj_idx}")
                 if oid in seen_ids:
                     oid = f"{oid}_{obj_idx}"
                 seen_ids.add(oid)
+                valid_targets.add(oid)
+
                 clean = dict(obj)
                 clean["id"] = oid
                 clean["type"] = obj_type
                 clean["position"] = str(obj.get("position", "center"))
+
                 if obj_type == "vector_field":
                     pattern = str(obj.get("pattern", "uniform"))
-                    clean["pattern"] = pattern if pattern in {"radial_outward", "radial_inward", "rotational", "uniform"} else "uniform"
+                    clean["pattern"] = pattern if pattern in {
+                        "radial_outward", "radial_inward", "rotational", "uniform"
+                    } else "uniform"
+
                 if obj_type == "plot":
                     curve = str(obj.get("curve", "parabola"))
-                    clean["curve"] = curve if curve in {"parabola", "sine", "cosine", "linear"} else "parabola"
+                    clean["curve"] = curve if curve in {
+                        "parabola", "sine", "cosine", "linear"
+                    } else "parabola"
+
                 if obj_type == "term_equation":
-                    clean["terms"] = obj.get("terms", [])
-                
+                    clean_terms = []
+                    for term_idx, term in enumerate(obj.get("terms", [])[:24]):
+                        if not isinstance(term, dict):
+                            continue
+                        tid = clean_id(term.get("id"), f"{oid}_term_{term_idx}")
+                        if tid in valid_targets:
+                            tid = f"{tid}_{term_idx}"
+                        valid_targets.add(tid)
+                        term_clean = dict(term)
+                        term_clean["id"] = tid
+                        term_clean["value"] = str(term.get("value", ""))[:120]
+                        clean_terms.append(term_clean)
+                    clean["terms"] = clean_terms
+
                 objects.append(clean)
-
-            valid_targets = {o["id"] for o in objects}
-            actions = []
-            for action in raw.get("actions", [])[:30]:
-                if not isinstance(action, dict):
-                    continue
-                atype = str(action.get("type", "create"))
-                target = str(action.get("target", ""))
-                if atype in _ALLOWED_ACTION_TYPES and target in valid_targets:
-                    clean_action = dict(action)
-                    clean_action["type"] = atype
-                    clean_action["target"] = target
-                    reason = action.get("reason")
-                    if atype == "transform" and not reason:
-                        clean_action["reason"] = "Direct transition"
-                    if atype in {"transform", "MapTerms", "SubstituteValues"}:
-                        clean_action["source"] = str(action.get("source", target))
-                        clean_action["to"] = str(action.get("to", ""))
-                    if atype == "AskQuestion":
-                        clean_action["question"] = str(action.get("question", ""))
-                    if atype == "RevealRule":
-                        clean_action["rule"] = str(action.get("rule", ""))
-
-                    actions.append(clean_action)
 
             if not objects:
                 continue
+
+            actions: List[Dict[str, Any]] = []
+            for action in raw.get("actions", [])[:40]:
+                if not isinstance(action, dict):
+                    continue
+                atype = str(action.get("type", "create"))
+                if atype not in _ALLOWED_ACTION_TYPES:
+                    continue
+
+                # These teaching actions do not require a target.
+                if atype == "AskQuestion":
+                    question = str(action.get("question", "")).strip()
+                    if question:
+                        actions.append({"type": atype, "question": question[:240]})
+                    continue
+                if atype == "RevealRule":
+                    rule = str(action.get("rule", "")).strip()
+                    if rule:
+                        actions.append({"type": atype, "rule": rule[:300]})
+                    continue
+
+                target = clean_id(action.get("target"), "")
+                if target not in valid_targets:
+                    continue
+
+                if atype in {"MapTerms", "SubstituteValues"}:
+                    source = clean_id(action.get("source"), "")
+                    if source not in valid_targets:
+                        continue
+                    clean_action = dict(action)
+                    clean_action.update(type=atype, source=source, target=target)
+                    actions.append(clean_action)
+                    continue
+
+                if atype == "transform":
+                    destination = clean_id(action.get("to"), "")
+                    reason = str(action.get("reason", "")).strip()
+                    if destination not in valid_targets:
+                        continue
+                    if not reason or reason.lower() in {"direct transition", "transition", "because"}:
+                        continue
+                    clean_action = dict(action)
+                    clean_action.update(type=atype, target=target, to=destination, reason=reason[:500])
+                    actions.append(clean_action)
+                    continue
+
+                clean_action = dict(action)
+                clean_action.update(type=atype, target=target)
+                actions.append(clean_action)
+
             try:
-                duration = max(4.0, min(20.0, float(raw.get("duration_seconds", 8))))
+                duration = max(4.0, min(24.0, float(raw.get("duration_seconds", 8))))
             except Exception:
                 duration = 8.0
+
             out.append(SceneSpec(
-                scene_id=str(raw.get("scene_id") or f"scene_{idx+1}"),
+                scene_id=str(raw.get("scene_id") or f"scene_{idx + 1}"),
                 title=str(raw.get("title", ""))[:160],
                 learning_goal=str(raw.get("learning_goal", ""))[:500],
                 duration_seconds=duration,

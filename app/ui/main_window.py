@@ -68,7 +68,7 @@ from ..backend.math_engine.latex_client import request_latex_generation, LatexPo
 # ── Autosave Configuration ─────────────────────────────────────────────────────
 # Delay (ms) after the last scene change before autosave fires to disk.
 # Keeps rapid edits (e.g. mid-drag) from spamming disk writes.
-_AUTOSAVE_DELAY_MS = 1000
+_AUTOSAVE_DELAY_MS = 2500
 
 
 class MacTitleBar(QWidget):
@@ -1610,7 +1610,8 @@ class MainWindow(QMainWindow):
             name = self.current_board.title or "Untitled Notebook"
             items_data = self.scene.to_dict_list()
             NotebookStorage.save_notebook(self._current_notebook_id, name, items_data)
-            if hasattr(self, 'notebooks_panel'):
+            # Rebuilding the notebook panel every autosave causes visible stalls.
+            if manual and hasattr(self, 'notebooks_panel'):
                 self.notebooks_panel.refresh()
             self._set_save_status("Saved ✓", clear_after_ms=2000)
         except Exception as err:
@@ -1746,7 +1747,11 @@ class MainWindow(QMainWindow):
         self.reference_panel.hide()
 
     def _on_generate_video_requested(self, selected_text: str):
-        job_id = request_video_generation(selected_text)
+        try:
+            job_id = request_video_generation(selected_text)
+        except Exception as exc:
+            QMessageBox.warning(self, "Video Generation Error", f"Could not submit video generation:\n{exc}")
+            return
         
         if hasattr(self, 'speedometer_widget'):
             self.speedometer_widget.start_task("Generating Video...")
@@ -1774,14 +1779,18 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'subject_detail_view') and self.subject_detail_view.current_subject_id:
             current_subject = self.subject_detail_view.current_subject_id     
 
-        job_id = request_video_generation(
-            selected_text="Explain this document.", 
-            pdf_path=pdf_path,
-            page_range=page_range,         
-            emphasis_note=emphasis,       
-            output_type=out_type,
-            subject_id=current_subject or ""
-        )
+        try:
+            job_id = request_video_generation(
+                selected_text="Explain this document.",
+                pdf_path=pdf_path,
+                page_range=page_range,
+                emphasis_note=emphasis,
+                output_type=out_type,
+                subject_id=current_subject or "",
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Video Generation Error", f"Could not submit document video generation:\n{exc}")
+            return
         
         title = "Markdown: Study Notes" if out_type == "notes" else "Manim: Video Lesson"
         
@@ -2123,7 +2132,10 @@ class MainWindow(QMainWindow):
         selected_items = []
         all_texts = []
         for item in items:
-            item_data = {"item_id": str(id(item)), "type": type(item).__name__}
+            item_data = {
+                "item_id": str(getattr(item, "item_id", id(item))),
+                "type": type(item).__name__,
+            }
             text = ""
             if hasattr(item, "text") and isinstance(item.text, str):
                 text = item.text
@@ -2206,7 +2218,11 @@ class MainWindow(QMainWindow):
 
     def _start_video_generation(self, prompt_text: str, selection_payload: dict):
         """Kick off video generation with a selection payload and open a new tab."""
-        job_id = request_video_generation(prompt_text, selection_payload=selection_payload)
+        try:
+            job_id = request_video_generation(prompt_text, selection_payload=selection_payload)
+        except Exception as exc:
+            QMessageBox.warning(self, "Video Generation Error", f"Could not submit video generation:\n{exc}")
+            return
 
         if hasattr(self, 'speedometer_widget'):
             self.speedometer_widget.start_task("Generating Video...")

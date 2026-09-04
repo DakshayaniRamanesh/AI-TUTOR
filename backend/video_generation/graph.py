@@ -81,13 +81,22 @@ def _route_validate(state: VideoJob) -> str:
 
 
 def _route_ci(state: VideoJob) -> str:
-    if state.has_build_error:
-        if state.status == JobStatus.ERROR:
-            return END
-        # Deterministic compiler is the preferred board path. On a CI failure,
-        # use the existing LLM CodeGenAgent as a bounded repair fallback.
-        return "codegen"
-    return "render"
+    if not state.has_build_error:
+        return "render"
+    if state.status == JobStatus.ERROR:
+        return END
+
+    selection = getattr(state, "board_selection", None)
+    if selection and getattr(selection, "has_content", lambda: False)():
+        state.status = JobStatus.ERROR
+        state.error_message = (
+            "STRUCTURED_SCENE_CI_FAILED: "
+            + (state.build_error_trace or "Deterministic SceneSpec compilation failed.")
+        )
+        return END
+
+    # Legacy text/PDF requests keep their bounded CodeGen repair path.
+    return "codegen"
 
 
 def build_graph(rag_store: Optional[QdrantRAGStore] = None):
@@ -246,6 +255,16 @@ class _FallbackPipeline:
         state.has_build_error = True
         state.build_error_trace = error_trace
         state.retry_count += 1
+
+        selection = getattr(state, "board_selection", None)
+        if selection and getattr(selection, "has_content", lambda: False)():
+            state.status = JobStatus.ERROR
+            state.error_message = (
+                "STRUCTURED_SCENE_CI_FAILED: "
+                + (error_trace or "Deterministic SceneSpec compilation failed.")
+            )
+            return state
+
         return self._codegen_until_valid(state)
 
     def _codegen_until_valid(self, state: VideoJob) -> VideoJob:

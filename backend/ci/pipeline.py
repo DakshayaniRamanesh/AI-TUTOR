@@ -56,7 +56,15 @@ def _static_analysis(code: str) -> Tuple[bool, str]:
     # ── Check 1: Banned APIs ────────────────────────────────────────────────
     for pattern, suggestion in _BANNED_APIS:
         for i, line in enumerate(lines, 1):
-            if pattern in line and not line.strip().startswith("#"):
+            if line.strip().startswith("#"):
+                continue
+            # "Tex(" is a suffix of "MathTex(". A naive substring check therefore
+            # banned MathTex even after the explicit MathTex ban was removed.
+            if pattern == "Tex(":
+                matched = bool(re.search(r"(?<![A-Za-z0-9_])Tex\s*\(", line))
+            else:
+                matched = pattern in line
+            if matched:
                 return False, (
                     f"[Stage0] Banned API on line {i}: '{pattern.strip()}'\n"
                     f"Fix: {suggestion}\n"

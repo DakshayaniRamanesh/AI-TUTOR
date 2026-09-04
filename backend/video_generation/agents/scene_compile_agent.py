@@ -17,24 +17,31 @@ class SceneCompileAgent:
         return job
 
     def compile(self, scenes: List[SceneSpec]) -> str:
+        """Compile every SceneSpec into one complete MainScene lesson."""
         body: List[str] = [
             "from manim import *",
             "import numpy as np",
             "import math",
+            "",
+            "class MainScene(Scene):",
+            "    def construct(self):",
+            "        self.camera.background_color = '#090d16'",
         ]
-        for index, scene in enumerate(scenes):
-            safe_id = "".join(c if c.isalnum() else "_" for c in scene.scene_id)
-            if not safe_id:
-                safe_id = f"{index}"
-            scene_class_name = "MainScene" if len(scenes) == 1 else f"Scene_{safe_id}"
-            body.extend([
-                "",
-                f"class {scene_class_name}(Scene):",
-                "    def construct(self):",
-                "        self.camera.background_color = '#090d16'",
-            ])
-            body.extend(self._compile_scene(scene, index))
+
+        if not scenes:
             body.append("        self.wait(0.5)")
+            return "\n".join(body) + "\n"
+
+        for index, scene in enumerate(scenes):
+            body.extend(self._compile_scene(scene, index))
+            if index < len(scenes) - 1:
+                body.append("        if self.mobjects:")
+                body.append(
+                    "            self.play(*[FadeOut(m) for m in list(self.mobjects)], run_time=0.35)"
+                )
+                body.append("        self.clear()")
+
+        body.append("        self.wait(0.5)")
         return "\n".join(body) + "\n"
 
     def _compile_scene(self, scene: SceneSpec, index: int) -> List[str]:
@@ -54,10 +61,7 @@ class SceneCompileAgent:
                         tvar = f"{var}_{self._identifier(tid)}"
                         object_vars[tid] = tvar
 
-        # If layout is 'equation_with_rule_below', shift up everything that is not a question or rule
-        if scene.layout == "equation_with_rule_below":
-            lines.append("        if self.mobjects:")
-            lines.append("            self.play(VGroup(*self.mobjects).animate.shift(UP * 1.5), run_time=0.8)")
+        # Object positions are established before animation; do not shift self.mobjects before they exist.
 
         acted = set()
         for action in scene.actions:
@@ -115,7 +119,7 @@ class SceneCompileAgent:
         color = self._color(obj.get("color"))
 
         if otype in {"text", "equation"}:
-            text = str(obj.get("text") or obj.get("value") or obj.get("label") or "")[:180]
+            text = str(obj.get("text") or obj.get("value") or obj.get("label") or "")[:78]
             font = self._safe_number(obj.get("font_size"), 28, 14, 42)
             return [f"        {var} = Text({json.dumps(text)}, font_size={font}, color={color}).move_to({position})"]
 
@@ -237,7 +241,7 @@ class SceneCompileAgent:
                     f"        {var}.move_to({position})",
                 ]
 
-        fallback_text = str(obj.get("text") or obj.get("label") or otype.replace("_", " ").title())[:120]
+        fallback_text = str(obj.get("text") or obj.get("label") or otype.replace("_", " ").title())[:78]
         return [f"        {var} = Text({json.dumps(fallback_text)}, font_size=26, color={color}).move_to({position})"]
 
     def _compile_action(self, action: Dict[str, Any], object_vars: Dict[str, str]) -> List[str]:
@@ -246,7 +250,7 @@ class SceneCompileAgent:
         var = object_vars.get(target, "None")
 
         if atype == "AskQuestion":
-            q = str(action.get("question", "Question?"))
+            q = str(action.get("question", "Question?"))[:78]
             return [
                 f"        _q_txt = Text({json.dumps(q)}, font_size=24, color=YELLOW).to_edge(UP)",
                 f"        self.play(Write(_q_txt), run_time=1.0)"

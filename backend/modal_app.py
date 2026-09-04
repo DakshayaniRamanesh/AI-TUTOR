@@ -34,6 +34,7 @@ manim_image = (
         "google-genai",
         "qdrant-client",
         "google-generativeai",
+        "groq>=0.9.0",
         "firebase-admin",
         "boto3",
         "pypdf>=4.0.0",
@@ -190,6 +191,10 @@ def _process_latex_job(job_dict: Dict[str, Any]) -> Dict[str, Any]:
         "job_id": final_job.job_id,
         "status": final_job.status.value if hasattr(final_job.status, "value") else str(final_job.status),
         "pdf_b64": pdf_b64,
+        "raw_transcription": final_job.raw_transcription,
+        "structured_latex": final_job.structured_latex,
+        "final_tex_code": final_job.final_tex_code,
+        "latex_code": final_job.final_tex_code or final_job.structured_latex or "",
         "error_message": final_job.error_message,
         "step": final_job.step,
         "progress_percentage": final_job.progress_percentage,
@@ -200,7 +205,7 @@ def _process_latex_job(job_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 def _cache_prompt(body: Dict[str, Any]) -> str:
     return (
-        f"{body.get('prompt', '')}"
+        f"{body.get('user_prompt', '')}"
         f"||pages={body.get('page_range', '')}"
         f"||emphasis={body.get('emphasis_note', '')}"
         f"||output={body.get('output_type', 'video')}"
@@ -223,7 +228,7 @@ def _pdf_text_for_cache(pdf_bytes: bytes, page_range: str = "") -> str:
         return ""
 
 
-@app.function(image=manim_image, gpu="A10G", timeout=600, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
+@app.function(image=manim_image, timeout=600, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 @modal.fastapi_endpoint(method="POST")
 async def generate(request: Request) -> dict:
     try:
@@ -292,7 +297,7 @@ async def generate(request: Request) -> dict:
     }
 
 
-@app.function(image=manim_image, gpu="A10G", timeout=300, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
+@app.function(image=manim_image, timeout=300, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 @modal.fastapi_endpoint(method="POST")
 async def annotate(request: Request) -> dict:
     try:
@@ -320,10 +325,10 @@ async def status(request: Request, job_id: str = "") -> dict:
         }
     return {
         "job_id": target_id,
-        "status": "processing",
-        "current_stage": "pipeline",
+        "status": "error",
+        "current_stage": "not_found",
         "video_url": None,
-        "error_message": None,
+        "error_message": "Job not found",
         "cache_hit": False,
     }
 
@@ -364,6 +369,10 @@ async def latex_status(request: Request, job_id: str = "") -> dict:
             "step": job.get("step", "processing"),
             "progress_percentage": job.get("progress_percentage", 0),
             "pdf_b64": job.get("pdf_b64"),
+            "raw_transcription": job.get("raw_transcription"),
+            "structured_latex": job.get("structured_latex"),
+            "final_tex_code": job.get("final_tex_code"),
+            "latex_code": job.get("latex_code"),
             "error_message": job.get("error_message"),
         }
     return {"job_id": target_id, "status": "error", "error_message": "Job not found"}

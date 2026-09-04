@@ -82,12 +82,11 @@ class MainScene(Scene):
         assert not passed
         assert "Empty" in err
 
-    def test_mathtex_banned(self):
-        code = self._minimal_valid().replace("Text(", "MathTex(", 1)
-        passed, err = self._validate(code)
-        assert not passed
-        assert "Stage0" in err
-        assert "MathTex" in err
+    def test_mathtex_allowed_by_static_policy(self):
+        from backend.ci.pipeline import _static_analysis
+        code = self._minimal_valid().replace('Text("Test"', 'MathTex("x^2"')
+        passed, err = _static_analysis(code)
+        assert passed, err
 
     def test_tex_banned(self):
         code = self._minimal_valid().replace("Text(", "Tex(", 1)
