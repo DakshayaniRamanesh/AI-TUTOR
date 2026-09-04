@@ -1,18 +1,24 @@
 """
 Obsidian-Style Interactive Knowledge Graph Visualizer Panel
-Monochrome / Technical Aesthetic matching Figma Reference
-Node-Edge physics force simulation visualizing document relationships, hashtags,
-and cross-references with dragging, hover highlighting, Node Inspector sidebar, and tag filtering.
+Monochrome / Technical Aesthetic matching Figma & Kestrel Design System
+
+Features:
+- Hub-and-Spoke layout with dynamic centrality node sizing
+- Consolidated edge lines with midpoint relationship label badges (e.g. 'uses', 'is_a', 'related_to')
+- Progressive disclosure / drill-down navigation with '← Back (Viewing: <node>)'
+- Full theme adaptation with MONO_FONT typography, theme colors, and smooth scaling
+- Node Inspector sidebar with metadata, concept formulas, and direct navigation
+- Aggregates subject concept maps and notebook tag graphs into one unified knowledge network
 """
 
 import math
-import random
+from typing import List, Dict, Any, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, QGraphicsLineItem,
-    QGraphicsTextItem, QGraphicsItem, QFrame, QSplitter, QScrollArea
+    QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, QGraphicsRectItem,
+    QGraphicsTextItem, QGraphicsItem, QFrame, QSplitter, QToolTip
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF, QPointF
+from PyQt6.QtCore import Qt, pyqtSignal, QPointF
 from PyQt6.QtGui import QColor, QPen, QBrush, QFont, QPainter
 
 from ...backend.knowledge_graph.tag_graph_parser import TagGraphParser
@@ -20,137 +26,64 @@ from ..theme_manager import ThemeManager
 from ..kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
 
 
-class GraphNodeItem(QGraphicsEllipseItem):
-    def __init__(self, node_data: dict, radius: float = 12.0, parent=None):
-        super().__init__(-radius, -radius, radius * 2, radius * 2, parent)
-        self.node_data = node_data
-        self.radius = radius
-        self.vx = 0.0
-        self.vy = 0.0
-        self.edges = []
-
-        self.setFlags(
-            QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
-            QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges |
-            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-        )
-        self.setAcceptHoverEvents(True)
-
-        self._apply_node_style()
-
-    def _apply_node_style(self):
-        c = ThemeManager.instance().get_colors()
-        ntype = self.node_data.get("type", "note")
-
-        if ntype == "board":
-            # Central board nodes: solid accent circle (black in light mode)
-            self.base_color = QColor(c['accent'])
-            self.setPen(QPen(QColor(c['border_color']), 2))
-            self.setBrush(QBrush(self.base_color))
-        elif ntype == "tag":
-            # Tag nodes: subtle pill-like styling
-            self.base_color = QColor(c['panel_card_bg'])
-            self.setPen(QPen(QColor(c['border_color']), 1.5))
-            self.setBrush(QBrush(self.base_color))
-        else:
-            # Markdown / Note nodes: card background with clean border
-            self.base_color = QColor(c['bg_card'])
-            self.setPen(QPen(QColor(c['text_secondary']), 1.5))
-            self.setBrush(QBrush(self.base_color))
-
-        # Title Label
-        if hasattr(self, 'label_item') and self.label_item:
-            self.scene().removeItem(self.label_item) if self.scene() else None
-
-        self.label_item = QGraphicsTextItem(self.node_data.get("label", ""), self)
-        self.label_item.setDefaultTextColor(QColor(c['text_primary']))
-        font = QFont(MONO_FONT, 8, QFont.Weight.Bold if ntype == "board" else QFont.Weight.Medium)
-        self.label_item.setFont(font)
-
-        # Center label under circle
-        rect = self.label_item.boundingRect()
-        self.label_item.setPos(-rect.width() / 2, self.radius + 2)
-
-    def hoverEnterEvent(self, event):
-        c = ThemeManager.instance().get_colors()
-        self.setScale(1.2)
-        for edge in self.edges:
-            edge.set_highlight(True)
-        super().hoverEnterEvent(event)
-
-    def hoverLeaveEvent(self, event):
-        self.setScale(1.0)
-        for edge in self.edges:
-            edge.set_highlight(False)
-        super().hoverLeaveEvent(event)
-
-    def itemChange(self, change, value):
-        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
-            for edge in self.edges:
-                edge.update_position()
-        return super().itemChange(change, value)
+class GraphConceptNode:
+    """Normalized concept node representation."""
+    def __init__(self, name: str, node_type: str = "concept", description: str = "", metadata: dict = None):
+        self.name = name
+        self.type = node_type
+        self.description = description
+        self.metadata = metadata or {}
 
 
-class GraphEdgeItem(QGraphicsLineItem):
-    def __init__(self, source_item: GraphNodeItem, target_item: GraphNodeItem, parent=None):
-        super().__init__(parent)
-        self.source_item = source_item
-        self.target_item = target_item
-        
-        source_item.edges.append(self)
-        target_item.edges.append(self)
-
-        c = ThemeManager.instance().get_colors()
-        self.normal_pen = QPen(QColor(c['border_color']), 1.2, Qt.PenStyle.SolidLine)
-        self.highlight_pen = QPen(QColor(c['accent']), 2.2, Qt.PenStyle.SolidLine)
-        self.setPen(self.normal_pen)
-        self.setZValue(-1)
-        self.update_position()
-
-    def update_position(self):
-        p1 = self.source_item.pos()
-        p2 = self.target_item.pos()
-        self.setLine(p1.x(), p1.y(), p2.x(), p2.y())
-
-    def set_highlight(self, highlight: bool):
-        self.setPen(self.highlight_pen if highlight else self.normal_pen)
+class GraphConceptEdge:
+    """Normalized concept edge representation."""
+    def __init__(self, source_name: str, target_name: str, relationship_desc: str = "related_to"):
+        self.source_name = source_name
+        self.target_name = target_name
+        self.relationship_desc = relationship_desc
 
 
 class ObsidianGraphPanel(QWidget):
-    open_notebook_requested = pyqtSignal(str) # notebook_id
+    open_notebook_requested = pyqtSignal(str)  # notebook_id
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parser = TagGraphParser()
-        self.node_items = {}
-        self.edge_items = []
-        self.physics_enabled = True
-        self.selected_node_id = None
+        self.active_node: Optional[str] = None
+        self.all_nodes: List[GraphConceptNode] = []
+        self.all_edges: List[GraphConceptEdge] = []
+        self.node_positions: Dict[str, tuple] = {}
+        self.node_radii: Dict[str, float] = {}
+        self.node_summaries: Dict[str, str] = {}
+        self.selected_node_name: Optional[str] = None
+        self.current_filter_tag = "All"
 
         self._init_ui()
         ThemeManager.instance().theme_changed.connect(self._apply_theme)
         self._apply_theme(ThemeManager.instance().current_theme)
-
-        # Physics Force Simulation Timer (30 FPS)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._step_physics_simulation)
-        self.timer.start(33)
 
     def _init_ui(self):
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # Top Control & Filter Header Bar
+        # ── 1. Top Control & Filter Header Bar ──
         self.header_bar = QWidget(self)
         self.header_bar.setFixedHeight(50)
         h_layout = QHBoxLayout(self.header_bar)
         h_layout.setContentsMargins(16, 8, 16, 8)
         h_layout.setSpacing(8)
 
+        # Back drill-down button
+        self.btn_back = QPushButton("← MAIN GRAPH", self.header_bar)
+        self.btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_back.clicked.connect(self.go_back_to_main)
+        self.btn_back.hide()
+        h_layout.addWidget(self.btn_back)
+
         # Category Filter Pills
         self.filter_buttons = []
-        filter_tags = ["All", "Pure Calculus", "Mechanics", "Heat Flow", "Kinetics"]
+        filter_tags = ["All", "Concepts", "Notebooks", "Tags"]
         for idx, tag in enumerate(filter_tags):
             btn = QPushButton(tag, self.header_bar)
             btn.setCheckable(True)
@@ -164,67 +97,71 @@ class ObsidianGraphPanel(QWidget):
 
         # Search Input
         self.txt_search = QLineEdit(self.header_bar)
-        self.txt_search.setPlaceholderText("⌕ Search nodes...")
+        self.txt_search.setPlaceholderText("⌕ Search concepts...")
         self.txt_search.setFixedWidth(200)
-        self.txt_search.textChanged.connect(self._filter_graph)
+        self.txt_search.textChanged.connect(self._on_search_changed)
         h_layout.addWidget(self.txt_search)
 
-        # Zoom & Physics Buttons
+        # Zoom Controls
         self.btn_zoom_in = QPushButton("+", self.header_bar)
         self.btn_zoom_in.setFixedSize(28, 28)
         self.btn_zoom_in.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_zoom_in.clicked.connect(lambda: self.view.scale(1.2, 1.2))
+        self.btn_zoom_in.clicked.connect(lambda: self.view.scale(1.15, 1.15))
         h_layout.addWidget(self.btn_zoom_in)
 
         self.btn_zoom_out = QPushButton("-", self.header_bar)
         self.btn_zoom_out.setFixedSize(28, 28)
         self.btn_zoom_out.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_zoom_out.clicked.connect(lambda: self.view.scale(0.83, 0.83))
+        self.btn_zoom_out.clicked.connect(lambda: self.view.scale(1.0 / 1.15, 1.0 / 1.15))
         h_layout.addWidget(self.btn_zoom_out)
 
-        self.btn_physics = QPushButton("❚❚", self.header_bar)
-        self.btn_physics.setFixedSize(28, 28)
-        self.btn_physics.setToolTip("Toggle Physics")
-        self.btn_physics.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_physics.clicked.connect(self._toggle_physics)
-        h_layout.addWidget(self.btn_physics)
+        self.btn_reset_zoom = QPushButton("⟲", self.header_bar)
+        self.btn_reset_zoom.setFixedSize(28, 28)
+        self.btn_reset_zoom.setToolTip("Reset Zoom & Center")
+        self.btn_reset_zoom.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_reset_zoom.clicked.connect(self._reset_view)
+        h_layout.addWidget(self.btn_reset_zoom)
 
         root_layout.addWidget(self.header_bar)
 
-        # Main Splitter: Interactive Graph View (Left) + Node Inspector Sidebar (Right)
+        # ── 2. Main Splitter: Graph View (Left) + Node Inspector Sidebar (Right) ──
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.splitter.setHandleWidth(1)
 
-        # ── Left: Graph Scene & View ──
+        # Graph Container
         graph_container = QWidget(self.splitter)
         gc_layout = QVBoxLayout(graph_container)
         gc_layout.setContentsMargins(0, 0, 0, 0)
         gc_layout.setSpacing(0)
 
         self.scene = QGraphicsScene(self)
-        self.scene.setSceneRect(-1000, -800, 2000, 1600)
-        self.scene.selectionChanged.connect(self._on_scene_selection_changed)
+        self.scene.setSceneRect(-800, -800, 1600, 1600)
 
         self.view = QGraphicsView(self.scene, graph_container)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.view.mousePressEvent = self._on_view_mouse_press
+        self.view.wheelEvent = self._on_view_wheel
         gc_layout.addWidget(self.view)
 
         # Bottom Legend / Status
-        self.lbl_legend = QLabel("drag nodes to rearrange • click node to inspect", graph_container)
-        self.lbl_legend.setStyleSheet("padding: 4px 12px; font-size: 10px;")
+        self.lbl_legend = QLabel(
+            "Hub-and-Spoke Knowledge Map • Click node to drill down • Drag canvas to pan • Wheel to zoom",
+            graph_container
+        )
+        self.lbl_legend.setStyleSheet("padding: 4px 14px; font-size: 10px;")
         gc_layout.addWidget(self.lbl_legend)
 
         self.splitter.addWidget(graph_container)
 
-        # ── Right: Node Inspector Sidebar ──
+        # Right: Node Inspector Sidebar
         self.inspector_panel = self._create_inspector_panel()
         self.splitter.addWidget(self.inspector_panel)
-        self.splitter.setSizes([850, 320])
+        self.splitter.setSizes([880, 320])
 
         root_layout.addWidget(self.splitter, 1)
 
-        # Initial Graph Load
+        # Initial Load
         self.load_graph()
 
     def _create_inspector_panel(self) -> QWidget:
@@ -244,11 +181,11 @@ class ObsidianGraphPanel(QWidget):
         layout.addLayout(h_box)
 
         # Title & Subtitle
-        self.lbl_node_title = QLabel("Select a node...", panel)
+        self.lbl_node_title = QLabel("Select a concept...", panel)
         self.lbl_node_title.setWordWrap(True)
         layout.addWidget(self.lbl_node_title)
 
-        self.lbl_node_subtitle = QLabel("Unit / Topic Reference", panel)
+        self.lbl_node_subtitle = QLabel("Knowledge Graph Concept", panel)
         layout.addWidget(self.lbl_node_subtitle)
 
         # Formula / Core Snippet Box
@@ -256,13 +193,14 @@ class ObsidianGraphPanel(QWidget):
         self.box_formula.setObjectName("FormulaBox")
         fb_layout = QVBoxLayout(self.box_formula)
         fb_layout.setContentsMargins(10, 10, 10, 10)
-        self.lbl_formula = QLabel("lim A = 0", self.box_formula)
+        self.lbl_formula = QLabel("∀ x ∈ Concept: f(x) → L", self.box_formula)
         fb_layout.addWidget(self.lbl_formula)
         layout.addWidget(self.box_formula)
 
         # Description text
         self.lbl_concept_desc = QLabel(
-            "Core Concept: Direct factor cancellation reveals limit A = 0 along all linear paths through the origin.",
+            "Core Concept: Select any node in the knowledge graph to view its definition, "
+            "interconnected relationships, and derivations.",
             panel
         )
         self.lbl_concept_desc.setWordWrap(True)
@@ -275,287 +213,537 @@ class ObsidianGraphPanel(QWidget):
         mf_layout.setContentsMargins(10, 10, 10, 10)
         mf_layout.setSpacing(6)
 
-        self.lbl_meta_questions = QLabel("Linked Questions:       Q5, Q6", self.meta_frame)
-        self.lbl_meta_theorems = QLabel("Connected Outbound:     4 Theorems", self.meta_frame)
-        self.lbl_meta_confidence = QLabel("Confidence Score:       99.4%", self.meta_frame)
+        self.lbl_meta_connections = QLabel("Direct Connections:    0 Edges", self.meta_frame)
+        self.lbl_meta_type = QLabel("Concept Classification: Core Hub", self.meta_frame)
+        self.lbl_meta_confidence = QLabel("Extraction Confidence:  99.8%", self.meta_frame)
 
-        mf_layout.addWidget(self.lbl_meta_questions)
-        mf_layout.addWidget(self.lbl_meta_theorems)
+        mf_layout.addWidget(self.lbl_meta_connections)
+        mf_layout.addWidget(self.lbl_meta_type)
         mf_layout.addWidget(self.lbl_meta_confidence)
         layout.addWidget(self.meta_frame)
 
         layout.addStretch()
 
-        # Action Buttons
-        self.btn_open_board = QPushButton("Open Board", panel)
+        # Action Button
+        self.btn_open_board = QPushButton("Drill Down Into Concept", panel)
         self.btn_open_board.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_open_board.clicked.connect(self._on_open_selected_board)
+        self.btn_open_board.clicked.connect(self._on_drill_down_clicked)
         layout.addWidget(self.btn_open_board)
 
-        self.btn_expand = QPushButton("Expand Cluster", panel)
-        self.btn_expand.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout.addWidget(self.btn_expand)
-
         return panel
+
+    # ── Graph Data Aggregation & Rendering ─────────────────────────────────
+
+    def load_graph(self):
+        """Loads and combines concepts from all database subjects, notebooks, and tags."""
+        nodes_dict: Dict[str, GraphConceptNode] = {}
+        edges_list: List[GraphConceptEdge] = []
+        edge_set = set()
+
+        def add_edge_safe(src: str, tgt: str, desc: str):
+            pair = tuple(sorted([src, tgt]))
+            if pair not in edge_set and src != tgt:
+                edge_set.add(pair)
+                edges_list.append(GraphConceptEdge(src, tgt, desc))
+
+        # 1. Load subjects, notebooks, and concepts from SQLite DB
+        try:
+            from app.storage.database import SessionLocal, Subject
+            from sqlalchemy.orm import joinedload
+            with SessionLocal() as db:
+                subjects = db.query(Subject).options(
+                    joinedload(Subject.notebooks),
+                    joinedload(Subject.concept_nodes),
+                    joinedload(Subject.concept_edges)
+                ).all()
+
+                for subj in subjects:
+                    subj_name = subj.name
+                    if subj_name not in nodes_dict:
+                        nodes_dict[subj_name] = GraphConceptNode(
+                            name=subj_name,
+                            node_type="subject",
+                            description=f"Curriculum Subject Domain: {subj_name}",
+                            metadata={"subject_id": subj.id}
+                        )
+
+                    # Connect notebooks under this subject
+                    sorted_nbs = sorted(subj.notebooks, key=lambda n: n.name)
+                    for nb in sorted_nbs:
+                        if nb.name not in nodes_dict:
+                            nodes_dict[nb.name] = GraphConceptNode(
+                                name=nb.name,
+                                node_type="board",
+                                description=f"Notebook Board for {subj_name}: {nb.name}",
+                                metadata={"subject": subj_name, "notebook_id": nb.id}
+                            )
+                        add_edge_safe(subj_name, nb.name, "contains")
+
+                    # Connect sequential unit notebooks within the subject
+                    for i in range(len(sorted_nbs) - 1):
+                        add_edge_safe(sorted_nbs[i].name, sorted_nbs[i+1].name, "next_unit")
+
+                    # Connect concepts under this subject
+                    for cn in subj.concept_nodes:
+                        if cn.name not in nodes_dict:
+                            nodes_dict[cn.name] = GraphConceptNode(
+                                name=cn.name,
+                                node_type="concept",
+                                description=cn.description or f"Core concept in {subj_name}",
+                                metadata={"subject": subj_name}
+                            )
+                        add_edge_safe(subj_name, cn.name, "concept_of")
+
+                    for ce in subj.concept_edges:
+                        add_edge_safe(ce.source_name, ce.target_name, ce.relationship_desc or "related_to")
+
+        except Exception as e:
+            print(f"[KnowledgeGraph] DB load warning: {e}")
+
+        # 2. Load notebook canvas tags, series connections, and boards
+        try:
+            raw_graph = self.parser.build_knowledge_graph()
+            for n in raw_graph.get("nodes", []):
+                label = n.get("label", "")
+                if label and label not in nodes_dict:
+                    nodes_dict[label] = GraphConceptNode(
+                        name=label,
+                        node_type=n.get("type", "note"),
+                        description=f"Notebook/Tag Reference: {label}",
+                        metadata=n.get("metadata", {})
+                    )
+            for e in raw_graph.get("edges", []):
+                src_node = next((n["label"] for n in raw_graph["nodes"] if n["id"] == e["source"]), None)
+                tgt_node = next((n["label"] for n in raw_graph["nodes"] if n["id"] == e["target"]), None)
+                if src_node and tgt_node:
+                    add_edge_safe(src_node, tgt_node, e.get("type", "tagged"))
+        except Exception as e:
+            print(f"[KnowledgeGraph] Tag parser warning: {e}")
+
+        # Fallback default concepts if workspace is brand new
+        if not nodes_dict:
+            defaults = [
+                ("Decision Trees", "Supervised machine learning algorithm for classification and regression.", "concept"),
+                ("Information Gain", "Metric used to select the split attribute in decision trees.", "concept"),
+                ("Gini Index", "Measure of inequality and impurity used in CART decision tree algorithms.", "concept"),
+                ("Gain Ratio", "Modification of information gain that reduces bias toward multi-valued attributes.", "concept"),
+                ("Pruning", "Technique in machine learning that reduces the size of decision trees.", "concept"),
+                ("Machine Learning", "Branch of AI focused on building data-driven systems.", "board"),
+                ("C4.5", "Algorithm used to generate a decision tree developed by Ross Quinlan.", "concept"),
+                ("OneR", "Simple, accurate rule-based classification algorithm.", "concept"),
+            ]
+            for name, desc, ntype in defaults:
+                nodes_dict[name] = GraphConceptNode(name, ntype, desc)
+
+            def_edges = [
+                ("Decision Trees", "Information Gain", "uses"),
+                ("Decision Trees", "Gini Index", "uses"),
+                ("Decision Trees", "Gain Ratio", "uses"),
+                ("Decision Trees", "Pruning", "optimized_by"),
+                ("Decision Trees", "Machine Learning", "is_a"),
+                ("Decision Trees", "C4.5", "implemented_by"),
+                ("Decision Trees", "OneR", "related_to"),
+            ]
+            for s, t, d in def_edges:
+                add_edge_safe(s, t, d)
+
+        self.all_nodes = list(nodes_dict.values())
+        self.all_edges = edges_list
+        self.render_graph(self.all_nodes, self.all_edges)
+
+    def render_graph(self, nodes: List[GraphConceptNode], edges: List[GraphConceptEdge]):
+        """Renders the Hub-and-Spoke knowledge graph matching the subject knowledge graph design."""
+        self.scene.clear()
+        c = ThemeManager.instance().get_colors()
+        is_dark = ThemeManager.instance().is_dark()
+
+        if not nodes:
+            txt = self.scene.addText("No concepts found matching the current filter.")
+            txt.setDefaultTextColor(QColor(c['text_secondary']))
+            txt.setFont(QFont(MONO_FONT, 11))
+            return
+
+        # 1. Degree Centrality Calculation
+        degrees = {node.name: 0 for node in nodes}
+        for edge in edges:
+            if edge.source_name in degrees:
+                degrees[edge.source_name] += 1
+            if edge.target_name in degrees:
+                degrees[edge.target_name] += 1
+
+        sorted_nodes = sorted(nodes, key=lambda n: degrees.get(n.name, 0), reverse=True)
+
+        # 2. Progressive Disclosure / Drill-Down Filtering
+        if self.active_node:
+            visible_names = {self.active_node}
+            for edge in edges:
+                if edge.source_name == self.active_node:
+                    visible_names.add(edge.target_name)
+                elif edge.target_name == self.active_node:
+                    visible_names.add(edge.source_name)
+            sorted_nodes = [n for n in sorted_nodes if n.name in visible_names]
+            # Place active node dead center as hub
+            sorted_nodes.sort(key=lambda n: 0 if n.name == self.active_node else 1)
+        else:
+            max_initial_nodes = 18
+            if len(sorted_nodes) <= max_initial_nodes:
+                visible_names = {n.name for n in sorted_nodes}
+            else:
+                visible_names = {n.name for n in sorted_nodes[:max_initial_nodes]}
+            sorted_nodes = [n for n in sorted_nodes if n.name in visible_names]
+
+        visible_edges = [e for e in edges if e.source_name in visible_names and e.target_name in visible_names]
+        current_nodes = [n for n in nodes if n.name in visible_names]
+
+        self.node_positions = {}
+        self.node_radii = {}
+        self.node_summaries = {}
+
+        # Center Coordinates
+        center_x, center_y = 0.0, 0.0
+        num_spokes = max(1, len(current_nodes) - 1)
+
+        for i, node in enumerate(sorted_nodes):
+            name = node.name
+            deg = degrees.get(name, 0)
+
+            # Dynamic Sizing: Base size 16, grows by 3.5 per connection (Max 44)
+            r = 16.0 + min(deg * 3.5, 28.0)
+            if i == 0:
+                r = max(r, 26.0)  # Center hub is prominently sized
+            self.node_radii[name] = r
+            self.node_summaries[name] = node.description
+
+            # Hub-and-Spoke Layout with generous spacing to avoid text overlap
+            if i == 0:
+                self.node_positions[name] = (center_x, center_y)
+            else:
+                ring = (i - 1) % 2
+                base_dist = 260.0 if ring == 0 else 400.0
+                angle = (i - 1) * ((2 * math.pi) / num_spokes)
+                x = center_x + base_dist * math.cos(angle)
+                y = center_y + base_dist * math.sin(angle)
+                self.node_positions[name] = (x, y)
+
+        # 3. Consolidate & Draw Edge Lines with Relationship Badges
+        consolidated_edges = {}
+        for edge in visible_edges:
+            if edge.source_name in self.node_positions and edge.target_name in self.node_positions:
+                key = tuple(sorted([edge.source_name, edge.target_name]))
+                if key not in consolidated_edges:
+                    consolidated_edges[key] = {
+                        "source": edge.source_name,
+                        "target": edge.target_name,
+                        "labels": []
+                    }
+                desc = edge.relationship_desc
+                if desc and desc not in consolidated_edges[key]["labels"]:
+                    consolidated_edges[key]["labels"].append(desc)
+
+        # Edge stroke color adapted to theme
+        edge_line_color = QColor(c['border_color']) if not is_dark else QColor("#3b4252")
+        badge_bg_color = QColor("#0f172a") if is_dark else QColor("#111827")
+        badge_text_color = QColor("#e2e8f0") if is_dark else QColor("#ffffff")
+
+        for edge_data in consolidated_edges.values():
+            x1, y1 = self.node_positions[edge_data["source"]]
+            x2, y2 = self.node_positions[edge_data["target"]]
+
+            # Line (Z=0)
+            pen = QPen(edge_line_color, 1.4, Qt.PenStyle.SolidLine)
+            pen.setCosmetic(True)
+            line = self.scene.addLine(x1, y1, x2, y2, pen)
+            line.setZValue(0)
+
+            # Midpoint Relationship Badge
+            if edge_data["labels"]:
+                desc = " | ".join(edge_data["labels"])
+                mid_x = (x1 + x2) / 2.0
+                mid_y = (y1 + y2) / 2.0
+
+                lbl = QGraphicsTextItem(desc)
+                lbl.setFont(QFont("Consolas", 8, QFont.Weight.Bold))
+                lbl.setDefaultTextColor(badge_text_color)
+                lbl.setZValue(2)
+
+                b_rect = lbl.boundingRect()
+                lbl_x = mid_x - (b_rect.width() / 2.0)
+                lbl_y = mid_y - (b_rect.height() / 2.0)
+
+                # Badge Rect Container (Z=1, cleanly masks line behind it)
+                pad = 3.0
+                bg = QGraphicsRectItem(
+                    lbl_x - pad, lbl_y - pad / 2.0,
+                    b_rect.width() + (pad * 2), b_rect.height() + pad
+                )
+                bg.setBrush(QBrush(badge_bg_color))
+                bg.setPen(QPen(QColor(c['border_color']), 1.0))
+                bg.setZValue(1)
+                self.scene.addItem(bg)
+
+                lbl.setPos(lbl_x, lbl_y)
+                self.scene.addItem(lbl)
+
+        # 4. Draw Concept Nodes & Labels (Z=3 & Z=4)
+        hub_color = QColor("#3b82f6") if is_dark else QColor("#2563eb")
+        spoke_color = QColor("#60a5fa") if is_dark else QColor("#3b82f6")
+        node_border_color = QColor("#93c5fd") if is_dark else QColor("#1d4ed8")
+
+        for idx, (name, (x, y)) in enumerate(self.node_positions.items()):
+            r = self.node_radii.get(name, 16.0)
+            is_hub = (idx == 0)
+
+            ellipse = QGraphicsEllipseItem(x - r, y - r, r * 2.0, r * 2.0)
+            ellipse.setBrush(QBrush(hub_color if is_hub else spoke_color))
+            ellipse.setPen(QPen(node_border_color, 2.0 if is_hub else 1.5))
+            ellipse.setData(0, name)
+            ellipse.setZValue(3)
+            self.scene.addItem(ellipse)
+
+            # Node Label in Consolas Monospace
+            text = QGraphicsTextItem(name)
+            font_size = 9 if is_hub else 8
+            text.setFont(QFont("Consolas", font_size, QFont.Weight.Bold if is_hub else QFont.Weight.DemiBold))
+            text.setDefaultTextColor(QColor(c['text_primary']))
+
+            text_rect = text.boundingRect()
+            text.setPos(x - (text_rect.width() / 2.0), y + r + 4)
+            text.setZValue(4)
+            self.scene.addItem(text)
+
+        # Center view around the graph content
+        items_rect = self.scene.itemsBoundingRect()
+        if not items_rect.isNull():
+            self.scene.setSceneRect(items_rect.adjusted(-100, -100, 100, 100))
+            self.view.centerOn(0, 0)
+
+        # Update Inspector with the active or first node
+        target_inspect = self.active_node or (sorted_nodes[0].name if sorted_nodes else None)
+        if target_inspect:
+            self._update_inspector_by_name(target_inspect)
+
+    # ── Interaction Handlers ───────────────────────────────────────────────
+
+    def go_back_to_main(self):
+        """Returns from drill-down to the full knowledge graph."""
+        self.active_node = None
+        self.btn_back.hide()
+        self._apply_current_filters()
+
+    def _on_drill_down_clicked(self):
+        if self.selected_node_name:
+            self.active_node = self.selected_node_name
+            self.btn_back.setText(f"← Back (Viewing: {self.active_node})")
+            self.btn_back.adjustSize()
+            self.btn_back.show()
+            self._apply_current_filters()
+
+    def _on_view_mouse_press(self, event):
+        item = self.view.itemAt(event.pos())
+        if item and item.data(0):
+            node_name = item.data(0)
+            self.selected_node_name = node_name
+
+            # Show Tooltip Summary
+            if self.node_summaries.get(node_name):
+                QToolTip.setFont(QFont(MONO_FONT, 9))
+                QToolTip.showText(event.globalPosition().toPoint(), f"{node_name}:\n{self.node_summaries[node_name]}")
+
+            # Update Inspector Sidebar
+            self._update_inspector_by_name(node_name)
+
+            # Drill-down on click or toggle back
+            if getattr(self, 'active_node', None) == node_name:
+                self.go_back_to_main()
+            else:
+                self.active_node = node_name
+                self.btn_back.setText(f"← Back (Viewing: {node_name})")
+                self.btn_back.adjustSize()
+                self.btn_back.show()
+                self._apply_current_filters()
+        else:
+            QGraphicsView.mousePressEvent(self.view, event)
+
+    def _on_view_wheel(self, event):
+        zoom_in_factor = 1.15
+        zoom_out_factor = 1.0 / zoom_in_factor
+        if event.angleDelta().y() > 0:
+            self.view.scale(zoom_in_factor, zoom_in_factor)
+        else:
+            self.view.scale(zoom_out_factor, zoom_out_factor)
+
+    def _reset_view(self):
+        self.view.resetTransform()
+        items_rect = self.scene.itemsBoundingRect()
+        if not items_rect.isNull():
+            self.view.centerOn(items_rect.center())
+
+    def _on_filter_pill_clicked(self, tag: str, active_btn: QPushButton):
+        self.current_filter_tag = tag
+        for btn in self.filter_buttons:
+            btn.setChecked(btn == active_btn)
+        self._apply_current_filters()
+
+    def _on_search_changed(self, text: str):
+        self._apply_current_filters()
+
+    def _apply_current_filters(self):
+        query = self.txt_search.text().strip().lower()
+        tag = self.current_filter_tag
+
+        filtered_nodes = self.all_nodes
+        if tag == "Concepts":
+            filtered_nodes = [n for n in filtered_nodes if n.type == "concept"]
+        elif tag == "Notebooks":
+            filtered_nodes = [n for n in filtered_nodes if n.type == "board"]
+        elif tag == "Tags":
+            filtered_nodes = [n for n in filtered_nodes if n.type in ("tag", "note")]
+
+        if query:
+            filtered_nodes = [n for n in filtered_nodes if query in n.name.lower() or query in n.description.lower()]
+
+        filtered_names = {n.name for n in filtered_nodes}
+        filtered_edges = [e for e in self.all_edges if e.source_name in filtered_names and e.target_name in filtered_names]
+
+        self.render_graph(filtered_nodes, filtered_edges)
+
+    def _update_inspector_by_name(self, name: str):
+        node = next((n for n in self.all_nodes if n.name == name), None)
+        if not node:
+            return
+
+        self.selected_node_name = name
+        self.lbl_node_title.setText(name)
+        self.lbl_node_subtitle.setText(f"Type: {node.type.capitalize()} • Knowledge Map")
+
+        # Formula / Definition text
+        self.lbl_formula.setText(f"∀ x ∈ {name}: f(x) → L")
+        self.lbl_concept_desc.setText(node.description or f"Key relational knowledge node for '{name}'.")
+
+        # Connection counts
+        conns = sum(1 for e in self.all_edges if e.source_name == name or e.target_name == name)
+        self.lbl_meta_connections.setText(f"Direct Connections:    {conns} Edges")
+        self.lbl_meta_type.setText(f"Classification:        {node.type.capitalize()}")
+        self.lbl_meta_confidence.setText("Confidence Score:      99.8%")
+        self.btn_open_board.setText(f"Drill Down Into '{name}'")
+
+    # ── Theme Application ─────────────────────────────────────────────────
 
     def _apply_theme(self, theme_name: str = "light"):
         c = ThemeManager.instance().get_colors()
 
-        self.setStyleSheet(f"""
+        self.setStyleSheet(f"background-color: {c['bg_app']}; color: {c['text_primary']};")
+        self.header_bar.setStyleSheet(f"""
             QWidget {{
-                background-color: {c['bg_app']};
-                color: {c['text_primary']};
-                font-family: {MONO_FONT};
+                background-color: {c['bg_toolbar']};
+                border-bottom: 1px solid {c['border_color']};
             }}
-            QWidget#InspectorPanel {{
-                background-color: {c['bg_card']};
-                border-left: 1px solid {c['border_color']};
-            }}
-            QFrame#FormulaBox, QFrame#MetaFrame {{
-                background-color: {c['input_bg']};
-                border: 1px solid {c['border_color']};
-                border-radius: 2px;
-            }}
-            QSplitter::handle {{
-                background-color: {c['border_color']};
-            }}
-            QGraphicsView {{
-                border: none;
-                background-color: {c['bg_app']};
-            }}
-            QLineEdit {{
-                background-color: {c['input_bg']};
-                border: 1px solid {c['border_color']};
-                border-radius: 2px;
-                padding: 4px 8px;
-                font-family: {MONO_FONT};
-                font-size: 11px;
-                color: {c['text_primary']};
-            }}
-        """)
-
-        # Header Bar Styling
-        self.header_bar.setStyleSheet(f"background-color: {c['bg_card']}; border-bottom: 1px solid {c['border_color']};")
-        self.scene.setBackgroundBrush(QBrush(QColor(c['bg_app'])))
-
-        # Filter Pills Styling
-        for btn in self.filter_buttons:
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    color: {c['text_secondary']};
-                    border: 1px solid {c['border_color']};
-                    border-radius: 2px;
-                    padding: 4px 10px;
-                    font-family: {MONO_FONT};
-                    font-size: 11px;
-                    font-weight: 600;
-                }}
-                QPushButton:checked {{
-                    background-color: {c['accent']};
-                    color: {c['accent_text']};
-                    border-color: {c['accent']};
-                }}
-                QPushButton:hover:!checked {{
-                    border-color: {c['accent']};
-                    color: {c['text_primary']};
-                }}
-            """)
-
-        # Utility Buttons
-        util_style = f"""
             QPushButton {{
                 background-color: {c['bg_card']};
                 color: {c['text_primary']};
                 border: 1px solid {c['border_color']};
                 border-radius: 2px;
+                padding: 4px 10px;
                 font-family: {MONO_FONT};
-                font-weight: 700;
+                font-size: 11px;
+                font-weight: 600;
             }}
             QPushButton:hover {{
                 background-color: {c['panel_card_bg']};
                 border-color: {c['accent']};
             }}
-        """
-        self.btn_zoom_in.setStyleSheet(util_style)
-        self.btn_zoom_out.setStyleSheet(util_style)
-        self.btn_physics.setStyleSheet(util_style)
+            QPushButton:checked {{
+                background-color: {c['accent']};
+                color: {c['accent_text']};
+                border-color: {c['accent']};
+            }}
+            QLineEdit {{
+                background-color: {c['bg_card']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                padding: 4px 8px;
+                font-family: {MONO_FONT};
+                font-size: 11px;
+            }}
+        """)
 
-        # Inspector Panel Typography & Buttons
-        self.lbl_insp_badge.setStyleSheet(f"font-size: 11px; font-weight: 800; letter-spacing: 1px; color: {c['text_secondary']};")
-        self.lbl_insp_status.setStyleSheet(f"font-size: 10px; font-weight: 600; color: {c['text_secondary']};")
-        self.lbl_node_title.setStyleSheet(f"font-size: 15px; font-weight: 800; color: {c['text_primary']};")
-        self.lbl_node_subtitle.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']};")
-        self.lbl_formula.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_primary']};")
-        self.lbl_concept_desc.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']}; line-height: 1.4;")
-        self.lbl_meta_questions.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']};")
-        self.lbl_meta_theorems.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']};")
-        self.lbl_meta_confidence.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']};")
-        self.lbl_legend.setStyleSheet(f"font-size: 10px; color: {c['text_secondary']}; font-family: {MONO_FONT};")
+        self.view.setStyleSheet(f"""
+            QGraphicsView {{
+                background-color: {c['bg_card']};
+                border: none;
+            }}
+        """)
+
+        self.lbl_legend.setStyleSheet(f"""
+            QLabel {{
+                font-family: {MONO_FONT};
+                font-size: 10px;
+                color: {c['text_secondary']};
+                background: {c['bg_app']};
+                border-top: 1px solid {c['border_color']};
+                padding: 4px 12px;
+            }}
+        """)
+
+        # Inspector Panel Styling
+        self.inspector_panel.setStyleSheet(f"""
+            QWidget#InspectorPanel {{
+                background-color: {c['bg_card']};
+                border-left: 1px solid {c['border_color']};
+            }}
+            QLabel#lbl_insp_badge {{
+                font-family: {MONO_FONT};
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 1.5px;
+                color: {c['text_secondary']};
+            }}
+            QFrame#FormulaBox {{
+                background-color: {c['panel_card_bg']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+            }}
+            QFrame#FormulaBox QLabel {{
+                font-family: {MONO_FONT};
+                font-size: 11px;
+                font-weight: bold;
+                color: {c['accent'] if not ThemeManager.instance().is_dark() else '#60a5fa'};
+            }}
+            QFrame#MetaFrame {{
+                background-color: {c['panel_card_bg']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+            }}
+            QFrame#MetaFrame QLabel {{
+                font-family: {MONO_FONT};
+                font-size: 10px;
+                color: {c['text_secondary']};
+            }}
+        """)
+
+        self.lbl_node_title.setStyleSheet(f"""
+            font-size: 18px;
+            font-weight: 800;
+            color: {c['text_primary']};
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        """)
+
+        self.lbl_node_subtitle.setStyleSheet(f"""
+            font-family: {MONO_FONT};
+            font-size: 10px;
+            font-weight: 600;
+            color: {c['text_secondary']};
+        """)
+
+        self.lbl_concept_desc.setStyleSheet(f"""
+            font-size: 12px;
+            line-height: 1.5;
+            color: {c['text_primary']};
+        """)
 
         self.btn_open_board.setStyleSheet(primary_button_qss(c))
-        self.btn_expand.setStyleSheet(ghost_button_qss(c))
 
-        # Re-apply styles to graph nodes and edges
-        for node in self.node_items.values():
-            node._apply_node_style()
-        for edge in self.edge_items:
-            edge.normal_pen = QPen(QColor(c['border_color']), 1.2, Qt.PenStyle.SolidLine)
-            edge.highlight_pen = QPen(QColor(c['accent']), 2.2, Qt.PenStyle.SolidLine)
-            edge.setPen(edge.normal_pen)
-
-    def load_graph(self):
-        self.scene.clear()
-        self.node_items.clear()
-        self.edge_items.clear()
-
-        graph_data = self.parser.build_knowledge_graph()
-        nodes = graph_data["nodes"]
-        edges = graph_data["edges"]
-
-        num_nodes = len(nodes)
-        radius_span = max(180, num_nodes * 25)
-
-        for idx, n in enumerate(nodes):
-            r = 14.0 if n["type"] == "board" else (11.0 if n["type"] == "note" else 9.0)
-            node_item = GraphNodeItem(n, radius=r)
-            
-            angle = (2 * math.pi / max(1, num_nodes)) * idx
-            dist = random.uniform(60, radius_span)
-            x = dist * math.cos(angle)
-            y = dist * math.sin(angle)
-            node_item.setPos(x, y)
-
-            self.scene.addItem(node_item)
-            self.node_items[n["id"]] = node_item
-
-        for e in edges:
-            src_item = self.node_items.get(e["source"])
-            tgt_item = self.node_items.get(e["target"])
-            if src_item and tgt_item:
-                edge_item = GraphEdgeItem(src_item, tgt_item)
-                self.scene.addItem(edge_item)
-                self.edge_items.append(edge_item)
-
-        # Select first node if available
-        if nodes:
-            first_node = nodes[0]
-            self._update_inspector(first_node)
-
-    def _on_filter_pill_clicked(self, tag: str, active_btn: QPushButton):
-        for btn in self.filter_buttons:
-            btn.setChecked(btn == active_btn)
-        if tag == "All":
-            self._filter_graph("")
-        else:
-            self._filter_graph(tag)
-
-    def _on_scene_selection_changed(self):
-        selected = self.scene.selectedItems()
-        for item in selected:
-            if isinstance(item, GraphNodeItem):
-                self._update_inspector(item.node_data)
-                break
-
-    def _update_inspector(self, node_data: dict):
-        self.selected_node_id = node_data.get("id")
-        label = node_data.get("label", "Node")
-        ntype = node_data.get("type", "note")
-
-        self.lbl_node_title.setText(label)
-        self.lbl_node_subtitle.setText(f"Type: {ntype.capitalize()} • Knowledge Graph Reference")
-        
-        # Customize formula and metadata display based on node
-        clean_label = label.replace("#", "")
-        self.lbl_formula.setText(f"∀ x ∈ {clean_label}: f(x) → L")
-        self.lbl_concept_desc.setText(
-            f"Core Concept: Represents relational mathematical knowledge connections for '{clean_label}' "
-            "across derivations, proofs, and saved notebook boards."
-        )
-        self.lbl_meta_questions.setText(f"Linked References:     {len(self.edge_items)} Edges")
-        self.lbl_meta_theorems.setText(f"Connected Outbound:    {ntype.capitalize()} Node")
-        self.lbl_meta_confidence.setText("Confidence Score:      99.8%")
-        self.btn_open_board.setText(f"Open {label}")
-
-    def _on_open_selected_board(self):
-        if not self.selected_node_id:
-            return
-        node_item = self.node_items.get(self.selected_node_id)
-        if node_item:
-            meta = node_item.node_data.get("metadata", {})
-            nb_id = meta.get("id") or self.selected_node_id.replace("doc_", "").replace("md_", "")
-            self.open_notebook_requested.emit(nb_id)
-
-    def _toggle_physics(self):
-        self.physics_enabled = not self.physics_enabled
-        if self.physics_enabled:
-            self.btn_physics.setText("❚❚")
-            self.timer.start(33)
-        else:
-            self.btn_physics.setText("▶")
-            self.timer.stop()
-
-    def _filter_graph(self, text: str):
-        query = text.strip().lower()
-        for node_id, node_item in self.node_items.items():
-            label = node_item.node_data.get("label", "").lower()
-            if not query or query in label:
-                node_item.setOpacity(1.0)
-            else:
-                node_item.setOpacity(0.15)
-
-    def _step_physics_simulation(self):
-        if not self.physics_enabled or not self.node_items:
-            return
-
-        nodes = list(self.node_items.values())
-        k_repulsion = 40000.0
-        k_attraction = 0.04
-        rest_length = 120.0
-
-        for i in range(len(nodes)):
-            n1 = nodes[i]
-            p1 = n1.pos()
-            for j in range(i + 1, len(nodes)):
-                n2 = nodes[j]
-                p2 = n2.pos()
-
-                dx = p2.x() - p1.x()
-                dy = p2.y() - p1.y()
-                dist_sq = dx * dx + dy * dy + 0.01
-                dist = math.sqrt(dist_sq)
-
-                if dist < 400:
-                    force = k_repulsion / dist_sq
-                    fx = (dx / dist) * force
-                    fy = (dy / dist) * force
-
-                    n1.vx -= fx
-                    n1.vy -= fy
-                    n2.vx += fx
-                    n2.vy += fy
-
-        for edge in self.edge_items:
-            n1 = edge.source_item
-            n2 = edge.target_item
-            p1 = n1.pos()
-            p2 = n2.pos()
-
-            dx = p2.x() - p1.x()
-            dy = p2.y() - p1.y()
-            dist = math.sqrt(dx * dx + dy * dy) + 0.01
-
-            force = (dist - rest_length) * k_attraction
-            fx = (dx / dist) * force
-            fy = (dy / dist) * force
-
-            n1.vx += fx
-            n1.vy -= fy
-            n2.vx -= fx
-            n2.vy -= fy
-
-        for n in nodes:
-            if not n.isSelected():
-                n.vx *= 0.85
-                n.vy *= 0.85
-                n.setPos(n.x() + n.vx, n.y() + n.vy)
+        # Re-render current graph with updated theme colors
+        if self.all_nodes:
+            self._apply_current_filters()

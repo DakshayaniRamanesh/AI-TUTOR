@@ -7,10 +7,12 @@ Matches the Figma reference design:
 - Sharp geometric action buttons: 'NEW CANVAS' (solid primary) and 'SUBJECTS' (ghost bordered)
 """
 
+import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from ..theme_manager import ThemeManager
 from ..kestrel_theme import MONO_FONT
 
@@ -36,6 +38,15 @@ class HomeView(QWidget):
         c_layout = QVBoxLayout(center_box)
         c_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         c_layout.setSpacing(14)
+
+        # Logo Icon
+        self.lbl_logo = QLabel(center_box)
+        self.lbl_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_logo.setFixedSize(80, 80)
+        self.lbl_logo.setStyleSheet("background: transparent;")
+        c_layout.addWidget(self.lbl_logo, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        c_layout.addSpacing(6)
 
         # Top micro-tagline (monospace, uppercase, letter-spaced)
         self.lbl_tagline = QLabel("ADAPTIVE STEM LEARNING ENVIRONMENT", center_box)
@@ -88,6 +99,19 @@ class HomeView(QWidget):
     def _apply_theme(self, theme_name: str = "light"):
         c = ThemeManager.instance().get_colors()
         self.setStyleSheet(f"background-color: {c['bg_app']};")
+
+        # Set theme-appropriate logo
+        logo_filename = "kestrel_logo_dark.png" if theme_name == "dark" else "kestrel_logo_light.png"
+        logo_path = os.path.join(os.path.dirname(__file__), "..", "assets", logo_filename)
+        if os.path.exists(logo_path):
+            pixmap = QPixmap(logo_path)
+            if not pixmap.isNull():
+                scaled_pixmap = pixmap.scaled(
+                    72, 72,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self.lbl_logo.setPixmap(scaled_pixmap)
 
         self.lbl_tagline.setStyleSheet(f"""
             font-family: {MONO_FONT};

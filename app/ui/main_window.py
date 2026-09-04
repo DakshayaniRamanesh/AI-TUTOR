@@ -54,7 +54,8 @@ from .theme_manager import ThemeManager
 from .widgets.pomodoro_timer import PomodoroTimerWidget
 from .widgets.latex_editor_widget import LatexEditorWidget
 from .widgets.speedometer_progress_widget import SpeedometerProgressWidget
-from .widgets.magic_orb_widget import MagicOrbWidget
+from .widgets.feather_ai_button import FeatherAIButton
+MagicOrbWidget = FeatherAIButton
 
 from ..backend.math_engine.stem_solver import solve_stem_question
 from ..backend.workspace.pdf_rag_manager import PdfRAGManager
@@ -1006,7 +1007,7 @@ class MainWindow(QMainWindow):
         self.ask_bar.pdf_requested.connect(self._open_pdf_dialog)
         pl.addWidget(self.ask_bar, stretch=1)
 
-        # ── PenEcho Magic Orb HUD ──
+        # ── Feather AI Trigger HUD ──
         sep2 = QFrame(pill)
         sep2.setFrameShape(QFrame.Shape.VLine)
         sep2.setFixedHeight(18)
@@ -1015,18 +1016,19 @@ class MainWindow(QMainWindow):
         pl.addWidget(sep2)
         pl.addSpacing(4)
 
-        self.magic_orb = MagicOrbWidget(pill)
-        self.magic_orb.trigger_ai_requested.connect(self._on_magic_orb_triggered)
-        self.magic_orb.auto_ai_toggled.connect(self._on_auto_ai_toggled)
-        self.magic_orb.delay_changed.connect(self._on_auto_ai_delay_changed)
-        pl.addWidget(self.magic_orb)
+        self.feather_button = FeatherAIButton(pill)
+        self.feather_button.trigger_ai_requested.connect(self._on_magic_orb_triggered)
+        self.feather_button.auto_ai_toggled.connect(self._on_auto_ai_toggled)
+        self.feather_button.delay_changed.connect(self._on_auto_ai_delay_changed)
+        self.magic_orb = self.feather_button
+        pl.addWidget(self.feather_button)
 
         outer.addWidget(pill)
         return hud
 
     def _on_auto_ai_requested(self, query: str, target_pos: QPointF):
         from .penecho_integration.ai_canvas_bridge import AICanvasWorker, create_draft_from_payload
-        self.magic_orb.set_state("thinking", "Analyzing...")
+        self.magic_orb.set_state("thinking", "Feathering…")
 
         # Collision-free positioning
         clean_pos = self._find_non_overlapping_pos(target_pos, width=400.0, height=200.0)

@@ -71,14 +71,18 @@ class KnowledgeGraphWidget(QGraphicsView):
     def render_graph(self, nodes, edges):
         self._scene.clear()
         self.last_nodes, self.last_edges = nodes, edges
+        from app.ui.theme_manager import ThemeManager
+        from app.ui.kestrel_theme import MONO_FONT
+        c = ThemeManager.instance().get_colors()
+        is_dark = ThemeManager.instance().is_dark()
         
         if not nodes:
             placeholder = self._scene.addText(
                 "No concepts extracted yet.\n"
                 "Upload a PDF and generate notes/video to populate the graph."
             )
-            placeholder.setDefaultTextColor(QColor("#8888aa"))
-            placeholder.setFont(QFont("Segoe UI", 12))
+            placeholder.setDefaultTextColor(QColor(c['text_secondary']))
+            placeholder.setFont(QFont(MONO_FONT, 11))
             return
 
         # --- Step 4 & 5: Calculate Centrality and Sizes ---
@@ -124,9 +128,9 @@ class KnowledgeGraphWidget(QGraphicsView):
             name = node.name
             deg = degrees.get(name, 0)
             
-            # 3. Dynamic Sizing: Base size is 14, grows by 4 for every connection (Max 40)
-            r = 14 + (deg * 4)
-            self.node_radii[name] = min(r, 40)
+            # 3. Dynamic Sizing: Base size is 16, grows by 4 for every connection (Max 42)
+            r = 16 + (deg * 4)
+            self.node_radii[name] = min(r, 42)
             
             # 4. Hub-and-Spoke Layout
             if i == 0:
@@ -159,12 +163,16 @@ class KnowledgeGraphWidget(QGraphicsView):
                 if edge.relationship_desc and edge.relationship_desc not in consolidated_edges[key]["labels"]:
                     consolidated_edges[key]["labels"].append(edge.relationship_desc)
 
+        edge_line_color = QColor(c['border_color']) if not is_dark else QColor("#3b4252")
+        badge_bg_color = QColor("#0f172a") if is_dark else QColor("#111827")
+        badge_text_color = QColor("#e2e8f0") if is_dark else QColor("#ffffff")
+
         for edge_data in consolidated_edges.values():
             x1, y1 = node_positions[edge_data["source"]]
             x2, y2 = node_positions[edge_data["target"]]
             
             # 1. Draw the line (Z=0, very bottom)
-            pen = QPen(QColor("#3d5af1"), 1.2, Qt.PenStyle.SolidLine)
+            pen = QPen(edge_line_color, 1.4, Qt.PenStyle.SolidLine)
             pen.setCosmetic(True)
             line = self._scene.addLine(x1, y1, x2, y2, pen)
             line.setZValue(0)
@@ -178,8 +186,8 @@ class KnowledgeGraphWidget(QGraphicsView):
                 
                 # Create text item (Z=2)
                 lbl = QGraphicsTextItem(desc)
-                lbl.setFont(QFont("Segoe UI", 8, QFont.Weight.Medium))
-                lbl.setDefaultTextColor(QColor("#a8b2d1"))
+                lbl.setFont(QFont("Consolas", 8, QFont.Weight.Bold))
+                lbl.setDefaultTextColor(badge_text_color)
                 lbl.setZValue(2)
                 
                 # Center the text exactly on the midpoint
@@ -188,27 +196,37 @@ class KnowledgeGraphWidget(QGraphicsView):
                 lbl_y = mid_y - (boundingRect.height() / 2)
                 
                 # Background rect for readability (Z=1, hides the line underneath)
-                bg = QGraphicsRectItem(lbl_x, lbl_y, boundingRect.width(), boundingRect.height())
-                bg.setBrush(QBrush(QColor("#1a1a2e")))
-                bg.setPen(QPen(Qt.PenStyle.NoPen))
+                pad = 3.0
+                bg = QGraphicsRectItem(
+                    lbl_x - pad, lbl_y - pad / 2.0,
+                    boundingRect.width() + (pad * 2), boundingRect.height() + pad
+                )
+                bg.setBrush(QBrush(badge_bg_color))
+                bg.setPen(QPen(QColor(c['border_color']), 1.0))
                 bg.setZValue(1)
                 self._scene.addItem(bg)
                 
                 lbl.setPos(lbl_x, lbl_y)
                 self._scene.addItem(lbl)
 
-        for name, (x, y) in node_positions.items():
-            r = self.node_radii.get(name,14)
+        hub_color = QColor("#3b82f6") if is_dark else QColor("#2563eb")
+        spoke_color = QColor("#60a5fa") if is_dark else QColor("#3b82f6")
+        node_border_color = QColor("#93c5fd") if is_dark else QColor("#1d4ed8")
+
+        for idx, (name, (x, y)) in enumerate(node_positions.items()):
+            r = self.node_radii.get(name, 16)
+            is_hub = (idx == 0)
             ellipse = QGraphicsEllipseItem(x - r, y - r, r * 2, r * 2)
-            ellipse.setBrush(QBrush(QColor("#4361ee")))
-            ellipse.setPen(QPen(QColor("#7b8cff"), 2))
+            ellipse.setBrush(QBrush(hub_color if is_hub else spoke_color))
+            ellipse.setPen(QPen(node_border_color, 2.0 if is_hub else 1.5))
             ellipse.setData(0, name)
             ellipse.setZValue(3)  # Nodes above edges and labels
             self._scene.addItem(ellipse)
 
             text = QGraphicsTextItem(name)
-            text.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
-            text.setDefaultTextColor(QColor("#c8d6e5"))
+            font_size = 9 if is_hub else 8
+            text.setFont(QFont("Consolas", font_size, QFont.Weight.Bold if is_hub else QFont.Weight.DemiBold))
+            text.setDefaultTextColor(QColor(c['text_primary']))
             
             # Center the text horizontally, place below the circle
             text_rect = text.boundingRect()
