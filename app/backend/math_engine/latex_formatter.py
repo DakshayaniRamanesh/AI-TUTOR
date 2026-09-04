@@ -172,13 +172,17 @@ def clean_math_syntax(math_str: str) -> str:
 
 
 def format_math_to_html(raw_text: str) -> str:
-    """
+    r"""
     Parses a raw LaTeX document or Markdown + Math string into a clean, PDF-level HTML view
     with clear heading hierarchy, bolding, bullet points, and typeset math notation.
-    Never drops fractions, division marks, or mathematical terms.
+    Completely eliminates raw LaTeX syntax (\section, \begin{center}, \textbf, \vspace, etc.)
+    and renders clean, beautiful typography.
     """
     if not raw_text or not raw_text.strip():
-        return "<p>No content provided.</p>"
+        return "<p style='color:#888; font-style:italic;'>No content provided.</p>"
+
+    import datetime
+    today_str = datetime.date.today().strftime("%B %d, %Y")
 
     text = raw_text
 
@@ -187,34 +191,159 @@ def format_math_to_html(raw_text: str) -> str:
     if doc_body_m:
         text = doc_body_m.group(1)
 
-    # Clean preambles & configuration
+    # 1. Clean preambles & configuration
     text = re.sub(r'\\documentclass\[.*?\]\{.*?\}|\\documentclass\{.*?\}', '', text)
     text = re.sub(r'\\usepackage\[.*?\]\{.*?\}|\\usepackage\{.*?\}', '', text)
     text = re.sub(r'\\title\{.*?\}|\\author\{.*?\}|\\date\{.*?\}|\\maketitle', '', text)
-    text = re.sub(r'\\(Large|large|LARGE|huge|Huge|small|footnotesize|tiny|normalsize|centering|noindent)', '', text)
 
-    # 1. Format Display Math Environments
+    # 2. Format \begin{center} ... \end{center} header blocks
+    def _center_repl(m):
+        inner = m.group(1).strip()
+        return f'<div style="text-align: center; margin-bottom: 22px; padding-bottom: 8px;">{inner}</div>'
+    text = re.sub(r'\\begin\{center\}(.*?)\\end\{center\}', _center_repl, text, flags=re.DOTALL)
+
+    # 3. Clean spacing and date macros
+    text = re.sub(r'\\vspace\*?\{[^{}]*\}', '<div style="height: 10px;"></div>', text)
+    text = re.sub(r'\\hspace\*?\{[^{}]*\}', '&nbsp;&nbsp;', text)
+    text = text.replace(r'\today', today_str)
+
+    # 4. Handle \boxed{...} using balanced brace extraction
+    i = 0
+    while i < len(text):
+        idx = text.find(r'\boxed', i)
+        if idx == -1:
+            break
+        j = idx + 6
+        while j < len(text) and text[j].isspace():
+            j += 1
+        if j < len(text) and text[j] == '{':
+            inner, end_j = extract_balanced_group(text, j)
+            inner_clean = clean_math_syntax(inner)
+            repl = (
+                f'<div style="display: inline-block; border: 1.2px solid currentColor; '
+                f'background: transparent; padding: 3px 12px; margin: 6px auto; '
+                f'font-weight: 600; font-size: 1.08em;">{inner_clean}</div>'
+            )
+            text = text[:idx] + repl + text[end_j:]
+            i = idx + len(repl)
+        else:
+            i = idx + 6
+
+    # 5. Handle \textbf{...}, \textit{...}, \emph{...}, \underline{...}
+    for cmd, tag in [(r'\textbf', 'b'), (r'\textit', 'i'), (r'\emph', 'i'), (r'\underline', 'u')]:
+        i = 0
+        while i < len(text):
+            idx = text.find(cmd, i)
+            if idx == -1:
+                break
+            j = idx + len(cmd)
+            while j < len(text) and text[j].isspace():
+                j += 1
+            if j < len(text) and text[j] == '{':
+                inner, end_j = extract_balanced_group(text, j)
+                inner_clean = re.sub(r'\\(Large|large|LARGE|huge|Huge|small|footnotesize|tiny|normalsize)', '', inner).strip()
+                repl = f'<{tag}>{inner_clean}</{tag}>'
+                text = text[:idx] + repl + text[end_j:]
+                i = idx + len(repl)
+            else:
+                i = idx + len(cmd)
+
+    # 6. Sections and Subsections (authentic LaTeX typography without thick web borders)
+    def _sec_repl(m):
+        title = m.group(1).strip()
+        return (
+            f'<div class="pdf-sec-head" style="font-size: 14pt; font-weight: bold; '
+            f'margin-top: 18pt; margin-bottom: 5pt; font-family: serif;">{title}</div>'
+        )
+    text = re.sub(r'\\section\*?\{([^{}]+)\}', _sec_repl, text)
+
+    def _subsec_repl(m):
+        title = m.group(1).strip()
+        return (
+            f'<div class="pdf-subsec-head" style="font-size: 12pt; font-weight: bold; '
+            f'margin-top: 12pt; margin-bottom: 4pt; font-family: serif;">{title}</div>'
+        )
+    text = re.sub(r'\\subsection\*?\{([^{}]+)\}', _subsec_repl, text)
+
+    def _subsubsec_repl(m):
+        title = m.group(1).strip()
+        return f'<div style="font-size: 11pt; font-weight: bold; margin-top: 9pt; margin-bottom: 3pt;">{title}</div>'
+    text = re.sub(r'\\subsubsection\*?\{([^{}]+)\}', _subsubsec_repl, text)
+
+    # 7. Lists: itemize and enumerate
+    def _itemize_repl(m):
+        inner = m.group(1)
+        items = re.split(r'\\item\s+', inner)
+        lis = []
+        for it in items:
+            it = it.strip()
+            if it:
+                lis.append(f'<li style="margin-bottom: 3px; line-height: 1.45;">{it}</li>')
+        return f'<ul style="margin: 5pt 0 8pt 20pt; padding: 0;">{"".join(lis)}</ul>'
+    text = re.sub(r'\\begin\{itemize\}(.*?)\\end\{itemize\}', _itemize_repl, text, flags=re.DOTALL)
+
+    def _enum_repl(m):
+        inner = m.group(1)
+        items = re.split(r'\\item\s+', inner)
+        lis = []
+        for it in items:
+            it = it.strip()
+            if it:
+                lis.append(f'<li style="margin-bottom: 3px; line-height: 1.45;">{it}</li>')
+        return f'<ol style="margin: 5pt 0 8pt 20pt; padding: 0;">{"".join(lis)}</ol>'
+    text = re.sub(r'\\begin\{enumerate\}(.*?)\\end\{enumerate\}', _enum_repl, text, flags=re.DOTALL)
+
+    # 8. Align / Aligned multi-line math environments
+    def _align_repl(m):
+        lines = m.group(1).strip().split(r'\\')
+        rows = []
+        for l in lines:
+            l = l.strip()
+            if not l:
+                continue
+            # Normalize escaped ampersands that might have leaked
+            l = l.replace(r'\&=', '&=').replace(r'\&', '&')
+            if '&=' in l:
+                lhs, rhs = l.split('&=', 1)
+                lhs_c = clean_math_syntax(lhs.replace('&', '').strip())
+                rhs_c = clean_math_syntax(rhs.replace('&', '').strip())
+                rows.append(
+                    f'<tr><td style="text-align: right; padding: 2px 4px; font-size: 1.08em; font-weight: 500;">{lhs_c}</td>'
+                    f'<td style="text-align: left; padding: 2px 4px; font-size: 1.08em; font-weight: 500;">= {rhs_c}</td></tr>'
+                )
+            elif '&' in l:
+                parts = [clean_math_syntax(p.replace('&', '').strip()) for p in l.split('&')]
+                tds = "".join(f'<td style="padding: 2px 6px; font-size: 1.08em;">{p}</td>' for p in parts)
+                rows.append(f'<tr>{tds}</tr>')
+            else:
+                c = clean_math_syntax(l)
+                rows.append(f'<tr><td colspan="2" style="text-align: center; padding: 2px 4px; font-size: 1.08em;">{c}</td></tr>')
+        return f'<table style="margin: 8pt auto; border-collapse: collapse;">{"".join(rows)}</table>'
+
+    text = re.sub(r'\\begin\{align\*?\}(.*?)\\end\{align\*?\}', _align_repl, text, flags=re.DOTALL)
+    text = re.sub(r'\\begin\{aligned\}(.*?)\\end\{aligned\}', _align_repl, text, flags=re.DOTALL)
+
+    # 9. Format Display Math Environments
     def _disp_repl(m):
         c = clean_math_syntax(m.group(1))
-        return f'<div style="margin: 6px 0; font-size: 1.1em; line-height: 1.6;">{c}</div>'
+        return f'<div class="pdf-display-math" style="text-align: center; margin: 10px 0; font-size: 1.12em; font-weight: 600; line-height: 1.6;">{c}</div>'
 
     text = re.sub(r'\\begin\{equation\*?\}(.*?)\\end\{equation\*?\}', _disp_repl, text, flags=re.DOTALL)
-    text = re.sub(r'\\begin\{align\*?\}(.*?)\\end\{align\*?\}', _disp_repl, text, flags=re.DOTALL)
     text = re.sub(r'\\\[(.*?)\\\]', _disp_repl, text, flags=re.DOTALL)
     text = re.sub(r'\$\$(.*?)\$\$', _disp_repl, text, flags=re.DOTALL)
 
-    # 2. Format Inline Math
+    # 10. Format Inline Math
     def _inline_repl(m):
         c = clean_math_syntax(m.group(1))
-        return f'<span>{c}</span>'
+        return f'<span class="pdf-inline-math" style="font-weight: 600;">{c}</span>'
 
     text = re.sub(r'\\\((.*?)\\\)', _inline_repl, text)
     text = re.sub(r'\$([^\$\n]+)\$', _inline_repl, text)
 
-    # 3. Parse bare LaTeX fractions and roots
+    # 11. Parse bare LaTeX fractions and roots
     text = parse_math_fractions_and_roots(text)
 
-    # 4. Line-by-line Markdown Structure
+    # 12. Line-by-line Markdown Structure (if Markdown mixed in)
     lines = text.split('\n')
     out = []
     for line in lines:
@@ -223,32 +352,41 @@ def format_math_to_html(raw_text: str) -> str:
             out.append('<br/>')
             continue
         if sline.startswith('#### '):
-            out.append(f'<div style="font-size: 14px; font-weight: 700; margin-top: 8px; margin-bottom: 3px; color: #0a0a0a;">{sline[5:].strip()}</div>')
+            out.append(f'<div style="font-size: 14px; font-weight: 700; margin-top: 8px; margin-bottom: 3px;">{sline[5:].strip()}</div>')
         elif sline.startswith('### '):
-            out.append(f'<div style="font-size: 16px; font-weight: 800; margin-top: 10px; margin-bottom: 4px; color: #0a0a0a;">{sline[4:].strip()}</div>')
+            out.append(f'<div style="font-size: 16px; font-weight: 800; margin-top: 10px; margin-bottom: 4px;">{sline[4:].strip()}</div>')
         elif sline.startswith('## '):
-            out.append(f'<div style="font-size: 18px; font-weight: 800; margin-top: 12px; margin-bottom: 5px; color: #0a0a0a;">{sline[3:].strip()}</div>')
+            out.append(f'<div style="font-size: 18px; font-weight: 800; margin-top: 12px; margin-bottom: 5px;">{sline[3:].strip()}</div>')
         elif sline.startswith('# '):
-            out.append(f'<div style="font-size: 20px; font-weight: 800; margin-top: 14px; margin-bottom: 6px; color: #0a0a0a;">{sline[2:].strip()}</div>')
+            out.append(f'<div style="font-size: 20px; font-weight: 800; margin-top: 14px; margin-bottom: 6px;">{sline[2:].strip()}</div>')
         elif re.match(r'^[\*\-]\s+', sline):
             item = re.sub(r'^[\*\-]\s+', '', sline)
             out.append(f'<div style="margin-left: 14px; margin-top: 2px; margin-bottom: 2px; line-height: 1.5;">• &nbsp;{item}</div>')
         elif re.match(r'^\d+\.\s+', sline):
             m = re.match(r'^(\d+)\.\s+(.*)$', sline)
             out.append(f'<div style="margin-left: 14px; margin-top: 2px; margin-bottom: 2px; line-height: 1.5;"><b>{m.group(1)}.</b> &nbsp;{m.group(2)}</div>')
+        elif sline.startswith('<div') or sline.startswith('<ul') or sline.startswith('<ol') or sline.startswith('<table') or sline.startswith('<p') or sline.startswith('</'):
+            out.append(sline)
         else:
             out.append(f'<div style="line-height: 1.6; margin-bottom: 3px;">{sline}</div>')
 
     text = "".join(out)
 
-    # 5. Inline Bolds & Italics
+    # 13. Inline Bolds & Italics
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'__(.+?)__', r'<b>\1</b>', text)
     text = re.sub(r'(?<![a-zA-Z0-9])\*([^\*\n<]+?)\*(?![a-zA-Z0-9])', r'<i>\1</i>', text)
 
-    # 6. Global symbols & linebreaks
+    # 14. Global symbols & linebreaks
     text = replace_greek_and_symbols(text)
     text = text.replace(r'\\', '<br/>').replace(r'\newline', '<br/>').replace(r'\par', '<br/>')
     text = text.replace(r'\%', '%').replace(r'\$', '$').replace(r'\&', '&').replace(r'\_', '_')
+    text = re.sub(r'\\(Large|large|LARGE|huge|Huge|small|footnotesize|tiny|normalsize|centering|noindent)', '', text)
+
+    # 15. Clean any leftover stray LaTeX commands (\foo{bar} -> bar, \foo -> "")
+    # Unpack any remaining unknown \cmd{content} to just content
+    text = re.sub(r'\\[a-zA-Z]+\{([^{}]+)\}', r'\1', text)
+    # Strip bare unknown \cmd
+    text = re.sub(r'\\[a-zA-Z]+\*?', '', text)
 
     return text.strip()

@@ -48,7 +48,7 @@ def _route_compile_check(state: LatexJob) -> str:
     if state.status == JobStatus.ERROR:
         return END
     
-    if state.has_build_error:
+    if state.has_build_error and state.retry_count < 2:
         print(f"[{state.job_id}] Build error detected, routing back to structure (retry {state.retry_count})")
         return "structure"
     
@@ -85,7 +85,8 @@ def build_latex_graph():
     
     graph.add_conditional_edges("transcribe", lambda state: _route_general(state, "structure"), {"structure": "structure", END: END})
     graph.add_conditional_edges("structure", lambda state: _route_general(state, "template_apply"), {"template_apply": "template_apply", END: END})
-    graph.add_conditional_edges("template_apply", lambda state: _route_general(state, END), {END: END})
+    graph.add_conditional_edges("template_apply", lambda state: _route_general(state, "compile_check"), {"compile_check": "compile_check", END: END})
+    graph.add_conditional_edges("compile_check", _route_compile_check, {"structure": "structure", END: END})
 
     return graph.compile()
 
@@ -111,6 +112,10 @@ class _FallbackLatexPipeline:
             return state
 
         state = self.template.run(state)
+        if state.status == JobStatus.ERROR:
+            return state
+
+        state = self.compile_node.run(state)
         return state
 
 

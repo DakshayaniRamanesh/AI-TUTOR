@@ -161,7 +161,7 @@ class CodeGenAgent:
                 import google.generativeai as genai
                 if self.google_api_key:
                     genai.configure(api_key=self.google_api_key)
-                    for model_name in ["gemini-1.5-flash", "gemini-1.5-flash-latest"]:
+                    for model_name in ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"]:
                         try:
                             self.gemini_model = genai.GenerativeModel(model_name)
                             self._gemini_model_name = model_name
@@ -197,12 +197,15 @@ class CodeGenAgent:
         if self._groq_client:
             try:
                 response = self._groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="qwen/qwen3.6-27b",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=4096,
                 )
                 if response.choices and response.choices[0].message.content:
-                    return response.choices[0].message.content, "groq/llama-3.3-70b-versatile"
+                    raw = response.choices[0].message.content
+                    import re as _re
+                    raw = _re.sub(r'<think>.*?</think>', '', raw, flags=_re.DOTALL).strip()
+                    return raw, "groq/qwen3.6-27b"
             except Exception as e:
                 print(f"[CodeGenAgent] Groq error: {e}")
         return "", ""

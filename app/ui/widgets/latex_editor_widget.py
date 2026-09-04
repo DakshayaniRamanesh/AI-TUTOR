@@ -158,11 +158,9 @@ class LatexEditorWidget(QWidget):
 
         is_dark = self.theme_mgr.is_dark()
         page_bg = "#ffffff" if not is_dark else "#1c1c1e"
-        outer_bg = "#f2f2f7" if not is_dark else "#111113"
-        text_col = "#000000" if not is_dark else "#ffffff"
-        head_col = "#000000" if not is_dark else "#ffffff"
-        math_bg = "#f8f9fa" if not is_dark else "#27272a"
-        border_col = "#000000" if not is_dark else "#444444"
+        outer_bg = "#f4f4f6" if not is_dark else "#111113"
+        text_col = "#111111" if not is_dark else "#e8e8ed"
+        border_col = "transparent"
 
         html_doc = f"""
         <!DOCTYPE html>
@@ -172,74 +170,56 @@ class LatexEditorWidget(QWidget):
                 body {{
                     background-color: {outer_bg};
                     margin: 0;
-                    padding: 20px 10px;
+                    padding: 24px 12px;
                     display: flex;
                     justify-content: center;
-                    font-family: 'Cambria', 'Georgia', 'Times New Roman', serif;
+                    font-family: 'Latin Modern Roman', 'Computer Modern Roman', 'CMU Serif', 'Times New Roman', 'Nimbus Roman', 'Times', serif;
+                    -webkit-font-smoothing: antialiased;
                 }}
                 .pdf-page {{
                     background-color: {page_bg};
                     color: {text_col};
-                    width: 92%;
-                    max-width: 760px;
+                    width: 90%;
+                    max-width: 720px;
                     min-height: 960px;
                     margin: 0 auto;
-                    padding: 50px 60px;
-                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-                    border: 1px solid {border_col};
+                    padding: 50px 65px;
+                    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+                    border: none;
                     box-sizing: border-box;
-                }}
-                .pdf-header {{
-                    text-align: center;
-                    border-bottom: 2px solid {border_col};
-                    padding-bottom: 16px;
-                    margin-bottom: 24px;
-                }}
-                .pdf-header h1 {{
-                    font-size: 24px;
-                    margin: 0 0 6px 0;
-                    color: {head_col};
-                    font-family: 'Times New Roman', serif;
-                    font-weight: bold;
-                }}
-                .pdf-header .meta {{
-                    font-size: 12px;
-                    color: #555555;
-                    font-style: italic;
+                    font-size: 15px;
+                    line-height: 1.45;
                 }}
                 .pdf-sec-head {{
-                    font-size: 18px;
+                    font-size: 19px;
                     font-weight: bold;
-                    color: {head_col};
-                    margin-top: 20px;
+                    color: {text_col};
+                    margin-top: 22px;
                     margin-bottom: 8px;
-                    border-bottom: 1px solid {border_col};
-                    padding-bottom: 4px;
-                    font-family: 'Times New Roman', serif;
+                    font-family: 'Latin Modern Roman', 'Computer Modern Roman', 'CMU Serif', 'Times New Roman', serif;
                 }}
                 .pdf-subsec-head {{
-                    font-size: 15px;
+                    font-size: 16px;
                     font-weight: bold;
-                    color: {head_col};
-                    margin-top: 14px;
+                    color: {text_col};
+                    margin-top: 16px;
                     margin-bottom: 6px;
-                    font-family: 'Times New Roman', serif;
+                    font-family: 'Latin Modern Roman', 'Computer Modern Roman', 'CMU Serif', 'Times New Roman', serif;
                 }}
                 .pdf-display-math {{
                     font-size: 17px;
-                    font-weight: bold;
                     text-align: center;
-                    margin: 16px 0;
-                    padding: 12px 16px;
-                    background-color: {math_bg};
-                    border-left: 3px solid {border_col};
+                    margin: 14px 0;
+                    padding: 0;
+                    background: transparent;
+                    border: none;
                     color: {text_col};
                 }}
                 .pdf-inline-math {{
                     font-size: 15px;
-                    font-weight: bold;
+                    font-weight: 600;
                     color: {text_col};
-                    padding: 0 2px;
+                    padding: 0 1px;
                 }}
                 .math-frac {{
                     display: inline-block;
@@ -250,45 +230,21 @@ class LatexEditorWidget(QWidget):
                 }}
                 .math-num {{
                     display: block;
-                    border-bottom: 1px solid {border_col};
+                    border-bottom: 1px solid currentColor;
                     padding: 0 2px;
                 }}
                 .math-den {{
                     display: block;
                     padding: 0 2px;
                 }}
-                .pdf-slide-box {{
-                    background: {math_bg};
-                    border: 1px solid {border_col};
-                    padding: 14px;
-                    margin: 14px 0;
-                }}
-                .slide-heading {{
-                    font-size: 15px;
-                    font-weight: bold;
-                    color: {head_col};
-                    margin: 0 0 8px 0;
-                }}
-                .pdf-footer {{
-                    margin-top: 50px;
-                    padding-top: 12px;
-                    border-top: 1px solid {border_col};
-                    text-align: center;
-                    font-size: 11px;
-                    color: #666666;
+                table {{
+                    font-family: inherit;
                 }}
             </style>
         </head>
         <body>
             <div class="pdf-page">
-                <div class="pdf-header">
-                    <h1>{self.doc_title}</h1>
-                    <div class="meta">PDF Document Live Preview • Pure Black & White Render</div>
-                </div>
                 {formatted_body}
-                <div class="pdf-footer">
-                    Page 1 of 1 • PDF Preview Mode (Uncompiled)
-                </div>
             </div>
         </body>
         </html>
