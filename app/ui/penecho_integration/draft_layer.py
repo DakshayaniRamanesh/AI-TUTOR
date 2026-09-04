@@ -142,6 +142,15 @@ class PenechoDraftLayerItem(QGraphicsItem):
         res_y  = y + h
         return acc_x, acc_y, disc_x, disc_y, res_x, res_y
 
+    def _expl_btn_rect(self) -> QRectF:
+        """Returns QRectF for header 'Explain' button if inner_item supports toggle."""
+        acc_x, acc_y, disc_x, disc_y, _, _ = self._btn_positions()
+        btn_w = 92.0
+        btn_h = 22.0
+        btn_x = disc_x - self._BTN_R - btn_w - 8.0
+        btn_y = acc_y - btn_h / 2.0
+        return QRectF(btn_x, btn_y, btn_w, btn_h)
+
     # ── Paint ─────────────────────────────────────────────────────────────
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None):
@@ -182,7 +191,21 @@ class PenechoDraftLayerItem(QGraphicsItem):
             Qt.AlignmentFlag.AlignCenter, "✕"
         )
 
-        # 4. Resize handle — small grey dot at bottom-right corner
+        # 4. Optional header Explain button if inner item supports solution toggle
+        if hasattr(self.inner_item, "can_toggle_solution") and self.inner_item.can_toggle_solution:
+            expl_r = self._expl_btn_rect()
+            p = QPainterPath()
+            p.addRoundedRect(expl_r, 11, 11)
+            is_expanded = getattr(self.inner_item, "_is_expanded", False)
+            painter.setBrush(QBrush(QColor("#3b82f6") if is_expanded else QColor("#0f172a")))
+            painter.setPen(QPen(QColor("#64748b"), 1.0))
+            painter.drawPath(p)
+            painter.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            painter.setPen(QPen(QColor("#ffffff")))
+            lbl = "▴ Hide Sol" if is_expanded else "💡 Full Sol"
+            painter.drawText(expl_r, Qt.AlignmentFlag.AlignCenter, lbl)
+
+        # 5. Resize handle — small grey dot at bottom-right corner
         painter.setBrush(QBrush(self._RESIZE_CLR))
         painter.setPen(QPen(self._BTN_TEXT_CLR, 1.0))
         painter.drawEllipse(QPointF(res_x - 4, res_y - 4), self._RESIZE_R, self._RESIZE_R)
@@ -198,14 +221,67 @@ class PenechoDraftLayerItem(QGraphicsItem):
 
     def hoverLeaveEvent(self, event):
         self._hovered = False
+        if hasattr(self.inner_item, "_btn_hovered") and self.inner_item._btn_hovered:
+            self.inner_item._btn_hovered = False
+            self.inner_item.update()
+        self.unsetCursor()
         self.update()
         super().hoverLeaveEvent(event)
+
+    def hoverMoveEvent(self, event):
+        pos = event.pos()
+        acc_x, acc_y, disc_x, disc_y, res_x, res_y = self._btn_positions()
+        is_btn = False
+        if math.hypot(pos.x() - acc_x, pos.y() - acc_y) <= self._BTN_HIT_R:
+            is_btn = True
+        elif math.hypot(pos.x() - disc_x, pos.y() - disc_y) <= self._BTN_HIT_R:
+            is_btn = True
+        elif hasattr(self.inner_item, "can_toggle_solution") and self.inner_item.can_toggle_solution:
+            if self._expl_btn_rect().contains(pos):
+                is_btn = True
+            else:
+                inner_pos = self.inner_item.mapFromParent(pos)
+                if self.inner_item._btn_rect().contains(inner_pos):
+                    is_btn = True
+                    if not self.inner_item._btn_hovered:
+                        self.inner_item._btn_hovered = True
+                        self.inner_item.update()
+                elif self.inner_item._btn_hovered:
+                    self.inner_item._btn_hovered = False
+                    self.inner_item.update()
+
+        if is_btn:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        elif math.hypot(pos.x() - (res_x - 4), pos.y() - (res_y - 4)) <= self._RESIZE_HIT_R:
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        else:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        super().hoverMoveEvent(event)
 
     # ── Mouse interaction ─────────────────────────────────────────────────
 
     def mousePressEvent(self, event):
         pos = event.pos()
         acc_x, acc_y, disc_x, disc_y, res_x, res_y = self._btn_positions()
+
+        # Header Explain button
+        if self._hovered and hasattr(self.inner_item, "can_toggle_solution") and self.inner_item.can_toggle_solution:
+            if self._expl_btn_rect().contains(pos):
+                self.inner_item.toggle_solution()
+                self.prepareGeometryChange()
+                self.update()
+                event.accept()
+                return
+
+        # Inner item's own "Show Full Solution" pill button (at bottom of card)
+        if hasattr(self.inner_item, "can_toggle_solution") and self.inner_item.can_toggle_solution:
+            inner_pos = self.inner_item.mapFromParent(pos)
+            if self.inner_item._btn_rect().contains(inner_pos):
+                self.inner_item.toggle_solution()
+                self.prepareGeometryChange()
+                self.update()
+                event.accept()
+                return
 
         # Accept button — only hittable while visible (hover)
         if self._hovered and math.hypot(pos.x() - acc_x, pos.y() - acc_y) <= self._BTN_HIT_R:
