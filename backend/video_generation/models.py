@@ -258,8 +258,8 @@ class VideoJob:
 class LatexJob:
     """LangGraph state object for the LaTeX conversion pipeline."""
     job_id: str
-    image_b64: str
-    template_type: str
+    image_b64: str = ""
+    template_type: str = "Homework"
     mode: str = "study"
     classroom_action: str = "Solve Question"
 

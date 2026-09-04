@@ -102,7 +102,7 @@ class StoryAgent:
                 if self.google_api_key:
                     genai.configure(api_key=self.google_api_key)
                     # Try preferred model, fall back to stable alternative
-                    for model_name in ["gemini-3.5-flash-lite", "gemini-1.5-flash"]:
+                    for model_name in ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-1.5-flash", "gemini-3.5-flash"]:
                         try:
                             self.gemini_model = genai.GenerativeModel(model_name)
                             self._gemini_model_name = model_name
@@ -143,7 +143,11 @@ class StoryAgent:
                     max_tokens=2048,
                 )
                 if response.choices and response.choices[0].message.content:
-                    return response.choices[0].message.content, "groq/qwen/qwen3.8-27b"
+                    raw = response.choices[0].message.content
+                    # Strip <think>...</think> tokens from reasoning models
+                    import re as _re
+                    raw = _re.sub(r'<think>.*?</think>', '', raw, flags=_re.DOTALL).strip()
+                    return raw, "groq/qwen3.8-27b"
             except Exception as e:
                 print(f"[StoryAgent] Groq error: {e}")
         return "", ""

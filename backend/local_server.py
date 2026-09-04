@@ -396,7 +396,7 @@ async def test_gemini():
         genai.configure(api_key=api_key)
         # Try available Gemini models
         last_err = None
-        for m in ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.5-flash-lite']:
+        for m in ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.5-flash']:
             try:
                 model = genai.GenerativeModel(m)
                 resp = model.generate_content("Ping")

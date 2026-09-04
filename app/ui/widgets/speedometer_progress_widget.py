@@ -59,14 +59,30 @@ class SpeedometerProgressWidget(QFrame):
         self.show()
         clean_stage = stage[:14] + ".." if len(stage) > 16 else stage
         self.lbl_stage.setText(clean_stage)
-        self.progress_bar.setValue(progress)
-        self.lbl_percent.setText(f"{progress}%")
+        self.progress_bar.setValue(int(progress))
+        self.lbl_percent.setText(f"{int(progress)}%")
+
+    def set_progress(self, a, b = None):
+        """Flexible signature accepting (progress, stage) or (stage, progress)."""
+        if isinstance(a, (int, float)):
+            progress, stage = int(a), str(b or "")
+        else:
+            stage, progress = str(a or ""), int(b if b is not None else 0)
+        self.update_progress(stage, progress)
 
     def finish_success(self, msg: str = "Ready!"):
         self.lbl_stage.setText(msg)
         self.progress_bar.setValue(100)
         self.lbl_percent.setText("100%")
         self._clear_timer.start(2000)
+
+    def finish_task(self, msg: str = "Ready!"):
+        self.finish_success(msg)
+
+    def fail_task(self, msg: str = "Error"):
+        self.lbl_stage.setText(msg[:16] if len(msg) > 16 else msg)
+        self.lbl_percent.setText("✕")
+        self._clear_timer.start(3000)
 
     def _apply_theme(self, theme_name: str = "light"):
         is_dark = self.theme_mgr.is_dark()

@@ -1957,18 +1957,28 @@ class MainWindow(QMainWindow):
         current_mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
         action = self.classroom_action_combo.currentText()
 
+        # Stop any existing worker before starting a new one to prevent QThread destroyed warning
+        if hasattr(self, 'latex_worker') and self.latex_worker and self.latex_worker.isRunning():
+            self.latex_worker.stop()
+            self.latex_worker.wait(200)
+
         try:
-            job_id = request_latex_generation(image_b64, template_type, current_mode, action)
+            job_id, is_local_direct = request_latex_generation(image_b64, template_type, current_mode, action)
         except Exception as e:
-            QMessageBox.warning(self, "API Connection Error",
-                f"Could not connect to the backend server.\n"
-                f"Please ensure you are running the backend local server.\n\nError: {e}")
-            return
+            job_id, is_local_direct = f"latex_local", True
 
         if hasattr(self, 'speedometer_widget'):
             self.speedometer_widget.start_task(f"Generating {template_type}...")
 
-        self.latex_worker = LatexPollWorker(job_id, self)
+        self.latex_worker = LatexPollWorker(
+            job_id=job_id,
+            image_b64=image_b64,
+            template_type=template_type,
+            mode=current_mode,
+            classroom_action=action,
+            is_local_direct=is_local_direct,
+            parent=self
+        )
         self.latex_worker.status_updated.connect(self._on_latex_status_updated)
         self.latex_worker.latex_ready.connect(self._on_latex_ready)
         self.latex_worker.pdf_ready.connect(self._on_latex_pdf_ready)
@@ -1976,6 +1986,126 @@ class MainWindow(QMainWindow):
         self.latex_worker.start()
 
         self.ask_bar.input_field.setPlaceholderText(f"Converting to {template_type}...")
+
+    def _on_stem_question_asked(self, question: str):
+        """Called when user types a question in the Ask Bar and submits."""
+        if not question or not question.strip():
+            return
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        self._on_auto_ai_requested(question.strip(), center_pos)
+
+    def _show_or_update_tab(self, widget: QWidget, tab_title: str):
+        idx = self.canvas_tabs.indexOf(widget)
+        if idx == -1:
+            self.canvas_tabs.addTab(widget, tab_title)
+        else:
+            self.canvas_tabs.setTabText(idx, tab_title)
+        self.canvas_tabs.setCurrentWidget(widget)
+
+    def _close_latex_editor_tab(self):
+        idx = self.canvas_tabs.indexOf(self.latex_editor_widget)
+        if idx != -1:
+            self.canvas_tabs.removeTab(idx)
+        self.canvas_tabs.setCurrentWidget(self.view)
+
+    def _close_pdf_split_screen(self):
+        idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
+        if idx != -1:
+            self.canvas_tabs.removeTab(idx)
+        if hasattr(self, 'ask_bar'):
+            self.ask_bar.set_pdf_mode(False)
+        self.canvas_tabs.setCurrentWidget(self.view)
+
+    def _on_canvas_tab_closed(self, index: int):
+        if index == 0:
+            return  # The primary canvas tab cannot be closed
+        w = self.canvas_tabs.widget(index)
+        if w == self.latex_editor_widget:
+            if self.latex_editor_widget.confirm_close():
+                self._close_latex_editor_tab()
+        elif w == self.pdf_viewer_widget:
+            self._close_pdf_split_screen()
+        else:
+            self.canvas_tabs.removeTab(index)
+
+    def _on_latex_status_updated(self, job_id, stage, progress):
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.update_progress(stage, progress)
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.update_progress(stage, progress)
+
+    def _on_latex_ready(self, job_id, latex_code):
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.finish_task("LaTeX Generated")
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.finish_success()
+        if hasattr(self, 'ask_bar'):
+            self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
+
+        notebook_title = (self.current_board.title if getattr(self, 'current_board', None) else "notebook") or "notebook"
+        self.latex_editor_widget.set_latex_code(latex_code, title=f"LaTeX: {notebook_title}")
+        self._show_or_update_tab(self.latex_editor_widget, "📄 notebook.pdf")
+
+    def _on_latex_pdf_ready(self, job_id, pdf_url, pdf_b64):
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.finish_success()
+        if hasattr(self, 'ask_bar'):
+            self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
+
+        filename = "notebook.pdf"
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        export_dir = os.path.join(base_dir, "storage_data", "latex_exports")
+        os.makedirs(export_dir, exist_ok=True)
+        save_path = os.path.join(export_dir, filename)
+
+        if pdf_b64:
+            with open(save_path, "wb") as f:
+                f.write(base64.b64decode(pdf_b64))
+            self.last_compiled_pdf_path = save_path
+        elif pdf_url:
+            try:
+                import requests
+                r = requests.get(pdf_url, timeout=10)
+                if r.status_code == 200:
+                    with open(save_path, "wb") as f:
+                        f.write(r.content)
+                    self.last_compiled_pdf_path = save_path
+            except Exception as e:
+                print(f"[LaTeX] Notice downloading PDF: {e}")
+
+        if os.path.exists(save_path):
+            self.last_compiled_pdf_path = save_path
+            self.latex_editor_widget.load_pdf(save_path)
+            self._show_or_update_tab(self.latex_editor_widget, "📄 notebook.pdf")
+
+    def _on_latex_failed(self, job_id, error_msg):
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.fail_task(error_msg)
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.finish_error(error_msg)
+        if hasattr(self, 'ask_bar'):
+            self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
+        QMessageBox.warning(self, "LaTeX Error", f"LaTeX generation could not complete:\n{error_msg}")
+
+    def _on_pdf_compiled(self, pdf_path):
+        self.last_compiled_pdf_path = pdf_path
+        if hasattr(self, 'btn_view_pdf'):
+            self.btn_view_pdf.setVisible(True)
+
+    def _on_pdf_reply_clicked(self, selected_text: str, page_num: int, surrounding_context: str):
+        if hasattr(self, 'ask_bar'):
+            self.ask_bar.set_selection_context(selected_text, page_num, surrounding_context)
+
+    def _on_latex_video_requested(self, latex_snippet: str):
+        prompt_text = f"Explain this mathematical formula or derivation:\n{latex_snippet}"
+        selection_payload = {
+            "board_id": getattr(self.current_board, "board_id", "canvas") if getattr(self, "current_board", None) else "canvas",
+            "selected_items": [],
+            "nearby_items": [],
+            "user_instruction": prompt_text,
+            "latex_snippet": latex_snippet,
+        }
+        self._start_video_generation(prompt_text, selection_payload)
 
     def _generate_video_from_canvas(self):
         """Show a dialog asking the user how to select the whiteboard content for video generation."""
@@ -2226,34 +2356,6 @@ class MainWindow(QMainWindow):
     def _toggle_theme(self):
         ThemeManager.instance().toggle_theme()
 
-    def _close_latex_editor_tab(self):
-        if self.latex_editor_widget.confirm_close():
-            idx = self.canvas_tabs.indexOf(self.latex_editor_widget)
-            if idx != -1:
-                self.canvas_tabs.removeTab(idx)
-            self.canvas_tabs.setCurrentWidget(self.view)
-
-    def _close_pdf_split_screen(self):
-        idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
-        if idx != -1:
-            self.canvas_tabs.removeTab(idx)
-        self.ask_bar.set_pdf_mode(False)
-        self.canvas_tabs.setCurrentWidget(self.view)
-
-    def _on_canvas_tab_closed(self, index: int):
-        if index == 0:
-            return
-        widget = self.canvas_tabs.widget(index)
-        if widget == self.latex_editor_widget:
-            self._close_latex_editor_tab()
-        elif widget == self.pdf_viewer_widget:
-            self._close_pdf_split_screen()
-
-    def _on_pdf_compiled(self, pdf_path: str):
-        self.last_compiled_pdf_path = pdf_path
-        if hasattr(self, 'btn_view_pdf'):
-            self.btn_view_pdf.setVisible(True)
-
     def _open_in_app_pdf_viewer(self):
         if not getattr(self, 'last_compiled_pdf_path', None) or not os.path.exists(self.last_compiled_pdf_path):
             QMessageBox.information(self, "No PDF Available",
@@ -2264,54 +2366,3 @@ class MainWindow(QMainWindow):
         fname = os.path.basename(self.last_compiled_pdf_path)
         tab_title = f"📄 PDF: {fname[:16]}..." if len(fname) > 18 else f"📄 PDF: {fname}"
         self._show_or_update_tab(self.pdf_viewer_widget, tab_title)
-
-    def _on_latex_ready(self, job_id, latex_code):
-        if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.finish_success("LaTeX Ready!")
-        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-
-        notebook_title = self.current_board.title or "LaTeX_Document"
-        self.latex_editor_widget.set_latex_code(latex_code, title=f"LaTeX: {notebook_title}")
-        self._show_or_update_tab(self.latex_editor_widget, "📝 Editable LaTeX")
-
-    def _on_latex_status_updated(self, job_id, stage, progress):
-        if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.update_progress(stage, progress)
-        self.ask_bar.input_field.setPlaceholderText(f"{stage} ({progress}%)")
-        
-    def _on_latex_pdf_ready(self, job_id, pdf_url, pdf_b64):
-        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
-            self.progress_dialog.finish_success()
-        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-
-        notebook_title = self.current_board.title or "Untitled_Notebook"
-        mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
-        action = self.classroom_action_combo.currentText() if hasattr(self, 'classroom_action_combo') else "Action"
-        safe_title = "".join(c for c in notebook_title if c.isalnum() or c in " _-").strip()
-        filename = f"{safe_title}_{mode}_{action}.pdf".replace(" ", "_")
-
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        export_dir = os.path.join(base_dir, "storage_data", "latex_exports")
-        os.makedirs(export_dir, exist_ok=True)
-        save_path = os.path.join(export_dir, filename)
-
-        if pdf_b64:
-            with open(save_path, "wb") as f:
-                f.write(base64.b64decode(pdf_b64))
-        else:
-            try:
-                r = requests.get(pdf_url)
-                with open(save_path, "wb") as f:
-                    f.write(r.content)
-            except Exception as e:
-                QMessageBox.warning(self, "Download Error", f"Failed to download generated PDF:\n{e}")
-                return
-
-        self.pdf_viewer_widget.load_latex_pdf(save_path)
-        self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {filename}")
-
-    def _on_latex_failed(self, job_id, error_msg):
-        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
-            self.progress_dialog.finish_error(error_msg)
-        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-        QMessageBox.warning(self, "LaTeX Error", f"LaTeX generation failed:\n{error_msg}")

@@ -48,7 +48,7 @@ def _route_compile_check(state: LatexJob) -> str:
     if state.status == JobStatus.ERROR:
         return END
     
-    if state.has_build_error:
+    if state.has_build_error and state.retry_count < 2:
         print(f"[{state.job_id}] Build error detected, routing back to structure (retry {state.retry_count})")
         return "structure"
     
@@ -119,7 +119,7 @@ class _FallbackLatexPipeline:
             state = self.compile_node.run(state)
             if state.status == JobStatus.ERROR or not state.has_build_error:
                 break
-                
+
         return state
 
 

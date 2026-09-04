@@ -474,7 +474,7 @@ def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {groq_key}"},
                 json={
-                    "model": "llama-3.3-70b-versatile",
+                    "model": "qwen/qwen3.6-27b",
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.3,
                     "max_tokens": 600
@@ -483,6 +483,9 @@ def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
             )
             if resp.status_code == 200:
                 text = resp.json()["choices"][0]["message"]["content"].strip()
+                # Strip <think>...</think> from reasoning models (Qwen, etc.)
+                import re as _re
+                text = _re.sub(r'<think>.*?</think>', '', text, flags=_re.DOTALL).strip()
                 if text:
                     text_pretty = to_pretty_math(text)
                     if mode == "classroom":
@@ -500,7 +503,7 @@ def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
         for model in models:
             try:
                 api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
-                resp = requests.post(api_url, json=payload, timeout=3.5)
+                resp = requests.post(api_url, json=payload, timeout=8.0)
                 if resp.status_code == 200:
                     result_json = resp.json()
                     text = result_json["candidates"][0]["content"]["parts"][0]["text"].strip()
