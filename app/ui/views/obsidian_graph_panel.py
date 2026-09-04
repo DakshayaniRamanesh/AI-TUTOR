@@ -12,7 +12,7 @@ Features:
 """
 
 import math
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, QGraphicsRectItem,
@@ -146,7 +146,7 @@ class ObsidianGraphPanel(QWidget):
 
         # Bottom Legend / Status
         self.lbl_legend = QLabel(
-            "Hub-and-Spoke Knowledge Map • Click node to drill down • Drag canvas to pan • Wheel to zoom",
+            "● Core Hubs (Slate)  •  ● Tags (Amber)  •  ● Notes & Modules (Sky Blue)  —  [Click node to inspect  •  Drag canvas to pan  •  Wheel to zoom]",
             graph_container
         )
         self.lbl_legend.setStyleSheet("padding: 4px 14px; font-size: 10px;")
@@ -351,8 +351,112 @@ class ObsidianGraphPanel(QWidget):
         self.all_edges = edges_list
         self.render_graph(self.all_nodes, self.all_edges)
 
+    def _compute_cluster_layout(self, nodes: List[GraphConceptNode], edges: List[GraphConceptEdge]) -> Dict[str, Tuple[float, float]]:
+        """Computes an organic Obsidian-style constellation / multi-cluster force layout."""
+        import random
+        random.seed(42)
+
+        positions: Dict[str, List[float]] = {}
+        node_names = [n.name for n in nodes]
+        node_types = {n.name: n.type for n in nodes}
+
+        # Identify major hub nodes (subjects or high-degree nodes)
+        degrees = {name: 0 for name in node_names}
+        adj: Dict[str, List[str]] = {name: [] for name in node_names}
+        for e in edges:
+            if e.source_name in degrees and e.target_name in degrees:
+                degrees[e.source_name] += 1
+                degrees[e.target_name] += 1
+                adj[e.source_name].append(e.target_name)
+                adj[e.target_name].append(e.source_name)
+
+        # Hubs are subjects or nodes with high degree
+        hubs = [n.name for n in nodes if n.type == "subject" or degrees[n.name] >= 5]
+        if not hubs:
+            hubs = sorted(node_names, key=lambda n: degrees[n], reverse=True)[:4]
+
+        # 1. Initial Seeding: Place hubs in a wide constellation circle
+        num_hubs = max(1, len(hubs))
+        hub_radius = 280.0 if num_hubs <= 4 else 380.0
+        for idx, hub_name in enumerate(hubs):
+            angle = idx * ((2.0 * math.pi) / num_hubs)
+            positions[hub_name] = [hub_radius * math.cos(angle), hub_radius * math.sin(angle)]
+
+        # 2. Place child nodes around their primary connected hub
+        for node in nodes:
+            name = node.name
+            if name in positions:
+                continue
+
+            # Find connected hub
+            connected_hubs = [h for h in adj.get(name, []) if h in positions]
+            if connected_hubs:
+                primary_hub = connected_hubs[0]
+                hx, hy = positions[primary_hub]
+                # Orbit around primary hub
+                orbit_r = random.uniform(80.0, 160.0)
+                orbit_angle = random.uniform(0, 2.0 * math.pi)
+                positions[name] = [hx + orbit_r * math.cos(orbit_angle), hy + orbit_r * math.sin(orbit_angle)]
+            else:
+                # Place in outer orbit
+                r = random.uniform(150.0, 350.0)
+                a = random.uniform(0, 2.0 * math.pi)
+                positions[name] = [r * math.cos(a), r * math.sin(a)]
+
+        # 3. Force-Directed Relaxation (50 iterations)
+        k = 120.0  # optimal distance
+        for iteration in range(50):
+            temp = max(0.5, 1.0 - (iteration / 50.0)) * 12.0
+            disp = {name: [0.0, 0.0] for name in node_names}
+
+            # Repulsion between all node pairs
+            for i in range(len(node_names)):
+                n1 = node_names[i]
+                p1 = positions[n1]
+                for j in range(i + 1, len(node_names)):
+                    n2 = node_names[j]
+                    p2 = positions[n2]
+                    dx = p1[0] - p2[0]
+                    dy = p1[1] - p2[1]
+                    dist = math.sqrt(dx * dx + dy * dy) or 0.01
+                    if dist < 450.0:
+                        force = (k * k) / dist
+                        fx = (dx / dist) * force
+                        fy = (dy / dist) * force
+                        disp[n1][0] += fx
+                        disp[n1][1] += fy
+                        disp[n2][0] -= fx
+                        disp[n2][1] -= fy
+
+            # Attraction along edges
+            for e in edges:
+                if e.source_name in positions and e.target_name in positions:
+                    p1 = positions[e.source_name]
+                    p2 = positions[e.target_name]
+                    dx = p1[0] - p2[0]
+                    dy = p1[1] - p2[1]
+                    dist = math.sqrt(dx * dx + dy * dy) or 0.01
+                    force = (dist * dist) / k
+                    fx = (dx / dist) * force
+                    fy = (dy / dist) * force
+                    disp[e.source_name][0] -= fx
+                    disp[e.source_name][1] -= fy
+                    disp[e.target_name][0] += fx
+                    disp[e.target_name][1] += fy
+
+            # Apply displacement capped by temperature
+            for name in node_names:
+                dx = disp[name][0]
+                dy = disp[name][1]
+                d = math.sqrt(dx * dx + dy * dy) or 0.01
+                step = min(d, temp)
+                positions[name][0] += (dx / d) * step
+                positions[name][1] += (dy / d) * step
+
+        return {name: (pos[0], pos[1]) for name, pos in positions.items()}
+
     def render_graph(self, nodes: List[GraphConceptNode], edges: List[GraphConceptEdge]):
-        """Renders the Hub-and-Spoke knowledge graph matching the subject knowledge graph design."""
+        """Renders the knowledge graph in Obsidian Graph View style."""
         self.scene.clear()
         c = ThemeManager.instance().get_colors()
         is_dark = ThemeManager.instance().is_dark()
@@ -360,7 +464,7 @@ class ObsidianGraphPanel(QWidget):
         if not nodes:
             txt = self.scene.addText("No concepts found matching the current filter.")
             txt.setDefaultTextColor(QColor(c['text_secondary']))
-            txt.setFont(QFont(MONO_FONT, 11))
+            txt.setFont(QFont("Consolas", 11))
             return
 
         # 1. Degree Centrality Calculation
@@ -371,9 +475,7 @@ class ObsidianGraphPanel(QWidget):
             if edge.target_name in degrees:
                 degrees[edge.target_name] += 1
 
-        sorted_nodes = sorted(nodes, key=lambda n: degrees.get(n.name, 0), reverse=True)
-
-        # 2. Progressive Disclosure / Drill-Down Filtering
+        # 2. Drill-Down / Active Node Filter
         if self.active_node:
             visible_names = {self.active_node}
             for edge in edges:
@@ -381,144 +483,108 @@ class ObsidianGraphPanel(QWidget):
                     visible_names.add(edge.target_name)
                 elif edge.target_name == self.active_node:
                     visible_names.add(edge.source_name)
-            sorted_nodes = [n for n in sorted_nodes if n.name in visible_names]
-            # Place active node dead center as hub
-            sorted_nodes.sort(key=lambda n: 0 if n.name == self.active_node else 1)
+            current_nodes = [n for n in nodes if n.name in visible_names]
         else:
-            max_initial_nodes = 18
-            if len(sorted_nodes) <= max_initial_nodes:
-                visible_names = {n.name for n in sorted_nodes}
-            else:
-                visible_names = {n.name for n in sorted_nodes[:max_initial_nodes]}
-            sorted_nodes = [n for n in sorted_nodes if n.name in visible_names]
+            current_nodes = list(nodes)
+            visible_names = {n.name for n in current_nodes}
 
         visible_edges = [e for e in edges if e.source_name in visible_names and e.target_name in visible_names]
-        current_nodes = [n for n in nodes if n.name in visible_names]
 
-        self.node_positions = {}
+        # 3. Compute Obsidian Constellation Layout
+        self.node_positions = self._compute_cluster_layout(current_nodes, visible_edges)
         self.node_radii = {}
         self.node_summaries = {}
 
-        # Center Coordinates
-        center_x, center_y = 0.0, 0.0
-        num_spokes = max(1, len(current_nodes) - 1)
+        # 4. Color Palette Matching Obsidian Graph Reference:
+        # Hubs / Subjects: Dark Slate Gray (#64748b / #94a3b8)
+        # Tags: Warm Amber / Gold (#d97706 / #d4a373)
+        # Notes / Modules: Delicate Sky Blue (#38bdf8 / #7dd3fc)
+        color_hub = QColor("#64748b") if not is_dark else QColor("#94a3b8")
+        color_hub_border = QColor("#475569") if not is_dark else QColor("#cbd5e1")
 
-        for i, node in enumerate(sorted_nodes):
-            name = node.name
-            deg = degrees.get(name, 0)
+        color_tag = QColor("#d97706") if not is_dark else QColor("#fbbf24")
+        color_tag_border = QColor("#b45309") if not is_dark else QColor("#f59e0b")
 
-            # Dynamic Sizing: Base size 16, grows by 3.5 per connection (Max 44)
-            r = 16.0 + min(deg * 3.5, 28.0)
-            if i == 0:
-                r = max(r, 26.0)  # Center hub is prominently sized
-            self.node_radii[name] = r
-            self.node_summaries[name] = node.description
+        color_note = QColor("#38bdf8") if not is_dark else QColor("#7dd3fc")
+        color_note_border = QColor("#0284c7") if not is_dark else QColor("#38bdf8")
 
-            # Hub-and-Spoke Layout with generous spacing to avoid text overlap
-            if i == 0:
-                self.node_positions[name] = (center_x, center_y)
-            else:
-                ring = (i - 1) % 2
-                base_dist = 260.0 if ring == 0 else 400.0
-                angle = (i - 1) * ((2 * math.pi) / num_spokes)
-                x = center_x + base_dist * math.cos(angle)
-                y = center_y + base_dist * math.sin(angle)
-                self.node_positions[name] = (x, y)
+        # 5. Draw Clean, Thin Edge Lines (Z=0, No Heavy Black Boxes)
+        edge_line_color = QColor(203, 213, 225, 180) if not is_dark else QColor(71, 85, 105, 160)
+        edge_pen = QPen(edge_line_color, 0.9, Qt.PenStyle.SolidLine)
+        edge_pen.setCosmetic(True)
 
-        # 3. Consolidate & Draw Edge Lines with Relationship Badges
-        consolidated_edges = {}
+        drawn_pairs = set()
         for edge in visible_edges:
             if edge.source_name in self.node_positions and edge.target_name in self.node_positions:
-                key = tuple(sorted([edge.source_name, edge.target_name]))
-                if key not in consolidated_edges:
-                    consolidated_edges[key] = {
-                        "source": edge.source_name,
-                        "target": edge.target_name,
-                        "labels": []
-                    }
-                desc = edge.relationship_desc
-                if desc and desc not in consolidated_edges[key]["labels"]:
-                    consolidated_edges[key]["labels"].append(desc)
+                pair = tuple(sorted([edge.source_name, edge.target_name]))
+                if pair not in drawn_pairs:
+                    drawn_pairs.add(pair)
+                    x1, y1 = self.node_positions[edge.source_name]
+                    x2, y2 = self.node_positions[edge.target_name]
+                    line = self.scene.addLine(x1, y1, x2, y2, edge_pen)
+                    line.setZValue(0)
 
-        # Edge stroke color adapted to theme
-        edge_line_color = QColor(c['border_color']) if not is_dark else QColor("#3b4252")
-        badge_bg_color = QColor("#0f172a") if is_dark else QColor("#111827")
-        badge_text_color = QColor("#e2e8f0") if is_dark else QColor("#ffffff")
+        # 6. Draw Elegant Color-Coded Dots & Crisp Labels (Z=2 & Z=3)
+        for node in current_nodes:
+            name = node.name
+            if name not in self.node_positions:
+                continue
 
-        for edge_data in consolidated_edges.values():
-            x1, y1 = self.node_positions[edge_data["source"]]
-            x2, y2 = self.node_positions[edge_data["target"]]
+            x, y = self.node_positions[name]
+            deg = degrees.get(name, 0)
+            ntype = node.type
+            self.node_summaries[name] = node.description
 
-            # Line (Z=0)
-            pen = QPen(edge_line_color, 1.4, Qt.PenStyle.SolidLine)
-            pen.setCosmetic(True)
-            line = self.scene.addLine(x1, y1, x2, y2, pen)
-            line.setZValue(0)
+            # Node Classification & Sizing
+            if ntype == "subject" or deg >= 6:
+                # Major Core Hub
+                r = 8.5
+                brush = QBrush(color_hub)
+                pen = QPen(color_hub_border, 1.2)
+                font = QFont("Consolas", 8, QFont.Weight.DemiBold)
+                text_color = QColor("#1e293b") if not is_dark else QColor("#f8fafc")
+            elif ntype == "tag" or name.startswith("#"):
+                # Tag / Category Node
+                r = 5.5
+                brush = QBrush(color_tag)
+                pen = QPen(color_tag_border, 1.0)
+                font = QFont("Consolas", 8, QFont.Weight.Normal)
+                text_color = QColor("#92400e") if not is_dark else QColor("#fde68a")
+            else:
+                # Standard Note / Board / Module
+                r = 4.5
+                brush = QBrush(color_note)
+                pen = QPen(color_note_border, 1.0)
+                font = QFont("Consolas", 7, QFont.Weight.Normal)
+                text_color = QColor("#475569") if not is_dark else QColor("#94a3b8")
 
-            # Midpoint Relationship Badge
-            if edge_data["labels"]:
-                desc = " | ".join(edge_data["labels"])
-                mid_x = (x1 + x2) / 2.0
-                mid_y = (y1 + y2) / 2.0
+            self.node_radii[name] = r
 
-                lbl = QGraphicsTextItem(desc)
-                lbl.setFont(QFont("Consolas", 8, QFont.Weight.Bold))
-                lbl.setDefaultTextColor(badge_text_color)
-                lbl.setZValue(2)
-
-                b_rect = lbl.boundingRect()
-                lbl_x = mid_x - (b_rect.width() / 2.0)
-                lbl_y = mid_y - (b_rect.height() / 2.0)
-
-                # Badge Rect Container (Z=1, cleanly masks line behind it)
-                pad = 3.0
-                bg = QGraphicsRectItem(
-                    lbl_x - pad, lbl_y - pad / 2.0,
-                    b_rect.width() + (pad * 2), b_rect.height() + pad
-                )
-                bg.setBrush(QBrush(badge_bg_color))
-                bg.setPen(QPen(QColor(c['border_color']), 1.0))
-                bg.setZValue(1)
-                self.scene.addItem(bg)
-
-                lbl.setPos(lbl_x, lbl_y)
-                self.scene.addItem(lbl)
-
-        # 4. Draw Concept Nodes & Labels (Z=3 & Z=4)
-        hub_color = QColor("#3b82f6") if is_dark else QColor("#2563eb")
-        spoke_color = QColor("#60a5fa") if is_dark else QColor("#3b82f6")
-        node_border_color = QColor("#93c5fd") if is_dark else QColor("#1d4ed8")
-
-        for idx, (name, (x, y)) in enumerate(self.node_positions.items()):
-            r = self.node_radii.get(name, 16.0)
-            is_hub = (idx == 0)
-
+            # Node Dot Item
             ellipse = QGraphicsEllipseItem(x - r, y - r, r * 2.0, r * 2.0)
-            ellipse.setBrush(QBrush(hub_color if is_hub else spoke_color))
-            ellipse.setPen(QPen(node_border_color, 2.0 if is_hub else 1.5))
+            ellipse.setBrush(brush)
+            ellipse.setPen(pen)
             ellipse.setData(0, name)
-            ellipse.setZValue(3)
+            ellipse.setCursor(Qt.CursorShape.PointingHandCursor)
+            ellipse.setZValue(2)
             self.scene.addItem(ellipse)
 
-            # Node Label in Consolas Monospace
+            # Node Label Item (placed cleanly beside the circle)
             text = QGraphicsTextItem(name)
-            font_size = 9 if is_hub else 8
-            text.setFont(QFont("Consolas", font_size, QFont.Weight.Bold if is_hub else QFont.Weight.DemiBold))
-            text.setDefaultTextColor(QColor(c['text_primary']))
-
-            text_rect = text.boundingRect()
-            text.setPos(x - (text_rect.width() / 2.0), y + r + 4)
-            text.setZValue(4)
+            text.setFont(font)
+            text.setDefaultTextColor(text_color)
+            text.setPos(x + r + 3.0, y - 8.0)
+            text.setZValue(3)
             self.scene.addItem(text)
 
         # Center view around the graph content
         items_rect = self.scene.itemsBoundingRect()
         if not items_rect.isNull():
-            self.scene.setSceneRect(items_rect.adjusted(-100, -100, 100, 100))
+            self.scene.setSceneRect(items_rect.adjusted(-60, -60, 60, 60))
             self.view.centerOn(0, 0)
 
         # Update Inspector with the active or first node
-        target_inspect = self.active_node or (sorted_nodes[0].name if sorted_nodes else None)
+        target_inspect = self.active_node or (current_nodes[0].name if current_nodes else None)
         if target_inspect:
             self._update_inspector_by_name(target_inspect)
 

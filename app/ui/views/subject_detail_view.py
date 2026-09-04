@@ -163,79 +163,72 @@ class KnowledgeGraphWidget(QGraphicsView):
                 if edge.relationship_desc and edge.relationship_desc not in consolidated_edges[key]["labels"]:
                     consolidated_edges[key]["labels"].append(edge.relationship_desc)
 
-        edge_line_color = QColor(c['border_color']) if not is_dark else QColor("#3b4252")
-        badge_bg_color = QColor("#0f172a") if is_dark else QColor("#111827")
-        badge_text_color = QColor("#e2e8f0") if is_dark else QColor("#ffffff")
+        # Obsidian Graph Color Palette
+        color_hub = QColor("#64748b") if not is_dark else QColor("#94a3b8")
+        color_hub_border = QColor("#475569") if not is_dark else QColor("#cbd5e1")
 
-        for edge_data in consolidated_edges.values():
-            x1, y1 = node_positions[edge_data["source"]]
-            x2, y2 = node_positions[edge_data["target"]]
-            
-            # 1. Draw the line (Z=0, very bottom)
-            pen = QPen(edge_line_color, 1.4, Qt.PenStyle.SolidLine)
-            pen.setCosmetic(True)
-            line = self._scene.addLine(x1, y1, x2, y2, pen)
-            line.setZValue(0)
-            
-            # 2. Draw the relationship label
-            if edge_data["labels"]:
-                desc = " | ".join(edge_data["labels"])
-                # Place label exactly in the middle
-                mid_x = (x1 + x2) / 2
-                mid_y = (y1 + y2) / 2
-                
-                # Create text item (Z=2)
-                lbl = QGraphicsTextItem(desc)
-                lbl.setFont(QFont("Consolas", 8, QFont.Weight.Bold))
-                lbl.setDefaultTextColor(badge_text_color)
-                lbl.setZValue(2)
-                
-                # Center the text exactly on the midpoint
-                boundingRect = lbl.boundingRect()
-                lbl_x = mid_x - (boundingRect.width() / 2)
-                lbl_y = mid_y - (boundingRect.height() / 2)
-                
-                # Background rect for readability (Z=1, hides the line underneath)
-                pad = 3.0
-                bg = QGraphicsRectItem(
-                    lbl_x - pad, lbl_y - pad / 2.0,
-                    boundingRect.width() + (pad * 2), boundingRect.height() + pad
-                )
-                bg.setBrush(QBrush(badge_bg_color))
-                bg.setPen(QPen(QColor(c['border_color']), 1.0))
-                bg.setZValue(1)
-                self._scene.addItem(bg)
-                
-                lbl.setPos(lbl_x, lbl_y)
-                self._scene.addItem(lbl)
+        color_tag = QColor("#d97706") if not is_dark else QColor("#fbbf24")
+        color_tag_border = QColor("#b45309") if not is_dark else QColor("#f59e0b")
 
-        hub_color = QColor("#3b82f6") if is_dark else QColor("#2563eb")
-        spoke_color = QColor("#60a5fa") if is_dark else QColor("#3b82f6")
-        node_border_color = QColor("#93c5fd") if is_dark else QColor("#1d4ed8")
+        color_note = QColor("#38bdf8") if not is_dark else QColor("#7dd3fc")
+        color_note_border = QColor("#0284c7") if not is_dark else QColor("#38bdf8")
 
+        # 1. Draw Clean Thin Edge Lines
+        edge_line_color = QColor(203, 213, 225, 180) if not is_dark else QColor(71, 85, 105, 160)
+        edge_pen = QPen(edge_line_color, 0.9, Qt.PenStyle.SolidLine)
+        edge_pen.setCosmetic(True)
+
+        drawn_edges = set()
+        for edge in edges:
+            if edge.source_name in node_positions and edge.target_name in node_positions:
+                pair = tuple(sorted([edge.source_name, edge.target_name]))
+                if pair not in drawn_edges:
+                    drawn_edges.add(pair)
+                    x1, y1 = node_positions[edge.source_name]
+                    x2, y2 = node_positions[edge.target_name]
+                    line = self._scene.addLine(x1, y1, x2, y2, edge_pen)
+                    line.setZValue(0)
+
+        # 2. Draw Obsidian Dots & Clean Labels
         for idx, (name, (x, y)) in enumerate(node_positions.items()):
-            r = self.node_radii.get(name, 16)
             is_hub = (idx == 0)
-            ellipse = QGraphicsEllipseItem(x - r, y - r, r * 2, r * 2)
-            ellipse.setBrush(QBrush(hub_color if is_hub else spoke_color))
-            ellipse.setPen(QPen(node_border_color, 2.0 if is_hub else 1.5))
+            is_tag = name.startswith("#")
+
+            if is_hub:
+                r = 8.5
+                brush = QBrush(color_hub)
+                pen = QPen(color_hub_border, 1.2)
+                font = QFont("Consolas", 8, QFont.Weight.DemiBold)
+                text_color = QColor("#1e293b") if not is_dark else QColor("#f8fafc")
+            elif is_tag:
+                r = 5.5
+                brush = QBrush(color_tag)
+                pen = QPen(color_tag_border, 1.0)
+                font = QFont("Consolas", 8, QFont.Weight.Normal)
+                text_color = QColor("#92400e") if not is_dark else QColor("#fde68a")
+            else:
+                r = 4.5
+                brush = QBrush(color_note)
+                pen = QPen(color_note_border, 1.0)
+                font = QFont("Consolas", 7, QFont.Weight.Normal)
+                text_color = QColor("#475569") if not is_dark else QColor("#94a3b8")
+
+            ellipse = QGraphicsEllipseItem(x - r, y - r, r * 2.0, r * 2.0)
+            ellipse.setBrush(brush)
+            ellipse.setPen(pen)
             ellipse.setData(0, name)
-            ellipse.setZValue(3)  # Nodes above edges and labels
+            ellipse.setCursor(Qt.CursorShape.PointingHandCursor)
+            ellipse.setZValue(2)
             self._scene.addItem(ellipse)
 
             text = QGraphicsTextItem(name)
-            font_size = 9 if is_hub else 8
-            text.setFont(QFont("Consolas", font_size, QFont.Weight.Bold if is_hub else QFont.Weight.DemiBold))
-            text.setDefaultTextColor(QColor(c['text_primary']))
-            
-            # Center the text horizontally, place below the circle
-            text_rect = text.boundingRect()
-            text.setPos(x - (text_rect.width() / 2), y + r + 4)
-            
-            text.setZValue(4)  # Node text on very top
+            text.setFont(font)
+            text.setDefaultTextColor(text_color)
+            text.setPos(x + r + 3.0, y - 8.0)
+            text.setZValue(3)
             self._scene.addItem(text)
 
-        self._scene.setSceneRect(self._scene.itemsBoundingRect().adjusted(-40, -40, 40, 40))
+        self._scene.setSceneRect(self._scene.itemsBoundingRect().adjusted(-60, -60, 60, 60))
 
     def mousePressEvent(self, event):
         item = self.itemAt(event.pos())
