@@ -1,15 +1,15 @@
-"""Base graphics item functionality (selection, context menu, z-order, lock, identity)."""
+"""
+Base graphics item functionality (Selection, Context Menu, Z-order, Lock, Focus)
+"""
 
-import uuid
 from PyQt6.QtWidgets import QMenu, QGraphicsItem
-
+from PyQt6.QtCore import Qt
 
 class BaseGraphicsItemMixin:
-    """Mixin adding standard Freeform interaction plus a stable in-session item id."""
-
+    """
+    Mixin adding standard Freeform right-click menu options & interaction handles.
+    """
     def setup_base_properties(self):
-        if not getattr(self, "item_id", None):
-            self.item_id = uuid.uuid4().hex
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
@@ -41,8 +41,10 @@ class BaseGraphicsItemMixin:
         act_front = menu.addAction("Bring to Front")
         act_back = menu.addAction("Send to Back")
         menu.addSeparator()
+        
         lock_txt = "Unlock" if getattr(self, "is_locked", False) else "Lock"
         act_lock = menu.addAction(lock_txt)
+        
         menu.addSeparator()
         act_del = menu.addAction("Delete (Del)")
 
@@ -58,4 +60,5 @@ class BaseGraphicsItemMixin:
             scene = self.scene()
             if scene:
                 scene.removeItem(self)
+
         return menu

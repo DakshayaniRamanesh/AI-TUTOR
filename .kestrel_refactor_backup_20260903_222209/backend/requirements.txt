@@ -1,5 +1,5 @@
 modal
-manim==0.20.1
+manim>=0.18.0
 langchain>=0.2.0
 langgraph>=0.1.0
 langchain-google-genai
@@ -17,4 +17,3 @@ fastapi>=0.100.0
 uvicorn>=0.20.0
 groq>=0.9.0
 python-multipart
-imageio-ffmpeg>=0.5.0

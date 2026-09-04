@@ -7,8 +7,9 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QPushButton, QGraphicsDropShadowEffect, QFrame
 )
 from PyQt6.QtCore import Qt, QSize, QPoint, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 import qtawesome as qta
+
 from .theme_manager import ThemeManager
 
 
@@ -16,11 +17,11 @@ class FloatingToolbar(QWidget):
     """Floating pill-shaped toolbar that hovers over the canvas."""
 
     tool_changed = pyqtSignal(str)      # "select", "pen", "highlighter", "eraser", "pan", "shapes", "lasso"
-    action_triggered = pyqtSignal(str)  # "undo", "text", "more", "latex"
+    action_triggered = pyqtSignal(str)  # "undo", "text", "more", "latex", "video", "sticky", "table"
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(50)
+        self.setFixedHeight(52)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         self._active_tool = "select"
@@ -109,6 +110,11 @@ class FloatingToolbar(QWidget):
         self.btn_latex = self._make_btn('ri.file-upload-line', "Convert to LaTeX (Ctrl+E)", checkable=False)
         self.btn_latex.clicked.connect(lambda: self.action_triggered.emit("latex"))
         layout.addWidget(self.btn_latex)
+
+        # ── 6. Video Generation Trigger ──
+        self.btn_video = self._make_btn('ri.video-line', "Generate Video (Ctrl+Shift+V)", checkable=False)
+        self.btn_video.clicked.connect(lambda: self.action_triggered.emit("video"))
+        layout.addWidget(self.btn_video)
 
         self._tool_buttons = {
             "select":      self.btn_select,
