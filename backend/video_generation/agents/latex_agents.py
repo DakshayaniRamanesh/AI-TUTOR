@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 from typing import Optional
 from backend.video_generation.models import LatexJob, JobStatus
+from backend.workspace.artifact_store import artifact_store
 
 # Try to use groq, which should be installed
 try:
@@ -10,27 +11,30 @@ try:
 except ImportError:
     Groq = None
 
-STRUCTURE_PROMPT_TEMPLATE = """You are an expert LaTeX typesetter. I will provide raw transcribed math and text fragments extracted via OCR from handwritten notes, along with the requested document template type.
+STRUCTURE_PROMPT_TEMPLATE = """You are an expert Document Structurer. I will provide raw transcribed math and text fragments extracted via OCR from handwritten notes.
 
-Your task is to organize and structure these fragments into a clean, semantically correct LaTeX document body.
+Your task is to organize and structure these fragments into a JSON DocumentIR.
 
 CRITICAL RULES:
-1. **Math Environments**: 
-   - Use `$ ... $` for short, inline math embedded within text sentences.
-   - Use `\\begin{{equation}} ... \\end{{equation}}` for standalone, single-line important equations.
-   - Use `\\begin{{align*}} ... \\end{{align*}}` for multi-line derivations or equations aligned at the `=` sign.
-2. **Ambiguity & Illegibility**: 
-   - If a handwritten fragment is illegible or the OCR output is ambiguous garbage, make your best guess but wrap it in a `\\textcolor{{red}}{{??[BEST_GUESS]??}}` flag so the student can review it. Do not quietly drop content.
-3. **Template-Specific Formatting**:
-   - **Lecture Slides (Beamer)**: If the template type is "Lecture Slides", detect natural break points (e.g., large blank gaps, horizontal lines, headers, numbered lists) and wrap each logical section in `\\begin{{frame}}{{Slide Title}} ... \\end{{frame}}`. Infer appropriate slide titles.
-   - **Standard Documents**: Use `\\section{{}}` and `\\subsection{{}}` where you detect headers or natural topic transitions. Use `\\begin{{itemize}}` for bulleted lists.
-4. **Syntax Corrections**: Automatically fix obvious OCR artifacts (e.g., `l` instead of `1`, or malformed integral bounds). Ensure all braces `{{}}` match.
-5. **Output Constraints**: 
-   - Do NOT output `\\documentclass`, `\\usepackage`, or `\\begin{{document}}`. 
-   - Output ONLY the internal body content (the raw LaTeX). 
-   - This output will be directly injected into a `{{{{CONTENT_BODY}}}}` slot in a pre-existing template.
-   - Do NOT wrap your output in markdown code blocks like ```latex ... ```. Output raw text.
-6. **NO MARKDOWN**: NEVER use `#` or `##` for headers. NEVER use `**` for bold. This must be pure LaTeX code. Markdown characters will cause a fatal compiler crash!
+1. Output ONLY valid JSON conforming to the following structure:
+{{
+  "title": "Inferred Document Title",
+  "blocks": [
+    {{
+      "type": "heading|paragraph|equation|list|slide_title",
+      "content": "Text or LaTeX math content",
+      "level": 1,
+      "items": ["list item 1", "list item 2"] 
+    }}
+  ]
+}}
+2. Use "heading" for sections. Set "level": 1 for main sections, 2 for subsections.
+3. Use "slide_title" to delineate new slides if the template is "Lecture Slides".
+4. Use "equation" for standalone math equations.
+5. Use "list" for bullet points, and put the points in the "items" array.
+6. Use "paragraph" for regular text. You may use inline math ($...$) within text.
+7. Do NOT include Markdown formatting like **bold** or # headings.
+8. NEVER wrap your JSON in ```json blocks. Output RAW JSON ONLY.
 
 Template Type: {template_type}
 
@@ -133,23 +137,30 @@ class LatexStructureAgent:
             )
             content = response.choices[0].message.content or ""
             
-            # Post-process: strip markdown blocks
+            # Post-process: strip markdown blocks and get json
             content = content.strip()
-            if content.startswith("```latex"):
-                content = content[8:]
+            if content.startswith("```json"):
+                content = content[7:]
             elif content.startswith("```"):
                 content = content[3:]
             if content.endswith("```"):
                 content = content[:-3]
             
-            # Sanitize stray Markdown hashes that crash Tectonic
-            import re
-            content = re.sub(r'^###\s+(.*)$', r'\\subsubsection*{\1}', content, flags=re.MULTILINE)
-            content = re.sub(r'^##\s+(.*)$', r'\\subsection*{\1}', content, flags=re.MULTILINE)
-            content = re.sub(r'^#\s+(.*)$', r'\\section*{\1}', content, flags=re.MULTILINE)
-            content = content.replace("#", "\\#")  # Escape any remaining hashes
+            content = content.strip()
             
-            job.structured_latex = content.strip()
+            # Validate JSON
+            import json
+            try:
+                json.loads(content)
+            except json.JSONDecodeError as e:
+                # Basic fallback
+                content = json.dumps({
+                    "title": "Transcription",
+                    "blocks": [{"type": "paragraph", "content": content}]
+                })
+            
+            job.structured_latex = content
+
         except Exception as e:
             job.status = JobStatus.ERROR
             job.error_message = f"Structuring failed: {str(e)}"
@@ -178,10 +189,56 @@ class TemplateApplyAgent:
         template_path = os.path.abspath(template_path)
 
         try:
+            import json
+            ir = json.loads(job.structured_latex or "{}")
+            
+            blocks = ir.get("blocks", [])
+            latex_parts = []
+            
+            is_slides = job.template_type == "Lecture Slides"
+            in_frame = False
+            
+            for block in blocks:
+                b_type = block.get("type", "paragraph")
+                content = block.get("content", "")
+                level = block.get("level", 1)
+                items = block.get("items", [])
+                
+                if b_type == "slide_title":
+                    if in_frame:
+                        latex_parts.append("\\end{frame}\n")
+                    latex_parts.append(f"\\begin{{frame}}{{{content}}}\n")
+                    in_frame = True
+                elif b_type == "heading":
+                    if is_slides:
+                        if in_frame:
+                            latex_parts.append("\\end{frame}\n")
+                        latex_parts.append(f"\\begin{{frame}}{{{content}}}\n")
+                        in_frame = True
+                    else:
+                        if level == 1:
+                            latex_parts.append(f"\\section*{{{content}}}")
+                        else:
+                            latex_parts.append(f"\\subsection*{{{content}}}")
+                elif b_type == "equation":
+                    latex_parts.append(f"\\begin{{equation}}\n{content}\n\\end{{equation}}")
+                elif b_type == "list":
+                    latex_parts.append("\\begin{itemize}")
+                    for item in items:
+                        latex_parts.append(f"    \\item {item}")
+                    latex_parts.append("\\end{itemize}")
+                else: # paragraph
+                    latex_parts.append(content)
+            
+            if is_slides and in_frame:
+                latex_parts.append("\\end{frame}\n")
+                
+            body_tex = "\n\n".join(latex_parts)
+
             with open(template_path, "r", encoding="utf-8") as f:
                 template_content = f.read()
 
-            final_tex = template_content.replace("{{CONTENT_BODY}}", job.structured_latex or "")
+            final_tex = template_content.replace("{{CONTENT_BODY}}", body_tex)
             job.final_tex_code = final_tex
             job.step = "LaTeX Generated"
             job.progress_percentage = 60
@@ -206,6 +263,7 @@ class TectonicCompileAgent:
             return job
 
         # Create a temporary directory for the build
+        import shutil
         temp_dir = tempfile.mkdtemp()
         tex_path = os.path.join(temp_dir, "document.tex")
         pdf_path = os.path.join(temp_dir, "document.pdf")
@@ -257,10 +315,8 @@ class TectonicCompileAgent:
                 job.has_build_error = False
                 job.build_error_trace = None
                 
-                # Copy the PDF to the root temp directory so FastAPI can serve it
-                import shutil
-                final_pdf_path = os.path.join(tempfile.gettempdir(), f"{job.job_id}.pdf")
-                shutil.copy2(pdf_path, final_pdf_path)
+                # Copy the PDF to the artifact store so FastAPI can serve it
+                final_pdf_path = artifact_store.put(job.job_id, "document.pdf", pdf_path)
                 
                 job.pdf_path = final_pdf_path
                 job.status = JobStatus.DONE
@@ -269,5 +325,10 @@ class TectonicCompileAgent:
         except Exception as e:
             job.status = JobStatus.ERROR
             job.error_message = f"Compilation process failed: {str(e)}"
+        finally:
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
 
         return job

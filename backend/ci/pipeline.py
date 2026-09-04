@@ -33,7 +33,6 @@ except ImportError:
 # ── Stage 0 checks ────────────────────────────────────────────────────────────
 
 _BANNED_APIS = [
-    ("MathTex(", "MathTex is not supported — replace with Text()"),
     ("Tex(", "Tex is not supported — replace with Text()"),
     ("time.sleep(", "time.sleep() blocks the renderer — remove it"),
     ("while True", "Infinite loop detected — remove the while loop"),

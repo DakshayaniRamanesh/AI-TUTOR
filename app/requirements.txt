@@ -1,0 +1,9 @@
+PyQt6
+qtawesome
+beautifulsoup4
+sympy
+numpy
+matplotlib
+sounddevice
+python-dotenv
+requests>=2.31.0

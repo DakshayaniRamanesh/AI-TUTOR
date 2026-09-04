@@ -162,7 +162,7 @@ class StoryAgent:
         # ── 2. Retrieve RAG context ───────────────────────────────────────────
         relevant_chunks = []
         try:
-            relevant_chunks = self.rag_store.search(job.user_prompt, job.job_id, top_k=5)
+            relevant_chunks = self.rag_store.search(job.user_prompt, job.material_id or job.job_id, top_k=5)
         except Exception as e:
             print(f"[StoryAgent] RAG search failed: {e}. Will use document_text fallback.")
 

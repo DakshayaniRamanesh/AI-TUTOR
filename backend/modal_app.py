@@ -47,10 +47,11 @@ manim_image = (
 app = modal.App("manim-app", image=manim_image)
 jobs_db = modal.Dict.from_name("manim-jobs-db", create_if_missing=True)
 latex_jobs_db = modal.Dict.from_name("latex-jobs-db", create_if_missing=True)
+artifact_volume = modal.Volume.from_name("manim-artifacts-vol", create_if_missing=True)
 secrets = [modal.Secret.from_dotenv()]
 
 
-@app.function(image=manim_image, gpu="A10G", timeout=600, secrets=secrets)
+@app.function(image=manim_image, gpu="A10G", timeout=600, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 def _process_generation_job(job_dict: Dict[str, Any], pdf_bytes: bytes) -> Dict[str, Any]:
     from backend.video_generation.models import VideoJob, BoardSelection
     from backend.video_generation.graph import VideoGenerationPipeline
@@ -120,7 +121,7 @@ def _process_generation_job(job_dict: Dict[str, Any], pdf_bytes: bytes) -> Dict[
     return result
 
 
-@app.function(image=manim_image, gpu="A10G", timeout=300, secrets=secrets)
+@app.function(image=manim_image, gpu="A10G", timeout=300, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 def _process_annotation_job(job_id: str, annotations_raw: list) -> Dict[str, Any]:
     from backend.video_generation.models import VideoJob, AnnotationEvent, PathData
     from backend.workspace.qdrant_store import QdrantRAGStore
@@ -168,7 +169,7 @@ def _process_annotation_job(job_id: str, annotations_raw: list) -> Dict[str, Any
     return result
 
 
-@app.function(image=manim_image, timeout=600, secrets=secrets)
+@app.function(image=manim_image, timeout=600, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 def _process_latex_job(job_dict: Dict[str, Any]) -> Dict[str, Any]:
     from backend.video_generation.models import LatexJob
     from backend.math_engine.latex_graph import LatexGenerationPipeline
@@ -177,6 +178,8 @@ def _process_latex_job(job_dict: Dict[str, Any]) -> Dict[str, Any]:
         job_id=job_dict["job_id"],
         image_b64=job_dict["image_b64"],
         template_type=job_dict["template_type"],
+        mode=job_dict.get("mode", "study"),
+        classroom_action=job_dict.get("classroom_action", "Solve Question"),
     )
     final_job = LatexGenerationPipeline().run_pipeline(job)
     pdf_b64 = None
@@ -220,7 +223,7 @@ def _pdf_text_for_cache(pdf_bytes: bytes, page_range: str = "") -> str:
         return ""
 
 
-@app.function(image=manim_image, gpu="A10G", timeout=600, secrets=secrets)
+@app.function(image=manim_image, gpu="A10G", timeout=600, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 @modal.fastapi_endpoint(method="POST")
 async def generate(request: Request) -> dict:
     try:
@@ -229,8 +232,8 @@ async def generate(request: Request) -> dict:
         body = {}
 
     job_id = body.get("job_id") or f"job_{uuid.uuid4().hex[:10]}"
-    prompt = body.get("prompt", "Explain the document concepts.")
-    pdf_b64 = body.get("pdf_bytes", "")
+    prompt = body.get("user_prompt", "Explain the document concepts.")
+    pdf_b64 = body.get("document_text", "")
     try:
         pdf_bytes = base64.b64decode(pdf_b64) if pdf_b64 else b""
     except Exception:
@@ -289,7 +292,7 @@ async def generate(request: Request) -> dict:
     }
 
 
-@app.function(image=manim_image, gpu="A10G", timeout=300, secrets=secrets)
+@app.function(image=manim_image, gpu="A10G", timeout=300, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 @modal.fastapi_endpoint(method="POST")
 async def annotate(request: Request) -> dict:
     try:
@@ -299,7 +302,7 @@ async def annotate(request: Request) -> dict:
     return _process_annotation_job.remote(body.get("job_id", ""), body.get("annotations", []))
 
 
-@app.function(image=manim_image, secrets=secrets)
+@app.function(image=manim_image, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 @modal.fastapi_endpoint(method="GET")
 async def status(request: Request, job_id: str = "") -> dict:
     target_id = job_id or request.query_params.get("job_id", "")
@@ -325,7 +328,7 @@ async def status(request: Request, job_id: str = "") -> dict:
     }
 
 
-@app.function(image=manim_image, secrets=secrets)
+@app.function(image=manim_image, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 @modal.fastapi_endpoint(method="POST")
 async def generate_latex(request: Request) -> dict:
     try:
@@ -343,11 +346,13 @@ async def generate_latex(request: Request) -> dict:
         "job_id": job_id,
         "image_b64": body.get("image_b64", ""),
         "template_type": body.get("template_type", "Homework"),
+        "mode": body.get("mode", "study"),
+        "classroom_action": body.get("classroom_action", "Solve Question"),
     })
     return {"job_id": job_id, "status": "processing", "message": "LaTeX generation pipeline started."}
 
 
-@app.function(image=manim_image, secrets=secrets)
+@app.function(image=manim_image, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 @modal.fastapi_endpoint(method="GET")
 async def latex_status(request: Request, job_id: str = "") -> dict:
     target_id = job_id or request.query_params.get("job_id", "")
@@ -364,7 +369,7 @@ async def latex_status(request: Request, job_id: str = "") -> dict:
     return {"job_id": target_id, "status": "error", "error_message": "Job not found"}
 
 
-@app.function(image=manim_image, secrets=secrets)
+@app.function(image=manim_image, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
 @modal.fastapi_endpoint(method="GET")
 async def stream_status(request: Request, job_id: str = "") -> Any:
     import asyncio
@@ -398,3 +403,15 @@ async def stream_status(request: Request, job_id: str = "") -> Any:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.function(image=manim_image, secrets=secrets, volumes={"/root/backend/workspace/artifacts": artifact_volume})
+@modal.fastapi_endpoint(method="GET")
+async def get_artifact(request: Request, filename: str) -> Any:
+    from fastapi.responses import FileResponse, JSONResponse
+    import mimetypes
+    path = os.path.join("/root/backend/workspace/artifacts", filename)
+    if os.path.exists(path) and os.path.isfile(path):
+        mt, _ = mimetypes.guess_type(path)
+        return FileResponse(path, media_type=mt or "application/octet-stream")
+    return JSONResponse({"error": "Artifact not found"}, status_code=404)

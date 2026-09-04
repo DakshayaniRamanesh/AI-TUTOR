@@ -21,14 +21,21 @@ except ImportError:
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from backend.video_generation.models import VideoJob, AnnotationEvent, PathData, LatexJob
+from backend.video_generation.models import (
+    VideoJob, AnnotationEvent, PathData, LatexJob,
+    VideoGenerationRequest, VideoGenerationResponse, VideoJobStatusResponse,
+    LatexGenerationRequest, LatexGenerationResponse, LatexJobStatusResponse,
+    BoardSelection
+)
+import backend.config as config
 from backend.video_generation.graph import VideoGenerationPipeline
 from backend.math_engine.latex_graph import LatexGenerationPipeline
 from backend.workspace.qdrant_store import QdrantRAGStore
 from backend.video_qa.annotation_handler import AnnotationHandler
+from backend.workspace.artifact_store import artifact_store
 
 app = FastAPI(title="Manim AI Local Pipeline Server")
 
@@ -94,51 +101,47 @@ def run_job_background(job: VideoJob):
         job.error_message = str(e)
         jobs_store[job.job_id] = job
 
-@app.post("/generate")
+@app.post("/generate", response_model=VideoGenerationResponse)
 async def generate(
     background_tasks: BackgroundTasks,
-    prompt: str = Form(...),
-    pdf: UploadFile = File(None),
-    page_range: str = Form(""),
-    emphasis_note: str = Form(""),
-    output_type: str = Form("video"),
-    subject_id: str = Form("")
+    request: VideoGenerationRequest = Body(...)
 ):
     job_id = f"job_{uuid.uuid4().hex[:8]}"
-    pdf_path = ""
-    source_doc = ""
-
-    if pdf and pdf.filename:
+    
+    # Optional logic for decoding document text back to a local PDF for the pipeline
+    pdf_path = request.pdf_path
+    if request.document_text and not pdf_path:
         temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        content = await pdf.read()
-        temp_pdf.write(content)
+        temp_pdf.write(base64.b64decode(request.document_text))
         temp_pdf.close()
         pdf_path = temp_pdf.name
-        source_doc = pdf.filename  # Record original filename for traceability
+
+    board_selection = None
+    if request.board_selection:
+        board_selection = BoardSelection.from_dict(request.board_selection)
 
     job = VideoJob(
         job_id=job_id,
         pdf_path=pdf_path,
-        user_prompt=prompt,
+        user_prompt=request.user_prompt,
         document_text="",
-        page_range=page_range if page_range else None,
-        emphasis_note=emphasis_note if emphasis_note else None,
-        output_type=output_type,
-        subject_id=subject_id if subject_id else None,
-        source_document=source_doc,
+        page_range=request.page_range,
+        emphasis_note=request.emphasis_note,
+        output_type=request.output_type,
+        subject_id=request.subject_id,
+        board_selection=board_selection,
     )
     jobs_store[job_id] = job
     background_tasks.add_task(run_job_background, job)
 
-    return {
-        "job_id": job_id,
-        "status": "processing",
-        "message": "Video generation started. Use /status/{job_id} to track progress."
-    }
+    return VideoGenerationResponse(
+        job_id=job_id,
+        backend="local",
+        status_endpoint=f"{config.BACKEND_URL}/status/{job_id}"
+    )
 
 def get_base_url() -> str:
-    port = os.getenv("PORT", os.getenv("BACKEND_PORT", "8000"))
-    return os.getenv("BACKEND_URL", f"http://localhost:{port}").rstrip("/")
+    return config.BACKEND_URL
 
 @app.get("/status/{job_id}")
 async def status(job_id: str):
@@ -147,10 +150,10 @@ async def status(job_id: str):
 
     job = jobs_store[job_id]
 
-    video_url = None
-    if job.video_path and os.path.exists(job.video_path):
+    video_url = job.video_url
+    if not video_url and job.video_path and os.path.exists(job.video_path):
         filename = os.path.basename(job.video_path)
-        video_url = f"{get_base_url()}/video/{filename}"
+        video_url = f"{get_base_url()}/artifacts/{filename}"
 
     job_status = job.status.value if hasattr(job.status, "value") else str(job.status)
     internal_step = job.step
@@ -226,9 +229,24 @@ async def annotate(payload: dict):
         "video_url": video_url
     }
 
+@app.api_route("/artifacts/{filename}", methods=["GET", "HEAD"])
+async def serve_artifact(filename: str):
+    path = os.path.join(artifact_store.base_dir, filename)
+    if os.path.exists(path) and os.path.isfile(path):
+        import mimetypes
+        mt, _ = mimetypes.guess_type(path)
+        return FileResponse(path, media_type=mt or "application/octet-stream")
+    return JSONResponse({"error": "Artifact not found"}, status_code=404)
+
 @app.api_route("/video/{filename}", methods=["GET", "HEAD"])
 async def serve_video(filename: str):
-    # Find matching file in temp or job directories
+    # Backward compatibility: Redirect to artifact store
+    path = os.path.join(artifact_store.base_dir, filename)
+    if os.path.exists(path) and os.path.isfile(path):
+        import mimetypes
+        mt, _ = mimetypes.guess_type(path)
+        return FileResponse(path, media_type=mt or "video/mp4")
+    # Fallback to older search
     for job in jobs_store.values():
         if job.video_path and os.path.basename(job.video_path) == filename:
             if os.path.exists(job.video_path):
@@ -245,32 +263,29 @@ def run_latex_job_background(job: LatexJob):
         job.error_message = str(e)
         latex_jobs_store[job.job_id] = job
 
-@app.post("/generate_latex")
+@app.post("/generate_latex", response_model=LatexGenerationResponse)
 async def generate_latex(
     background_tasks: BackgroundTasks,
-    image_b64: str = Form(...),
-    template_type: str = Form("Homework"),
-    mode: str = Form("study"),
-    classroom_action: str = Form("Solve Question")
+    request: LatexGenerationRequest = Body(...)
 ):
     job_id = f"latex_{uuid.uuid4().hex[:8]}"
     
     job = LatexJob(
         job_id=job_id,
-        image_b64=image_b64,
-        template_type=template_type,
-        mode=mode,
-        classroom_action=classroom_action 
+        image_b64=request.image_b64,
+        template_type=request.template_type,
+        mode=request.mode,
+        classroom_action=request.classroom_action 
     )
     latex_jobs_store[job_id] = job
 
     background_tasks.add_task(run_latex_job_background, job)
 
-    return {
-        "job_id": job_id,
-        "status": "processing",
-        "message": "LaTeX generation pipeline started."
-    }
+    return LatexGenerationResponse(
+        job_id=job_id,
+        backend="local",
+        status_endpoint=f"{config.BACKEND_URL}/latex_status/{job_id}"
+    )
 
 @app.get("/latex_status/{job_id}")
 async def latex_status(job_id: str):
@@ -282,7 +297,7 @@ async def latex_status(job_id: str):
     pdf_url = None
     if job.pdf_path and os.path.exists(job.pdf_path):
         filename = os.path.basename(job.pdf_path)
-        pdf_url = f"{get_base_url()}/pdf/{filename}"
+        pdf_url = f"{get_base_url()}/artifacts/{filename}"
 
     return {
         "job_id": job.job_id,
@@ -314,7 +329,15 @@ async def compile_pdf(payload: dict):
         f.write(latex_code)
 
     try:
-        res = subprocess.run([tectonic_cmd, tex_path], cwd=temp_dir, capture_output=True, text=True, timeout=300)
+        import asyncio
+        res = await asyncio.to_thread(
+            subprocess.run,
+            [tectonic_cmd, tex_path],
+            cwd=temp_dir,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
         if res.returncode == 0 and os.path.exists(pdf_path):
             with open(pdf_path, "rb") as pf:
                 pdf_b64 = base64.b64encode(pf.read()).decode()
@@ -324,9 +347,22 @@ async def compile_pdf(payload: dict):
             return JSONResponse({"status": "error", "message": f"Compilation failed: {err_msg}"}, status_code=500)
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+    finally:
+        import shutil
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 @app.api_route("/pdf/{filename}", methods=["GET", "HEAD"])
 async def serve_pdf(filename: str):
+    # Backward compatibility: Redirect to artifact store
+    path = os.path.join(artifact_store.base_dir, filename)
+    if os.path.exists(path) and os.path.isfile(path):
+        import mimetypes
+        mt, _ = mimetypes.guess_type(path)
+        return FileResponse(path, media_type=mt or "application/pdf")
+    # Fallback to older search
     for job in latex_jobs_store.values():
         if job.pdf_path and os.path.basename(job.pdf_path) == filename:
             if os.path.exists(job.pdf_path):
@@ -383,25 +419,7 @@ async def test_tectonic():
         if result.returncode == 0:
             return {"status": "ok", "message": "Tectonic found"}
     except (FileNotFoundError, Exception):
-        pass
-
-    # Auto-download Tectonic binary if missing
-    try:
-        url = "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%400.17.0/tectonic-0.17.0-x86_64-pc-windows-msvc.zip"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req) as resp:
-            zip_bytes = resp.read()
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            for name in zf.namelist():
-                if name.endswith("tectonic.exe"):
-                    with open(local_tectonic, "wb") as f:
-                        f.write(zf.read(name))
-                    break
-        result = subprocess.run([local_tectonic, "--version"], capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            return {"status": "ok", "message": "Tectonic auto-downloaded & verified"}
-    except Exception as e:
-        return JSONResponse({"status": "error", "message": f"Tectonic missing & auto-download failed: {e}"}, status_code=500)
+        return JSONResponse({"status": "error", "message": "Tectonic binary not found"}, status_code=500)
 
     return JSONResponse({"status": "error", "message": "Tectonic binary not found"}, status_code=500)
 
@@ -418,7 +436,7 @@ if __name__ == "__main__":
             except OSError:
                 return False
 
-    desired_port = int(os.getenv("PORT", os.getenv("BACKEND_PORT", "8000")))
+    desired_port = config.BACKEND_PORT
     selected_port = desired_port
 
     if not _is_port_bindable(selected_port):
@@ -429,7 +447,7 @@ if __name__ == "__main__":
                 print(f"[LocalServer] Port {selected_port} is blocked/unavailable. Automatically falling back to port {fb}.")
                 selected_port = fb
                 os.environ["PORT"] = str(fb)
-                os.environ["BACKEND_URL"] = f"http://localhost:{fb}"
+                config.BACKEND_URL = f"http://localhost:{fb}"
                 break
 
     uvicorn.run(app, host="0.0.0.0", port=selected_port)

@@ -6,8 +6,13 @@ import sys
 import os
 from dotenv import load_dotenv
 
-# Ensure root directory is on Python path and load environment variables
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Ensure root directory is on Python path and prevent namespace collision with app/
+current_dir = os.path.abspath(os.path.dirname(__file__))
+if current_dir in sys.path:
+    sys.path.remove(current_dir)
+if "" in sys.path:
+    sys.path.remove("")
+sys.path.insert(0, os.path.abspath(os.path.join(current_dir, "..")))
 load_dotenv()
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "backend", ".env"))

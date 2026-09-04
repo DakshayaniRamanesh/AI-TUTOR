@@ -52,7 +52,7 @@ class AnnotationHandler:
         for idx, ann in enumerate(annotations):
             query = ann.comment or "Explain this highlighted region."
             visual_description = self._describe_frame(ann.frame_image, ann.comment)
-            results = self.rag_store.search(query, job.job_id, top_k=3)
+            results = self.rag_store.search(query, job.material_id or job.job_id, top_k=3)
             if results and results[0]["score"] > 0.5:
                 context = "\n".join(r["text"] for r in results)
                 annotation_source = "rag"

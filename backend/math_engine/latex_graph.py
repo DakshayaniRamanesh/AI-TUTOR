@@ -107,15 +107,19 @@ class _FallbackLatexPipeline:
         if state.status == JobStatus.ERROR:
             return state
 
-        state = self.structure.run(state)
-        if state.status == JobStatus.ERROR:
-            return state
+        while state.retry_count < 2:
+            state = self.structure.run(state)
+            if state.status == JobStatus.ERROR:
+                return state
 
-        state = self.template.run(state)
-        if state.status == JobStatus.ERROR:
-            return state
+            state = self.template.run(state)
+            if state.status == JobStatus.ERROR:
+                return state
 
-        state = self.compile_node.run(state)
+            state = self.compile_node.run(state)
+            if state.status == JobStatus.ERROR or not state.has_build_error:
+                break
+                
         return state
 
 

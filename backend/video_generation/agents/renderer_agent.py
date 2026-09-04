@@ -16,11 +16,7 @@ import subprocess
 import tempfile
 from backend.video_generation.models import VideoJob, JobStatus
 
-# Persistent output directory for successfully rendered videos
-_VIDEOS_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "..", "workspace", "videos"
-)
-os.makedirs(_VIDEOS_DIR, exist_ok=True)
+from backend.workspace.artifact_store import artifact_store
 
 
 def _nvenc_available() -> bool:
@@ -134,53 +130,77 @@ class RendererAgent:
             with open(script_path, "w", encoding="utf-8") as f:
                 f.write(job.manim_code)
                 
-            import re
-            scene_name = "MainScene"
-            matches = re.findall(r'^class\s+(\w+)\(Scene\):', job.manim_code, flags=re.MULTILINE)
-            if matches:
-                scene_name = matches[-1]
-
-            # ── Stage A: Fast validation render (-ql, 480p) ───────────────────
-            print(f"[RendererAgent] Stage A: fast validation render (-ql) for {scene_name}")
-            ql_media = os.path.join(temp_dir, "media_ql")
-            ok, mp4 = self._manim_render(script_path, ql_media, quality="-ql", timeout=120, scene_name=scene_name)
-
-            if not ok or not mp4:
-                err = _extract_error(mp4 or "")  # mp4 is error string when ok=False
-                job.status = JobStatus.ERROR
-                job.error_message = f"Animation rendering failed.\n{err[:400]}"
-                print(f"[RendererAgent] Stage A failed: {err[:150]}")
-                return job
-
-            # ── Stage B: Production render (-qm, 720p) ────────────────────────
-            # Only on first attempt (retry_count == 0). On retries keep -ql.
-            final_mp4 = mp4
-            if job.retry_count == 0:
-                print(f"[RendererAgent] Stage B: production render (-qm)")
-                qm_media = os.path.join(temp_dir, "media_qm")
-                ok_prod, mp4_prod = self._manim_render(script_path, qm_media, quality="-qm", timeout=240, scene_name=scene_name)
-                if ok_prod and mp4_prod:
-                    final_mp4 = mp4_prod
-                    job.render_quality = "medium"
-                    print(f"[RendererAgent] Production render succeeded")
+            # Determine scene names
+            scene_names = ["MainScene"]
+            if job.scene_specs:
+                if len(job.scene_specs) == 1:
+                    scene_names = ["MainScene"]
                 else:
-                    # Production render failed — use -ql output (still watchable)
-                    print(f"[RendererAgent] Production render failed — using fast render output")
-                    job.render_quality = "low"
+                    scene_names = []
+                    for idx, s in enumerate(job.scene_specs):
+                        safe_id = "".join(c if c.isalnum() else "_" for c in s.scene_id) or str(idx)
+                        scene_names.append(f"Scene_{safe_id}")
+            
+            rendered_mp4s = []
+            job.render_quality = "medium" if job.retry_count == 0 else "low"
+
+            for scene_name in scene_names:
+                print(f"[RendererAgent] Stage A: fast validation render (-ql) for {scene_name}")
+                ql_media = os.path.join(temp_dir, f"media_ql_{scene_name}")
+                ok, mp4 = self._manim_render(script_path, ql_media, quality="-ql", timeout=120, scene_name=scene_name)
+
+                if not ok or not mp4:
+                    err = _extract_error(mp4 or "")  # mp4 is error string when ok=False
+                    job.status = JobStatus.ERROR
+                    job.error_message = f"Animation rendering failed for {scene_name}.\n{err[:400]}"
+                    print(f"[RendererAgent] Stage A failed for {scene_name}: {err[:150]}")
+                    return job
+
+                final_mp4 = mp4
+                if job.retry_count == 0:
+                    print(f"[RendererAgent] Stage B: production render (-qm) for {scene_name}")
+                    qm_media = os.path.join(temp_dir, f"media_qm_{scene_name}")
+                    ok_prod, mp4_prod = self._manim_render(script_path, qm_media, quality="-qm", timeout=240, scene_name=scene_name)
+                    if ok_prod and mp4_prod:
+                        final_mp4 = mp4_prod
+                        print(f"[RendererAgent] Production render succeeded for {scene_name}")
+                    else:
+                        print(f"[RendererAgent] Production render failed for {scene_name} — using fast render output")
+                        job.render_quality = "low"
+                
+                rendered_mp4s.append(final_mp4)
+
+            # If there's only one video, use it. If multiple, we need to stitch them.
+            persistent_path = os.path.join(_VIDEOS_DIR, f"{job.job_id}_v{job.version}.mp4")
+            if len(rendered_mp4s) == 1:
+                final_output = rendered_mp4s[0]
             else:
-                job.render_quality = "low"
+                # Concatenate with FFmpeg
+                concat_list = os.path.join(temp_dir, "concat.txt")
+                with open(concat_list, "w", encoding="utf-8") as f:
+                    for mp4 in rendered_mp4s:
+                        f.write(f"file '{mp4.replace(chr(92), '/')}'\n")
+                
+                stitched_mp4 = os.path.join(temp_dir, "stitched.mp4")
+                ffmpeg = _get_ffmpeg()
+                cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", concat_list, "-c", "copy", stitched_mp4]
+                try:
+                    subprocess.run(cmd, capture_output=True, timeout=60, check=True)
+                    final_output = stitched_mp4
+                except subprocess.CalledProcessError as e:
+                    print(f"[RendererAgent] FFmpeg concat failed: {e}")
+                    final_output = rendered_mp4s[0]  # Fallback to first scene
 
             # ── FFmpeg re-encode for browser compatibility ─────────────────────
-            persistent_path = os.path.join(
-                _VIDEOS_DIR, f"{job.job_id}_v{job.version}.mp4"
-            )
-            if _reencode(final_mp4, persistent_path):
-                job.video_path = persistent_path
+            # Save the file to artifact store
+            dest_key = f"v{job.version}.mp4"
+            if _reencode(final_output, final_output + ".reencoded.mp4"):
+                persistent_path = artifact_store.put(job.job_id, dest_key, final_output + ".reencoded.mp4")
             else:
-                # Fall back: copy raw file to persistent dir
-                shutil.copy2(final_mp4, persistent_path)
-                job.video_path = persistent_path
-                print(f"[RendererAgent] Using raw output (copy to persistent dir): {persistent_path}")
+                persistent_path = artifact_store.put(job.job_id, dest_key, final_output)
+            
+            job.video_path = persistent_path
+            print(f"[RendererAgent] Saved video to artifact store: {persistent_path}")
 
             return job
 

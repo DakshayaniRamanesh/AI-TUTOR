@@ -198,6 +198,7 @@ class TableItem(QGraphicsProxyWidget, BaseGraphicsItemMixin):
             rows.append(row_data)
 
         return {
+            "item_id": getattr(self, "item_id", ""),
             "type": "TableItem",
             "x": self.x(),
             "y": self.y(),

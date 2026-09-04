@@ -112,7 +112,10 @@ TEXT:
 
             mock_text = f"Topic content for: {job.user_prompt}. Explaining concepts, formulas, and visual proofs."
             job.document_text = mock_text
-            self.rag_store.upsert_chunks([{"text": mock_text, "page": 1}], job.job_id)
+            material_id = self.rag_store.compute_content_hash(mock_text, "mock")
+            job.material_id = material_id
+            if not self.rag_store.has_material(material_id):
+                self.rag_store.upsert_chunks([{"text": mock_text, "page": 1}], material_id)
             return job
 
         try:
@@ -143,8 +146,16 @@ TEXT:
                 full_text_parts.append(fallback)
 
             job.document_text = "\n\n".join(full_text_parts).strip()
-            self.rag_store.upsert_chunks(chunks, job.job_id)
-            print(f"[DocumentEmbedderAgent] Indexed {len(chunks)} chunks from {len(target_pages)} pages for job {job.job_id}")
+            
+            # Use stable material_id to avoid redundant indexing
+            material_id = job.material_id or self.rag_store.compute_content_hash(job.document_text, "material")
+            job.material_id = material_id
+            
+            if not self.rag_store.has_material(material_id):
+                self.rag_store.upsert_chunks(chunks, material_id)
+                print(f"[DocumentEmbedderAgent] Indexed {len(chunks)} chunks from {len(target_pages)} pages for material {material_id}")
+            else:
+                print(f"[DocumentEmbedderAgent] Material {material_id} already embedded. Skipping upsert.")
 
             if getattr(job, 'subject_id', None):
                 self._extract_and_save_knowledge_graph(job.subject_id, full_text_parts)

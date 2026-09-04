@@ -24,7 +24,7 @@ class TeachingPlannerAgent:
             return job
 
         query = " ".join(filter(None, [job.user_prompt, board.probable_topic, board.extracted_text[:1200]]))
-        chunks = self.rag_store.search(query, job.job_id, top_k=4)
+        chunks = self.rag_store.search(query, job.material_id or job.job_id, top_k=4)
         rag_context = "\n---\n".join(c.get("text", "") for c in chunks if c.get("text"))[:6000]
         graph_context = self._knowledge_graph_context(job.subject_id, board.extracted_text)
         job.metadata["teaching_context"] = {

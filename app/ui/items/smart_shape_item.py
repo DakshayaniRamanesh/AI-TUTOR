@@ -254,6 +254,7 @@ class SmartShapeItem(QGraphicsPathItem, BaseGraphicsItemMixin):
         """Serializes SmartShapeItem state into a dictionary payload."""
         pen = self.pen()
         return {
+            "item_id": getattr(self, "item_id", ""),
             "type": "SmartShapeItem",
             "stroke_type": self.stroke_type,
             "x": self.x(),

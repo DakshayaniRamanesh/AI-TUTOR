@@ -38,6 +38,7 @@ class ImageItem(QGraphicsPixmapItem):
         b64_data = base64.b64encode(buffer.data().data()).decode('utf-8')
         
         return {
+            "item_id": getattr(self, "item_id", ""),
             "type": "ImageItem",
             "x": self.x(),
             "y": self.y(),

@@ -13,10 +13,9 @@ import uuid
 import requests
 from PyQt6.QtCore import QThread, pyqtSignal
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
-LOCAL_SERVER_URL = os.getenv("BACKEND_URL", f"http://localhost:{os.getenv('PORT', '8888')}")
-MODAL_ENDPOINT_URL = os.getenv("MODAL_URL", "https://dakshayaniramanesh--manim-app-generate.modal.run")
+from backend.config import BACKEND_URL, MODAL_VIDEO_GENERATE_URL, MODAL_VIDEO_STATUS_URL
 
 
 def request_video_generation(
@@ -34,28 +33,24 @@ def request_video_generation(
     # 1. Try local server. The selection is JSON inside multipart/form-data so
     # existing PDF upload behavior remains backward-compatible.
     try:
-        files = None
-        file_handle = None
+        pdf_b64 = ""
         if pdf_path and os.path.exists(pdf_path):
-            file_handle = open(pdf_path, "rb")
-            files = {"pdf": file_handle}
-        try:
-            resp = requests.post(
-                f"{LOCAL_SERVER_URL}/generate",
-                data={
-                    "prompt": selected_text,
-                    "page_range": page_range,
-                    "emphasis_note": emphasis_note,
-                    "output_type": output_type,
-                    "subject_id": subject_id,
-                    "selection_json": json.dumps(selection_payload, separators=(",", ":")),
-                },
-                files=files,
-                timeout=3,
-            )
-        finally:
-            if file_handle:
-                file_handle.close()
+            with open(pdf_path, "rb") as f:
+                pdf_b64 = base64.b64encode(f.read()).decode("ascii")
+        resp = requests.post(
+            f"{BACKEND_URL}/generate",
+            json={
+                "user_prompt": selected_text,
+                "pdf_path": pdf_path if pdf_path else "",
+                "document_text": pdf_b64,
+                "page_range": page_range,
+                "emphasis_note": emphasis_note,
+                "output_type": output_type,
+                "subject_id": subject_id,
+                "board_selection": selection_payload,
+            },
+            timeout=3,
+        )
         if resp.status_code == 200:
             data = resp.json()
             return data.get("job_id", job_id)
@@ -70,11 +65,11 @@ def request_video_generation(
             with open(pdf_path, "rb") as f:
                 pdf_b64 = base64.b64encode(f.read()).decode("ascii")
         resp = requests.post(
-            MODAL_ENDPOINT_URL,
+            MODAL_VIDEO_GENERATE_URL,
             json={
-                "job_id": job_id,
-                "prompt": selected_text,
-                "pdf_bytes": pdf_b64,
+                "user_prompt": selected_text,
+                "pdf_path": "", 
+                "document_text": pdf_b64,
                 "page_range": page_range,
                 "emphasis_note": emphasis_note,
                 "output_type": output_type,
@@ -112,7 +107,7 @@ class ManimVideoPollWorker(QThread):
             attempts += 1
             self.msleep(1500)
             try:
-                r = requests.get(f"{LOCAL_SERVER_URL}/status/{self.job_id}", timeout=2)
+                r = requests.get(f"{BACKEND_URL}/status/{self.job_id}", timeout=2)
                 if r.status_code == 200:
                     data = r.json()
                     status = data.get("status", "processing")

@@ -43,7 +43,7 @@ class AnnotationHandler:
         for index, ann in enumerate(annotations):
             query = ann.comment or "Explain this highlight in detail."
             # Vector search in Qdrant
-            results = self.rag_store.search(query, job.job_id, top_k=2)
+            results = self.rag_store.search(query, job.material_id or job.job_id, top_k=2)
             
             if results and results[0]["score"] > 0.5:
                 context = "\n".join([r["text"] for r in results])
