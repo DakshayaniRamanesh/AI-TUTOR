@@ -1,4 +1,8 @@
 import ast
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath("."))
 
 from backend.video_generation.models import BoardSelection, SceneSpec, VideoJob
 from backend.video_generation.agents.board_understanding_agent import BoardUnderstandingAgent

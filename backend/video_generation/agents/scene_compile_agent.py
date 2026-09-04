@@ -26,9 +26,10 @@ class SceneCompileAgent:
             safe_id = "".join(c if c.isalnum() else "_" for c in scene.scene_id)
             if not safe_id:
                 safe_id = f"{index}"
+            scene_class_name = "MainScene" if len(scenes) == 1 else f"Scene_{safe_id}"
             body.extend([
                 "",
-                f"class Scene_{safe_id}(Scene):",
+                f"class {scene_class_name}(Scene):",
                 "    def construct(self):",
                 "        self.camera.background_color = '#090d16'",
             ])
