@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QIcon, QAction
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
+import qtawesome as qta
 
 # Import our DB operations
 from app.storage.database_ops import (
@@ -293,7 +294,8 @@ class DeletableListWidget(QWidget):
         self.lbl_selected.setStyleSheet(f"font-size: 11px; font-family: {MONO_FONT}; color: {c['text_secondary']};")
         self.delete_bar.addWidget(self.lbl_selected)
         self.delete_bar.addStretch()
-        self.btn_delete = QPushButton("✕ Delete Selected")
+        self.btn_delete = QPushButton("Delete Selected")
+        self.btn_delete.setIcon(qta.icon('ri.delete-bin-line', color='#cc3333'))
         self.btn_delete.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
@@ -322,8 +324,10 @@ class DeletableListWidget(QWidget):
         self.list_widget.clear()
         self.delete_bar_widget.setVisible(False)
 
-    def add_item(self, text: str, data=None):
+    def add_item(self, text: str, data=None, icon=None):
         item = QListWidgetItem(text)
+        if icon:
+            item.setIcon(icon)
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(Qt.CheckState.Unchecked)
         if data is not None:
@@ -397,7 +401,8 @@ class SubjectDetailView(QWidget):
         header.addWidget(self.lbl_title)
         header.addStretch()
 
-        self.btn_delete = QPushButton("✕ Delete Subject", self)
+        self.btn_delete = QPushButton("Delete Subject", self)
+        self.btn_delete.setIcon(qta.icon('ri.delete-bin-line', color='#cc3333'))
         self.btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_delete.clicked.connect(self._on_delete_subject)
         header.addWidget(self.btn_delete)
@@ -619,13 +624,13 @@ class SubjectDetailView(QWidget):
         if not subject:
             return
 
-        self.lbl_title.setText(f"📚 {subject.name}")
+        self.lbl_title.setText(subject.name)
 
         # ── Notebooks ──
         self.nb_list.disconnect_check_state_updates()
         self.nb_list.clear()
         for nb in subject.notebooks:
-            self.nb_list.add_item(f"📓  {nb.name}", data=nb.id)
+            self.nb_list.add_item(nb.name, data=nb.id, icon=qta.icon('ri.book-2-line'))
         self.nb_list.connect_check_state_updates()
 
         # ── Materials ──
@@ -633,7 +638,7 @@ class SubjectDetailView(QWidget):
         self.mat_list.clear()
         self._cached_materials = list(subject.materials)
         for i, mat in enumerate(self._cached_materials):
-            self.mat_list.add_item(f"📄  {mat.filename}", data=i)
+            self.mat_list.add_item(mat.filename, data=i, icon=qta.icon('ri.file-pdf-line'))
         self.mat_list.connect_check_state_updates()
 
         # ── Videos ──
@@ -641,7 +646,7 @@ class SubjectDetailView(QWidget):
         self.vid_list.clear()
         self._cached_videos = list(subject.videos)
         for i, vid in enumerate(self._cached_videos):
-            self.vid_list.add_item(f"🎥  {vid.title}", data=i)
+            self.vid_list.add_item(vid.title, data=i, icon=qta.icon('ri.video-line'))
         self.vid_list.connect_check_state_updates()
 
         # ── Knowledge Graph ──

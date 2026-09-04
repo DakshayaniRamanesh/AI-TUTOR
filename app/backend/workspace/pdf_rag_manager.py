@@ -147,9 +147,9 @@ class PdfRAGManager:
         # Fallback local grounded response
         c_first = chunks[0] if chunks else {"page": 1, "text": "Document text reference."}
         return (
-            f"📖 Textbook Reference: {self.doc_title} [Page {c_first['page']}]\n"
+            f"Textbook Reference: {self.doc_title} [Page {c_first['page']}]\n"
             f"\"{c_first['text'][:250]}...\"\n\n"
-            f"💡 Concept Explanation:\n"
+            f"Concept Explanation:\n"
             f"• Core Mechanism: {query} processes input step-by-step to extract meaningful representations.\n"
             f"• Key Insight: Refer to [Page {c_first['page']}] in {self.doc_title} for the full formal derivation."
         )
@@ -174,9 +174,9 @@ class PdfRAGManager:
             f"Document Title: {self.doc_title} ({self.page_count} pages)\n"
             f"Document Content Excerpts:\n{doc_excerpt[:4000]}\n\n"
             f"Format a comprehensive handwritten document summary with:\n"
-            f"1. 📖 Document Overview\n"
-            f"2. 📌 Key Sections & Page Findings\n"
-            f"3. 🧠 Summary Conclusion"
+            f"1. Document Overview\n"
+            f"2. Key Sections & Page Findings\n"
+            f"3. Summary Conclusion"
         )
 
         if GOOGLE_API_KEY:
@@ -193,7 +193,7 @@ class PdfRAGManager:
         # Fallback summary
         first_page = self.pages_text[0] if self.pages_text else (1, "Document content")
         return (
-            f"📖 Document Summary: {self.doc_title}\n"
+            f"Document Summary: {self.doc_title}\n"
             f"Total Pages: {self.page_count}\n\n"
             f"1. Overview [Page {first_page[0]}]:\n"
             f"{first_page[1][:300]}...\n\n"

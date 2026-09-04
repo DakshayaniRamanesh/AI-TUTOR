@@ -202,7 +202,7 @@ class PenechoDraftLayerItem(QGraphicsItem):
             painter.drawPath(p)
             painter.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
             painter.setPen(QPen(QColor("#ffffff")))
-            lbl = "▴ Hide Sol" if is_expanded else "💡 Full Sol"
+            lbl = "Hide Sol" if is_expanded else "Full Sol"
             painter.drawText(expl_r, Qt.AlignmentFlag.AlignCenter, lbl)
 
         # 5. Resize handle — small grey dot at bottom-right corner

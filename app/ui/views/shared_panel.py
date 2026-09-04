@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
+import qtawesome as qta
 
 from ...backend.version_control.collaboration_manager import CollaborationManager
 from ...backend.version_control.git_notes_manager import GitNotesManager
@@ -125,7 +126,8 @@ class SharedPanel(QWidget):
         self.browser_contrib_diff.setStyleSheet("background-color: #ffffff; padding: 12px; border: 1px solid #d1d1d6; border-radius: 6px;")
         rb_layout.addWidget(self.browser_contrib_diff, 1)
 
-        self.btn_merge_contrib = QPushButton("⎇ Merge Contribution into Main", right_box)
+        self.btn_merge_contrib = QPushButton("Merge Contribution into Main", right_box)
+        self.btn_merge_contrib.setIcon(qta.icon('ri.git-merge-line', color='white'))
         self.btn_merge_contrib.setStyleSheet("""
             QPushButton {
                 background-color: #28a745;
@@ -169,7 +171,8 @@ class SharedPanel(QWidget):
         self.cb_notes_to_share = QComboBox(row1)
         r1_layout.addWidget(self.cb_notes_to_share, 1)
 
-        btn_gen_link = QPushButton("⚡ Generate Link", row1)
+        btn_gen_link = QPushButton("Generate Link", row1)
+        btn_gen_link.setIcon(qta.icon('ri.links-line', color='white'))
         btn_gen_link.setStyleSheet("background-color: #007aff; color: white; font-weight: bold;")
         btn_gen_link.clicked.connect(self._on_generate_link_clicked)
         r1_layout.addWidget(btn_gen_link)
@@ -185,11 +188,13 @@ class SharedPanel(QWidget):
         self.txt_share_link.setPlaceholderText("Generated share link will appear here...")
         r2_layout.addWidget(self.txt_share_link, 1)
 
-        btn_copy_link = QPushButton("⎘ Copy Link", row2)
+        btn_copy_link = QPushButton("Copy Link", row2)
+        btn_copy_link.setIcon(qta.icon('ri.file-copy-line'))
         btn_copy_link.clicked.connect(self._on_copy_link_clicked)
         r2_layout.addWidget(btn_copy_link)
 
-        btn_test_editor = QPushButton("⌕ Launch Editor-Only View", row2)
+        btn_test_editor = QPushButton("Launch Editor-Only View", row2)
+        btn_test_editor.setIcon(qta.icon('ri.external-link-line', color='white'))
         btn_test_editor.setStyleSheet("background-color: #34c759; color: white; font-weight: bold;")
         btn_test_editor.clicked.connect(self._on_launch_editor_only)
         r2_layout.addWidget(btn_test_editor)
@@ -201,9 +206,9 @@ class SharedPanel(QWidget):
         p_layout = QHBoxLayout(perm_box)
         p_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.rad_public = QRadioButton("⊕ Public (Anyone with link)", perm_box)
+        self.rad_public = QRadioButton("Public (Anyone with link)", perm_box)
         self.rad_public.setChecked(True)
-        self.rad_restricted = QRadioButton("☿ Restricted to specified emails", perm_box)
+        self.rad_restricted = QRadioButton("Restricted to specified emails", perm_box)
 
         p_layout.addWidget(self.rad_public)
         p_layout.addWidget(self.rad_restricted)
@@ -212,7 +217,7 @@ class SharedPanel(QWidget):
 
         p_layout.addWidget(QLabel("Role:"))
         self.cb_role = QComboBox(perm_box)
-        self.cb_role.addItems(["✎ Can Edit (Editor-Only)", "⌕ View Only"])
+        self.cb_role.addItems(["Can Edit (Editor-Only)", "View Only"])
         p_layout.addWidget(self.cb_role)
 
         lb_layout.addWidget(perm_box)
@@ -236,7 +241,8 @@ class SharedPanel(QWidget):
         lbl_git_info.setStyleSheet("color: #6e6e73; font-style: italic;")
         cb_layout.addWidget(lbl_git_info)
 
-        btn_trigger_conflict = QPushButton("⚡ Trigger Simulated Concurrent Edit Conflict", conflict_box)
+        btn_trigger_conflict = QPushButton("Trigger Simulated Concurrent Edit Conflict", conflict_box)
+        btn_trigger_conflict.setIcon(qta.icon('ri.flashlight-line', color='white'))
         btn_trigger_conflict.setStyleSheet("background-color: #ff9500; color: white; font-weight: bold; padding: 6px;")
         btn_trigger_conflict.clicked.connect(self._on_trigger_conflict)
         cb_layout.addWidget(btn_trigger_conflict)
@@ -332,14 +338,15 @@ class SharedPanel(QWidget):
         self.cb_notes_to_share.clear()
         files = self.git_mgr.get_files_status()["all_files"]
         for f in files:
-            self.cb_notes_to_share.addItem(f"🗎 {f}", f)
+            self.cb_notes_to_share.addItem(f, f)
 
     def refresh_contributions(self):
         self.list_contribs.clear()
         contribs = self.collab_mgr.get_incoming_contributions()
 
         for c in contribs:
-            item = QListWidgetItem(f"⎇ {c['title']}\nBranch: {c['branch']} • Target: {c['target_branch']}")
+            item = QListWidgetItem(f"{c['title']}\nBranch: {c['branch']} • Target: {c['target_branch']}")
+            item.setIcon(qta.icon('ri.git-branch-line'))
             item.setData(Qt.ItemDataRole.UserRole, c)
             self.list_contribs.addItem(item)
 
@@ -425,7 +432,7 @@ class SharedPanel(QWidget):
         conflict = self.collab_mgr.simulate_simultaneous_conflict(fname)
         self.active_conflict = conflict
 
-        self.lbl_conflict_status.setText(f"⚠ SIMULTANEOUS EDIT CONFLICT DETECTED in '{fname}'!")
+        self.lbl_conflict_status.setText(f"SIMULTANEOUS EDIT CONFLICT DETECTED in '{fname}'!")
         
         diff_html = f"""
         <div style='font-family:monospace; font-size:11px;'>
@@ -446,7 +453,7 @@ class SharedPanel(QWidget):
         c = self.active_conflict
         res = self.collab_mgr.resolve_and_commit_conflict(c["filename"], choice, c["mine"], c["theirs"])
         if res:
-            self.lbl_conflict_status.setText(f"✓ Conflict resolved ({choice.title()}) and saved to Git commit history!")
+            self.lbl_conflict_status.setText(f"Conflict resolved ({choice.title()}) and saved to Git commit history!")
             self.lbl_conflict_status.setStyleSheet("color: #28a745; font-weight: bold;")
             self.browser_conflict.setHtml(f"<p style='color:#28a745;'>State cleanly merged & committed into Git.</p>")
             self.active_conflict = None

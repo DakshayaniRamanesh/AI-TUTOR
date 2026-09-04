@@ -7,6 +7,7 @@ from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF
 from .base_item import BaseGraphicsItemMixin
 from ..widgets.streaming_text import get_handwritten_font
+import qtawesome as qta
 
 STICKY_COLORS = {
     "yellow": "#fff59d",
@@ -74,7 +75,7 @@ class StickyNoteWidget(QWidget):
         bar_layout.setSpacing(4)
 
         # Drag handle icon
-        lbl_drag = QLabel("✎ Note", self.header_bar)
+        lbl_drag = QLabel("Note", self.header_bar)
         lbl_drag.setStyleSheet("font-size: 12px; font-weight: bold; color: #333333; background: transparent;")
         bar_layout.addWidget(lbl_drag)
 
@@ -109,8 +110,9 @@ class StickyNoteWidget(QWidget):
         self.btn_min.clicked.connect(self._toggle_minimize)
         bar_layout.addWidget(self.btn_min)
 
-        # Delete button [✕]
-        btn_del = QPushButton("✕", self.header_bar)
+        # Delete button
+        btn_del = QPushButton(self.header_bar)
+        btn_del.setIcon(qta.icon('ri.close-line', color='#555555'))
         btn_del.setFixedSize(20, 20)
         btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_del.setStyleSheet("""

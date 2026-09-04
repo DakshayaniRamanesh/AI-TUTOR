@@ -355,7 +355,7 @@ class MainWindow(QMainWindow):
         self.view = CanvasView(self.scene, self)
         self.view.zoom_changed.connect(self._on_zoom_changed)
         
-        self.canvas_tabs.addTab(self.view, "✍️ Notebook Canvas")
+        self.canvas_tabs.addTab(self.view, qta.icon('ri.edit-line'), "Notebook Canvas")
         # Ensure the canvas tab doesn't show a close button
         self.canvas_tabs.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
 
@@ -489,7 +489,7 @@ class MainWindow(QMainWindow):
                 success = self.pdf_viewer_widget.load_pdf(file_path)
                 if success:
                     fname = os.path.basename(file_path)
-                    self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {fname}")
+                    self._show_or_update_tab(self.pdf_viewer_widget, fname, qta.icon('ri.file-pdf-line'))
                 else:
                     QMessageBox.warning(self, "PDF Error", f"Could not load PDF:\n{file_path}")
             except Exception as e2:
@@ -1177,23 +1177,23 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
 
         # ── PenEcho Extended Canvas Actions ──
-        act_anim = QAction("🎬 Insert Animated Scene (PenEcho)", self)
+        act_anim = QAction(qta.icon('ri.movie-line'), "Insert Animated Scene (PenEcho)", self)
         act_anim.triggered.connect(self._add_penecho_animation)
         menu.addAction(act_anim)
 
-        act_mixed = QAction("📐 Insert LaTeX / Markdown Card (PenEcho)", self)
+        act_mixed = QAction(qta.icon('ri.code-box-line'), "Insert LaTeX / Markdown Card (PenEcho)", self)
         act_mixed.triggered.connect(self._add_penecho_mixed_text)
         menu.addAction(act_mixed)
 
-        act_curve = QAction("🌀 Insert Mathematical Curve (PenEcho)", self)
+        act_curve = QAction(qta.icon('ri.compasses-2-line'), "Insert Mathematical Curve (PenEcho)", self)
         act_curve.triggered.connect(self._add_penecho_summon_curve)
         menu.addAction(act_curve)
 
-        act_draw = QAction("🎨 Insert Multi-Primitive Drawing Demo (PenEcho)", self)
+        act_draw = QAction(qta.icon('ri.brush-line'), "Insert Multi-Primitive Drawing Demo (PenEcho)", self)
         act_draw.triggered.connect(self._add_penecho_drawing_demo)
         menu.addAction(act_draw)
 
-        act_export_png = QAction("🖼️ Export Cropped Canvas PNG", self)
+        act_export_png = QAction(qta.icon('ri.image-line'), "Export Cropped Canvas PNG", self)
         act_export_png.triggered.connect(self._export_canvas_image)
         menu.addAction(act_export_png)
 
@@ -1289,7 +1289,7 @@ class MainWindow(QMainWindow):
         if file_path:
             success = export_canvas_to_image(self.scene, file_path, margin_px=40.0, scale_factor=2.0)
             if success:
-                self._set_save_status("Exported PNG ✓")
+                self._set_save_status("Exported PNG")
             else:
                 QMessageBox.warning(self, "Export Failed", "Could not export canvas image.")
 
@@ -1336,13 +1336,18 @@ class MainWindow(QMainWindow):
         if file_path:
             self._load_pdf_into_split_screen(file_path)
 
-    def _show_or_update_tab(self, widget, title: str):
+    def _show_or_update_tab(self, widget, title: str, icon=None):
         """Adds widget as a tab if not present, or updates its title if already present."""
         idx = self.canvas_tabs.indexOf(widget)
         if idx == -1:
-            self.canvas_tabs.addTab(widget, title)
+            if icon:
+                self.canvas_tabs.addTab(widget, icon, title)
+            else:
+                self.canvas_tabs.addTab(widget, title)
         else:
             self.canvas_tabs.setTabText(idx, title)
+            if icon:
+                self.canvas_tabs.setTabIcon(idx, icon)
         self.canvas_tabs.setCurrentWidget(widget)
 
     def _load_pdf_into_split_screen(self, file_path: str):
@@ -1352,7 +1357,7 @@ class MainWindow(QMainWindow):
 
             if success_view:
                 fname = os.path.basename(file_path)
-                self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {fname}")
+                self._show_or_update_tab(self.pdf_viewer_widget, fname, qta.icon('ri.file-pdf-line'))
                 self.ask_bar.set_pdf_mode(True, filename=fname)
 
                 if success_rag:
@@ -1396,8 +1401,8 @@ class MainWindow(QMainWindow):
 
         passage_preview = selected_text[:120].replace('\n', ' ')
         full_text = (
-            f"📖 Highlighted Passage [Page {page_num}]:\n\"{passage_preview}...\"\n\n"
-            f"💡 Answer & Solution:\n{ai_response}"
+            f"Highlighted Passage [Page {page_num}]:\n\"{passage_preview}...\"\n\n"
+            f"Answer & Solution:\n{ai_response}"
         )
 
         center_pos = self.view.mapToScene(self.view.viewport().rect().center())
@@ -1613,7 +1618,7 @@ class MainWindow(QMainWindow):
             NotebookStorage.save_notebook(self._current_notebook_id, name, items_data)
             if hasattr(self, 'notebooks_panel'):
                 self.notebooks_panel.refresh()
-            self._set_save_status("Saved ✓", clear_after_ms=2000)
+            self._set_save_status("Saved", clear_after_ms=2000)
         except Exception as err:
             traceback.print_exc()
             self._set_save_status("Save failed!")
@@ -1757,7 +1762,7 @@ class MainWindow(QMainWindow):
         if hasattr(player_widget, 'worker') and hasattr(self, 'speedometer_widget'):
             player_widget.worker.status_updated.connect(lambda job_id, stage, prog: self.speedometer_widget.update_progress(stage, prog))
             
-        idx = self.canvas_tabs.addTab(player_widget, f"🎬 Video: {selected_text[:10]}...")
+        idx = self.canvas_tabs.addTab(player_widget, qta.icon('ri.video-line'), f"Video: {selected_text[:10]}...")
         self.canvas_tabs.setCurrentIndex(idx)
 
     def _on_ink_written_detected(self, text: str, pos):
@@ -1796,7 +1801,9 @@ class MainWindow(QMainWindow):
             
         self.pdf_viewer_widget.video_generation_started()
         
-        idx = self.canvas_tabs.addTab(player_widget, "🎬 Video Lesson" if out_type != "notes" else "📝 Study Notes")
+        tab_icon = qta.icon('ri.video-line') if out_type != "notes" else qta.icon('ri.file-list-3-line')
+        tab_title = "Video Lesson" if out_type != "notes" else "Study Notes"
+        idx = self.canvas_tabs.addTab(player_widget, tab_icon, tab_title)
         self.canvas_tabs.setCurrentIndex(idx)
 
 
@@ -1996,12 +2003,17 @@ class MainWindow(QMainWindow):
         active_mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
         self._on_auto_ai_requested(question.strip(), center_pos, mode=active_mode)
 
-    def _show_or_update_tab(self, widget: QWidget, tab_title: str):
+    def _show_or_update_tab(self, widget: QWidget, tab_title: str, icon=None):
         idx = self.canvas_tabs.indexOf(widget)
         if idx == -1:
-            self.canvas_tabs.addTab(widget, tab_title)
+            if icon:
+                self.canvas_tabs.addTab(widget, icon, tab_title)
+            else:
+                self.canvas_tabs.addTab(widget, tab_title)
         else:
             self.canvas_tabs.setTabText(idx, tab_title)
+            if icon:
+                self.canvas_tabs.setTabIcon(idx, icon)
         self.canvas_tabs.setCurrentWidget(widget)
 
     def _close_latex_editor_tab(self):
@@ -2046,7 +2058,7 @@ class MainWindow(QMainWindow):
 
         notebook_title = (self.current_board.title if getattr(self, 'current_board', None) else "notebook") or "notebook"
         self.latex_editor_widget.set_latex_code(latex_code, title=f"LaTeX: {notebook_title}")
-        self._show_or_update_tab(self.latex_editor_widget, "📄 notebook.pdf")
+        self._show_or_update_tab(self.latex_editor_widget, "notebook.pdf", qta.icon('ri.file-code-line'))
 
     def _on_latex_pdf_ready(self, job_id, pdf_url, pdf_b64):
         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
@@ -2078,7 +2090,7 @@ class MainWindow(QMainWindow):
         if os.path.exists(save_path):
             self.last_compiled_pdf_path = save_path
             self.latex_editor_widget.load_pdf(save_path)
-            self._show_or_update_tab(self.latex_editor_widget, "📄 notebook.pdf")
+            self._show_or_update_tab(self.latex_editor_widget, "notebook.pdf", qta.icon('ri.file-code-line'))
 
     def _on_latex_failed(self, job_id, error_msg):
         if hasattr(self, 'speedometer_widget'):
@@ -2200,7 +2212,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(24, 24, 24, 20)
         layout.setSpacing(12)
 
-        title = QLabel("🎬 Generate Video Lesson", dialog)
+        title = QLabel("Generate Video Lesson", dialog)
         title.setObjectName("title_label")
         layout.addWidget(title)
 
@@ -2211,12 +2223,16 @@ class MainWindow(QMainWindow):
 
         layout.addSpacing(4)
 
-        btn_board = QPushButton("🖥️  Entire Board\n         Use all content on the canvas", dialog)
+        btn_board = QPushButton("  Entire Board\n         Use all content on the canvas", dialog)
+        btn_board.setIcon(qta.icon('ri.layout-grid-line'))
+        btn_board.setIconSize(QSize(20, 20))
         btn_board.setObjectName("btn_board")
         btn_board.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(btn_board)
 
-        btn_lasso = QPushButton("✂️  Lasso Select\n         Draw to select a region", dialog)
+        btn_lasso = QPushButton("  Lasso Select\n         Draw to select a region", dialog)
+        btn_lasso.setIcon(qta.icon('ri.scissors-cut-line'))
+        btn_lasso.setIconSize(QSize(20, 20))
         btn_lasso.setObjectName("btn_lasso")
         btn_lasso.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(btn_lasso)
@@ -2331,7 +2347,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, "Lasso Select Mode",
             "Draw a selection area around the content you want to include in the video.\n\n"
-            "After making your selection, click the '🎬 Video' button again to generate."
+            "After making your selection, click the 'Video' button again to generate."
         )
         # Store flag so next video button click uses current selected items
         self._pending_lasso_video = True
@@ -2351,8 +2367,8 @@ class MainWindow(QMainWindow):
                 lambda jid, stage, prog: self.speedometer_widget.update_progress(stage, prog)
             )
 
-        tab_label = f"🎬 Video: {prompt_text[:10]}..."
-        idx = self.canvas_tabs.addTab(player_widget, tab_label)
+        tab_label = f"Video: {prompt_text[:10]}..."
+        idx = self.canvas_tabs.addTab(player_widget, qta.icon('ri.video-line'), tab_label)
         self.canvas_tabs.setCurrentIndex(idx)
 
     def _toggle_theme(self):
@@ -2366,5 +2382,5 @@ class MainWindow(QMainWindow):
 
         self.pdf_viewer_widget.load_pdf(self.last_compiled_pdf_path)
         fname = os.path.basename(self.last_compiled_pdf_path)
-        tab_title = f"📄 PDF: {fname[:16]}..." if len(fname) > 18 else f"📄 PDF: {fname}"
-        self._show_or_update_tab(self.pdf_viewer_widget, tab_title)
+        tab_title = f"PDF: {fname[:16]}..." if len(fname) > 18 else f"PDF: {fname}"
+        self._show_or_update_tab(self.pdf_viewer_widget, tab_title, qta.icon('ri.file-pdf-line'))

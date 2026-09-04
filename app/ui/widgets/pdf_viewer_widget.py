@@ -13,6 +13,7 @@ from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPen
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
 from pypdf import PdfReader
+import qtawesome as qta
 
 
 class PdfHighlightOverlayWidget(QWidget):
@@ -92,7 +93,8 @@ class ReplyPillButton(QFrame):
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(0)
 
-        self.btn_reply = QPushButton("Reply ↰", self)
+        self.btn_reply = QPushButton("Reply", self)
+        self.btn_reply.setIcon(qta.icon('ri.reply-line', color='white'))
         self.btn_reply.setObjectName("BtnReplyPill")
         self.btn_reply.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_reply.clicked.connect(self._on_click)
@@ -243,7 +245,7 @@ class PdfViewerWidget(QWidget):
         h_layout.setContentsMargins(12, 4, 12, 4)
         h_layout.setSpacing(8)
 
-        self.lbl_title = QLabel("📄 Document", header)
+        self.lbl_title = QLabel("Document", header)
         self.lbl_title.setObjectName("DocTitleLabel")
 
         # Tabs
@@ -257,7 +259,8 @@ class PdfViewerWidget(QWidget):
         self.tab_latex.setVisible(False)  # Hidden until latex is loaded
         self.tab_latex.clicked.connect(lambda: self._switch_mode("latex"))
         
-        self.btn_generate_video = QPushButton("🎬 Generate Animation Video", header)
+        self.btn_generate_video = QPushButton("Generate Animation Video", header)
+        self.btn_generate_video.setIcon(qta.icon('ri.movie-line', color='white'))
         self.btn_generate_video.setStyleSheet("background-color: #34c759; color: white; border: none;")
         self.btn_generate_video.setVisible(False)
         self.btn_generate_video.clicked.connect(self._on_generate_clicked)
@@ -285,13 +288,16 @@ class PdfViewerWidget(QWidget):
         self.lbl_page = QLabel("Page 1 of 1", header)
         self.lbl_page.setObjectName("PageNumLabel")
 
-        btn_prev = QPushButton("◀ Prev", header)
+        btn_prev = QPushButton("Prev", header)
+        btn_prev.setIcon(qta.icon('ri.arrow-left-s-line'))
         btn_prev.clicked.connect(self._prev_page)
 
-        btn_next = QPushButton("Next ▶", header)
+        btn_next = QPushButton("Next", header)
+        btn_next.setIcon(qta.icon('ri.arrow-right-s-line'))
         btn_next.clicked.connect(self._next_page)
 
-        btn_close = QPushButton("✕ Close", header)
+        btn_close = QPushButton("Close", header)
+        btn_close.setIcon(qta.icon('ri.close-line'))
         btn_close.setObjectName("BtnClosePdf")
         btn_close.clicked.connect(self.close_requested.emit)
 
@@ -379,7 +385,7 @@ class PdfViewerWidget(QWidget):
             self.tab_latex.setChecked(False)
             
             fname = os.path.basename(file_path)
-            self.lbl_title.setText(f"📄 {fname[:24]}..." if len(fname) > 26 else f"📄 {fname}")
+            self.lbl_title.setText(f"{fname[:24]}..." if len(fname) > 26 else fname)
 
             self.pdf_doc.load(file_path)
             self.total_pages = self.pdf_doc.pageCount() if self.pdf_doc.pageCount() > 0 else 1
@@ -432,7 +438,8 @@ class PdfViewerWidget(QWidget):
         
         if progress >= 100:
             self.video_progress_bar.setVisible(False)
-            self.btn_generate_video.setText("✓ Video Generated")
+            self.btn_generate_video.setText("Video Generated")
+            self.btn_generate_video.setIcon(qta.icon('ri.check-line', color='white'))
             self.btn_generate_video.setVisible(True)
 
     def _switch_mode(self, mode: str):

@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint
 from PyQt6.QtGui import QCursor
+import qtawesome as qta
 
 
 class FolderTreeRow(QFrame):
@@ -43,8 +44,9 @@ class FolderTreeRow(QFrame):
         self.btn_arrow.clicked.connect(self._toggle)
 
         # Folder icon + name
-        lbl_icon = QLabel("📁", self)
-        lbl_icon.setStyleSheet("font-size: 13px; background: transparent; border: none;")
+        lbl_icon = QLabel(self)
+        lbl_icon.setPixmap(qta.icon('ri.folder-line', color='#8e8e93').pixmap(14, 14))
+        lbl_icon.setStyleSheet("background: transparent; border: none;")
 
         self.lbl_name = QLabel(self.folder_name, self)
         self.lbl_name.setObjectName("FolderLabel")
@@ -115,10 +117,10 @@ class FolderTreeRow(QFrame):
             QMenu::item { padding: 6px 16px; border-radius: 4px; color: #1c1c1e; }
             QMenu::item:selected { background-color: #007aff; color: white; }
         """)
-        act_new = menu.addAction("📁 New Sub-folder")
-        act_rename = menu.addAction("✏️ Rename")
+        act_new = menu.addAction(qta.icon('ri.folder-add-line'), "New Sub-folder")
+        act_rename = menu.addAction(qta.icon('ri.edit-line'), "Rename")
         menu.addSeparator()
-        act_delete = menu.addAction("🗑️ Delete")
+        act_delete = menu.addAction(qta.icon('ri.delete-bin-line'), "Delete")
 
         action = menu.exec(self.mapToGlobal(pos))
         if action == act_new:

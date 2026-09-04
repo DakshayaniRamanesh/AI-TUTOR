@@ -528,7 +528,7 @@ class ConstantCard(QFrame):
         clipboard.setText(copy_text)
 
         self.btn_copy.setIcon(qta.icon("ri.check-line", color="#28a745"))
-        self.btn_copy.setToolTip("Copied! ✓")
+        self.btn_copy.setToolTip("Copied!")
         QTimer.singleShot(1600, self._restore_copy_btn)
 
     def _restore_copy_btn(self):

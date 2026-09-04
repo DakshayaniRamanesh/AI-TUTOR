@@ -97,7 +97,7 @@ class ObsidianGraphPanel(QWidget):
 
         # Search Input
         self.txt_search = QLineEdit(self.header_bar)
-        self.txt_search.setPlaceholderText("⌕ Search concepts...")
+        self.txt_search.setPlaceholderText("Search concepts...")
         self.txt_search.setFixedWidth(200)
         self.txt_search.textChanged.connect(self._on_search_changed)
         h_layout.addWidget(self.txt_search)

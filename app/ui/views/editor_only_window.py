@@ -41,14 +41,14 @@ class EditorOnlyWindow(QMainWindow):
         b_layout = QHBoxLayout(banner)
         b_layout.setContentsMargins(16, 0, 16, 0)
 
-        type_icon = "❖ Freeform Board" if self.is_board else "✎ Note"
+        type_icon = "Freeform Board" if self.is_board else "Note"
         lbl_info = QLabel(f"<b>Editor-Only Shared Session:</b> {type_icon} <i>{self.filename}</i> &nbsp;|&nbsp; Role: <b>{self.role.title()}</b>", banner)
         lbl_info.setStyleSheet("font-size: 13px; color: white;")
         b_layout.addWidget(lbl_info)
 
         b_layout.addStretch()
 
-        lbl_status = QLabel("✓ Connected & Synced", banner)
+        lbl_status = QLabel("Connected & Synced", banner)
         lbl_status.setStyleSheet("background-color: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 12px; font-weight: bold; font-size: 11px;")
         b_layout.addWidget(lbl_status)
 

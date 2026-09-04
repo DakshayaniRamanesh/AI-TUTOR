@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF
+import qtawesome as qta
 
 from .shape_metadata import (
     SHAPE_METADATA, SUPPORTED_UNITS, DEFAULT_UNIT,
@@ -230,8 +231,9 @@ class ShapePropertiesWidget(QFrame):
         self.unit_combo.currentTextChanged.connect(self._on_unit_changed)
         header_layout.addWidget(self.unit_combo)
 
-        # Close button '✕'
-        btn_close = QPushButton("✕")
+        # Close button
+        btn_close = QPushButton()
+        btn_close.setIcon(qta.icon('ri.close-line', color=c['text_secondary']))
         btn_close.setFixedSize(20, 20)
         btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_close.setStyleSheet(f"""

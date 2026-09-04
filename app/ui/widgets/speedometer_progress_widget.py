@@ -81,7 +81,7 @@ class SpeedometerProgressWidget(QFrame):
 
     def fail_task(self, msg: str = "Error"):
         self.lbl_stage.setText(msg[:16] if len(msg) > 16 else msg)
-        self.lbl_percent.setText("✕")
+        self.lbl_percent.setText("ERR")
         self._clear_timer.start(3000)
 
     def _apply_theme(self, theme_name: str = "light"):

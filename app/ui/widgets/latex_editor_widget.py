@@ -18,6 +18,7 @@ from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
 
 from ..theme_manager import ThemeManager
+import qtawesome as qta
 
 
 class LatexRecompileWorker(QThread):
@@ -71,8 +72,8 @@ class LatexEditorWidget(QWidget):
         h_layout.setContentsMargins(12, 4, 12, 4)
         h_layout.setSpacing(10)
 
-        lbl_icon = QLabel("📝", self.header)
-        lbl_icon.setFont(QFont("-apple-system", 14))
+        lbl_icon = QLabel(self.header)
+        lbl_icon.setPixmap(qta.icon('ri.file-code-line', color='#7c3aed').pixmap(20, 20))
 
         self.lbl_title = QLabel("LaTeX Document & Compiled PDF", self.header)
         self.lbl_title.setFont(QFont("-apple-system", 12, QFont.Weight.Bold))
@@ -82,20 +83,24 @@ class LatexEditorWidget(QWidget):
         h_layout.addStretch()
 
         # Action Buttons
-        self.btn_copy = QPushButton("📋 Copy Code", self.header)
+        self.btn_copy = QPushButton("Copy Code", self.header)
+        self.btn_copy.setIcon(qta.icon('ri.file-copy-line'))
         self.btn_copy.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_copy.clicked.connect(self._copy_to_clipboard)
 
-        self.btn_recompile = QPushButton("🔄 Recompile Preview", self.header)
+        self.btn_recompile = QPushButton("Recompile Preview", self.header)
+        self.btn_recompile.setIcon(qta.icon('ri.refresh-line', color='#7c3aed'))
         self.btn_recompile.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_recompile.setStyleSheet("font-weight: 700; color: #7c3aed;")
         self.btn_recompile.clicked.connect(self.recompile_preview)
 
-        self.btn_export = QPushButton("📥 Export as PDF", self.header)
+        self.btn_export = QPushButton("Export as PDF", self.header)
+        self.btn_export.setIcon(qta.icon('ri.download-line'))
         self.btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_export.clicked.connect(self._export_pdf)
 
-        self.btn_close = QPushButton("✕ Close", self.header)
+        self.btn_close = QPushButton("Close", self.header)
+        self.btn_close.setIcon(qta.icon('ri.close-line'))
         self.btn_close.setObjectName("BtnCloseLatex")
         self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_close.clicked.connect(self._on_close_clicked)
@@ -149,29 +154,34 @@ class LatexEditorWidget(QWidget):
         pdf_nav_layout.setContentsMargins(6, 2, 6, 2)
         pdf_nav_layout.setSpacing(8)
 
-        lbl_preview = QLabel("📄 Vector PDF Preview:", self.pdf_nav_bar)
+        lbl_preview = QLabel("Vector PDF Preview:", self.pdf_nav_bar)
         lbl_preview.setFont(QFont("-apple-system", 11, QFont.Weight.Bold))
 
-        self.btn_prev = QPushButton("◀ Prev", self.pdf_nav_bar)
+        self.btn_prev = QPushButton("Prev", self.pdf_nav_bar)
+        self.btn_prev.setIcon(qta.icon('ri.arrow-left-s-line'))
         self.btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_prev.clicked.connect(self._prev_page)
 
         self.lbl_page = QLabel("Page 1 of 1", self.pdf_nav_bar)
         self.lbl_page.setStyleSheet("font-size: 11px; font-weight: 600; color: #8e8e93;")
 
-        self.btn_next = QPushButton("Next ▶", self.pdf_nav_bar)
+        self.btn_next = QPushButton("Next", self.pdf_nav_bar)
+        self.btn_next.setIcon(qta.icon('ri.arrow-right-s-line'))
         self.btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_next.clicked.connect(self._next_page)
 
-        self.btn_zoom_in = QPushButton("🔍+", self.pdf_nav_bar)
+        self.btn_zoom_in = QPushButton("+", self.pdf_nav_bar)
+        self.btn_zoom_in.setIcon(qta.icon('ri.zoom-in-line'))
         self.btn_zoom_in.setToolTip("Zoom In")
         self.btn_zoom_in.clicked.connect(self._zoom_in)
 
-        self.btn_zoom_out = QPushButton("🔍-", self.pdf_nav_bar)
+        self.btn_zoom_out = QPushButton("-", self.pdf_nav_bar)
+        self.btn_zoom_out.setIcon(qta.icon('ri.zoom-out-line'))
         self.btn_zoom_out.setToolTip("Zoom Out")
         self.btn_zoom_out.clicked.connect(self._zoom_out)
 
-        self.btn_fit_width = QPushButton("↔ Fit Width", self.pdf_nav_bar)
+        self.btn_fit_width = QPushButton("Fit Width", self.pdf_nav_bar)
+        self.btn_fit_width.setIcon(qta.icon('ri.aspect-ratio-line'))
         self.btn_fit_width.clicked.connect(self._fit_width)
 
         pdf_nav_layout.addWidget(lbl_preview)
@@ -196,8 +206,8 @@ class LatexEditorWidget(QWidget):
         ph_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ph_layout.setSpacing(12)
 
-        self.lbl_ph_icon = QLabel("📄", self.placeholder_widget)
-        self.lbl_ph_icon.setFont(QFont("-apple-system", 36))
+        self.lbl_ph_icon = QLabel(self.placeholder_widget)
+        self.lbl_ph_icon.setPixmap(qta.icon('ri.file-pdf-line', color='#8e8e93').pixmap(48, 48))
         self.lbl_ph_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.lbl_ph_text = QLabel("Compiling PDF Preview with Tectonic...\nPlease wait.", self.placeholder_widget)
@@ -231,7 +241,7 @@ class LatexEditorWidget(QWidget):
 
     def set_latex_code(self, code: str, title: str = "LaTeX Document"):
         self.doc_title = title
-        self.lbl_title.setText(f"📝 {title}")
+        self.lbl_title.setText(title)
         self._initial_code = code
         self.is_dirty = False
         self.editor.setPlainText(code)
@@ -246,7 +256,7 @@ class LatexEditorWidget(QWidget):
     def load_pdf(self, file_path: str) -> bool:
         """Loads a compiled vector PDF into QPdfView on the right side of the split screen."""
         if not file_path or not os.path.exists(file_path):
-            self.lbl_ph_text.setText("PDF preview not found.\nClick '🔄 Recompile Preview' to compile.")
+            self.lbl_ph_text.setText("PDF preview not found.\nClick 'Recompile Preview' to compile.")
             self.pdf_stack.setCurrentIndex(0)
             return False
 
@@ -277,10 +287,11 @@ class LatexEditorWidget(QWidget):
         target_path = os.path.join(temp_dir, f"{safe_name}_preview.pdf")
 
         self.btn_recompile.setEnabled(False)
-        self.btn_recompile.setText("⏳ Compiling...")
+        self.btn_recompile.setText("Compiling...")
+        self.btn_recompile.setIcon(qta.icon('ri.loader-4-line', color='#7c3aed'))
         self.lbl_ph_text.setText("Compiling LaTeX with Tectonic...\nPlease wait.")
         if self.pdf_stack.currentIndex() == 0:
-            self.lbl_ph_icon.setText("⏳")
+            self.lbl_ph_icon.setPixmap(qta.icon('ri.loader-4-line', color='#8e8e93').pixmap(48, 48))
 
         # Stop previous worker if running
         if self._recompile_worker and self._recompile_worker.isRunning():
@@ -292,17 +303,22 @@ class LatexEditorWidget(QWidget):
 
     def _on_recompilation_finished(self, success: bool, msg_or_path: str):
         self.btn_recompile.setEnabled(True)
-        self.btn_recompile.setText("🔄 Recompile Preview")
-        self.lbl_ph_icon.setText("📄")
+        self.btn_recompile.setText("Recompile Preview")
+        self.btn_recompile.setIcon(qta.icon('ri.refresh-line', color='#7c3aed'))
+        self.lbl_ph_icon.setPixmap(qta.icon('ri.file-pdf-line', color='#8e8e93').pixmap(48, 48))
 
         if success and os.path.exists(msg_or_path):
             self.is_dirty = False
             self.load_pdf(msg_or_path)
             self.pdf_compiled.emit(msg_or_path)
             # Subtle indicator on button
-            self.btn_recompile.setText("✓ PDF Updated!")
+            self.btn_recompile.setText("PDF Updated!")
+            self.btn_recompile.setIcon(qta.icon('ri.check-line', color='#34c759'))
             from PyQt6.QtCore import QTimer
-            QTimer.singleShot(1500, lambda: self.btn_recompile.setText("🔄 Recompile Preview"))
+            def _reset_btn():
+                self.btn_recompile.setText("Recompile Preview")
+                self.btn_recompile.setIcon(qta.icon('ri.refresh-line', color='#7c3aed'))
+            QTimer.singleShot(1500, _reset_btn)
         else:
             self.lbl_ph_text.setText(f"Compilation notice:\n{msg_or_path[:200]}")
             QMessageBox.warning(
@@ -345,9 +361,13 @@ class LatexEditorWidget(QWidget):
 
     def _copy_to_clipboard(self):
         QApplication.clipboard().setText(self.editor.toPlainText())
-        self.btn_copy.setText("✓ Copied!")
+        self.btn_copy.setText("Copied!")
+        self.btn_copy.setIcon(qta.icon('ri.check-line', color='#34c759'))
         from PyQt6.QtCore import QTimer
-        QTimer.singleShot(1500, lambda: self.btn_copy.setText("📋 Copy Code"))
+        def _reset_copy():
+            self.btn_copy.setText("Copy Code")
+            self.btn_copy.setIcon(qta.icon('ri.file-copy-line'))
+        QTimer.singleShot(1500, _reset_copy)
 
     def confirm_close(self) -> bool:
         if not self.is_dirty:
@@ -358,8 +378,8 @@ class LatexEditorWidget(QWidget):
         msg_box.setText("You have unsaved changes in your LaTeX document.")
         msg_box.setInformativeText("Would you like to export the latest edited document as a PDF before closing?")
         
-        btn_export = msg_box.addButton("📥 Export as PDF", QMessageBox.ButtonRole.AcceptRole)
-        btn_discard = msg_box.addButton("🗑️ Discard Changes", QMessageBox.ButtonRole.DestructiveRole)
+        btn_export = msg_box.addButton("Export as PDF", QMessageBox.ButtonRole.AcceptRole)
+        btn_discard = msg_box.addButton("Discard Changes", QMessageBox.ButtonRole.DestructiveRole)
         btn_cancel = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         msg_box.setDefaultButton(btn_export)
 
@@ -426,7 +446,8 @@ class LatexEditorWidget(QWidget):
             QMessageBox.warning(self, "Export Error", f"Failed to compile PDF:\n{e}")
             return False
         finally:
-            self.btn_export.setText("📥 Export as PDF")
+            self.btn_export.setText("Export as PDF")
+            self.btn_export.setIcon(qta.icon('ri.download-line'))
             self.btn_export.setEnabled(True)
 
     def _apply_theme(self, theme_name: str = "light"):

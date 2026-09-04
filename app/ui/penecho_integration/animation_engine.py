@@ -418,7 +418,7 @@ class PenechoAnimationItem(QGraphicsItem):
         painter.setPen(QColor("#94a3b8"))
         painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
         title = self._scene.get("title", "PenEcho Animation")
-        painter.drawText(QRectF(14, 0, self._width - 28, self._header_height), Qt.AlignmentFlag.AlignVCenter, f"🎬 {title}")
+        painter.drawText(QRectF(14, 0, self._width - 28, self._header_height), Qt.AlignmentFlag.AlignVCenter, title)
 
         # Speed badge
         speed_text = f"{self._speed_multiplier:.1f}x"

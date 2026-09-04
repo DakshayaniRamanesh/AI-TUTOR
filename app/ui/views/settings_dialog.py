@@ -97,14 +97,17 @@ class SettingsDialog(QDialog):
             resp = requests.get(f"{backend_url}{endpoint}", timeout=10)
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
             if resp.status_code == 200 and data.get("status") == "ok":
-                status_lbl.setText("✓")
+                status_lbl.setText("OK")
+                status_lbl.setStyleSheet("color: #22c55e; font-weight: bold;")
                 status_lbl.setToolTip(data.get("message", "Connected successfully"))
             else:
                 msg = data.get("message", f"HTTP {resp.status_code}: {resp.text}")
-                status_lbl.setText("✕")
+                status_lbl.setText("FAIL")
+                status_lbl.setStyleSheet("color: #ef4444; font-weight: bold;")
                 status_lbl.setToolTip(msg)
         except Exception as e:
-            status_lbl.setText("✕")
+            status_lbl.setText("FAIL")
+            status_lbl.setStyleSheet("color: #ef4444; font-weight: bold;")
             status_lbl.setToolTip(f"Connection failed: {str(e)}")
         finally:
             button.setText("TEST")

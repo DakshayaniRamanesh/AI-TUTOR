@@ -141,7 +141,7 @@ class PomodoroTimerWidget(QWidget):
         # Timer Icon & Preset selector
         self.btn_presets = QPushButton(self.header_bar)
         self.btn_presets.setIcon(qta.icon("ri.timer-line", color="#888888"))
-        self.btn_presets.setText(" ▾")
+        self.btn_presets.setText("")
         self.btn_presets.setFixedHeight(24)
         self.btn_presets.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_presets.setToolTip("Select duration presets")
@@ -294,7 +294,7 @@ class PomodoroTimerWidget(QWidget):
                 self._timer.stop()
                 self._is_running = False
                 self.btn_start.setText("START")
-                self.lbl_status.setText("SESSION COMPLETE ✓")
+                self.lbl_status.setText("SESSION COMPLETE")
                 self.lbl_status.setVisible(True)
                 self.time_updated.emit(self.get_time_string(), False)
 

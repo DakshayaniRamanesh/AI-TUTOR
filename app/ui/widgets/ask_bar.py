@@ -228,7 +228,7 @@ class AskBar(QWidget):
         # Save current placeholder so we can restore it
         self._saved_placeholder = self.input_field.placeholderText()
         c = ThemeManager.instance().get_colors()
-        self.input_field.setPlaceholderText(f"⚠ {message}")
+        self.input_field.setPlaceholderText(f"Error: {message}")
         QTimer.singleShot(4000, self._clear_error)
 
     def _clear_error(self):

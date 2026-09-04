@@ -55,7 +55,7 @@ class FolderPickerDialog(QDialog):
         """)
 
         # Add Root option
-        root_item = QListWidgetItem("📓 Notebooks (Root)")
+        root_item = QListWidgetItem(qta.icon('ri.book-2-line', color=c['text_primary']), "Notebooks (Root)")
         root_item.setData(Qt.ItemDataRole.UserRole, None)
         self.list_widget.addItem(root_item)
 
@@ -65,7 +65,7 @@ class FolderPickerDialog(QDialog):
             children.sort(key=lambda x: x["name"].lower())
             for f in children:
                 indent = "    " * depth
-                item = QListWidgetItem(f"{indent}📁 {f['name']}")
+                item = QListWidgetItem(qta.icon('ri.folder-line', color=c['text_secondary']), f"{indent}{f['name']}")
                 item.setData(Qt.ItemDataRole.UserRole, f["id"])
                 self.list_widget.addItem(item)
                 _add_items(f["id"], depth + 1)
@@ -145,8 +145,9 @@ class FolderCardWidget(QFrame):
         layout.setContentsMargins(14, 10, 12, 10)
         layout.setSpacing(12)
 
-        lbl_icon = QLabel("📁", self)
-        lbl_icon.setStyleSheet("font-size: 20px; background: transparent;")
+        lbl_icon = QLabel(self)
+        lbl_icon.setPixmap(qta.icon('ri.folder-fill', color=c['accent']).pixmap(24, 24))
+        lbl_icon.setStyleSheet("background: transparent;")
 
         text_box = QVBoxLayout()
         text_box.setSpacing(2)
@@ -268,8 +269,9 @@ class NotebookRowWidget(QFrame):
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(12)
 
-        lbl_icon = QLabel("📓", self)
-        lbl_icon.setStyleSheet("font-size: 18px; background: transparent;")
+        lbl_icon = QLabel(self)
+        lbl_icon.setPixmap(qta.icon('ri.book-2-line', color=c['text_primary']).pixmap(20, 20))
+        lbl_icon.setStyleSheet("background: transparent;")
 
         text_box = QVBoxLayout()
         text_box.setSpacing(2)
@@ -302,25 +304,25 @@ class NotebookRowWidget(QFrame):
         menu = QMenu(self)
         menu.setStyleSheet(menu_qss(c))
 
-        act_share = QAction("Share Notebook (Drive)", menu)
+        act_share = QAction(qta.icon('ri.share-line'), "Share Notebook (Drive)", menu)
         act_share.triggered.connect(lambda: self.share_clicked.emit(self.notebook_id, self.notebook_name))
         menu.addAction(act_share)
 
-        act_rename = QAction("Rename", menu)
+        act_rename = QAction(qta.icon('ri.edit-line'), "Rename", menu)
         act_rename.triggered.connect(lambda: self.rename_requested.emit(self.notebook_id))
         menu.addAction(act_rename)
 
-        act_move = QAction("Move to...", menu)
+        act_move = QAction(qta.icon('ri.folder-transfer-line'), "Move to...", menu)
         act_move.triggered.connect(lambda: self.move_requested.emit(self.notebook_id))
         menu.addAction(act_move)
 
-        act_git = QAction("⏱ Version History", menu)
+        act_git = QAction(qta.icon('ri.history-line'), "Version History", menu)
         act_git.triggered.connect(lambda: self.git_clicked.emit(self.notebook_id, self.notebook_name))
         menu.addAction(act_git)
 
         menu.addSeparator()
 
-        act_del = QAction("Delete", menu)
+        act_del = QAction(qta.icon('ri.delete-bin-line'), "Delete", menu)
         act_del.triggered.connect(lambda: self.delete_clicked.emit(self.notebook_id, self.notebook_name))
         menu.addAction(act_del)
 

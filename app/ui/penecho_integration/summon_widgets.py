@@ -166,11 +166,11 @@ class PenechoSummonItem(QGraphicsItem):
         painter.setPen(QColor("#94a3b8"))
         painter.setFont(QFont("Arial", 9, QFont.Weight.Bold))
         name_map = {
-            "lemniscate": "∞ Lemniscate of Bernoulli",
-            "rose": "✿ Rhodonea (Rose Curve)",
-            "superellipse": "⬭ Lamé Superellipse",
-            "golden-spiral": "🌀 Golden Spiral",
-            "deltoid": "△ Hypocycloid Deltoid"
+            "lemniscate": "Lemniscate of Bernoulli",
+            "rose": "Rhodonea (Rose Curve)",
+            "superellipse": "Lamé Superellipse",
+            "golden-spiral": "Golden Spiral",
+            "deltoid": "Hypocycloid Deltoid"
         }
         title = name_map.get(self._curve_type, self._curve_type.capitalize())
         painter.drawText(QRectF(0, self._size + 2, self._size, 24), Qt.AlignmentFlag.AlignCenter, title)

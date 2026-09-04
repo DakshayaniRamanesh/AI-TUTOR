@@ -180,7 +180,7 @@ class SubjectsListView(QWidget):
             },
             "Semester 1 Revision": {
                 "tag": "SEMESTER 1 • REVISION SET",
-                "symbol": "✓",
+                "symbol": "§",
                 "desc": "Consolidated revision boards, past paper walkthroughs, and quick-reference summaries for Semester 1 content.",
                 "extra_stats": "15 past papers"
             },

@@ -8,6 +8,7 @@ from .base_item import BaseGraphicsItemMixin
 from ..widgets.streaming_text import get_handwritten_font
 from ..widgets.floating_toolbar import FloatingSelectionToolbar
 from ...backend.ocr.handwriting_ocr import recognize_handwriting
+import qtawesome as qta
 
 class HeaderDragBar(QWidget):
     """
@@ -90,7 +91,7 @@ class HandwritingNoteWidget(QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
         
-        lbl_title = QLabel("✎ Note", self.header_bar)
+        lbl_title = QLabel("Note", self.header_bar)
         lbl_title.setStyleSheet("border: none; font-size: 12px; font-weight: bold; color: #007aff;")
         header_layout.addWidget(lbl_title)
         header_layout.addStretch()
@@ -99,7 +100,8 @@ class HandwritingNoteWidget(QWidget):
         self.btn_ocr.setToolTip("Toggle OCR / Handwriting Recognition")
         self.btn_ocr.clicked.connect(self._on_ocr_clicked)
         
-        self.btn_ask = QPushButton("✦ Solve/Ask", self.header_bar)
+        self.btn_ask = QPushButton("Solve/Ask", self.header_bar)
+        self.btn_ask.setIcon(qta.icon('ri.sparkling-line', color='#007aff'))
         self.btn_ask.setToolTip("Solve equation or ask AI Tutor about this note")
         self.btn_ask.setStyleSheet("color: #007aff; font-weight: bold;")
         self.btn_ask.clicked.connect(self._on_ask_clicked)
@@ -113,8 +115,9 @@ class HandwritingNoteWidget(QWidget):
         self.btn_min.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_min.clicked.connect(self._toggle_minimize)
 
-        # Delete button [✕]
-        btn_del = QPushButton("✕", self.header_bar)
+        # Delete button
+        btn_del = QPushButton(self.header_bar)
+        btn_del.setIcon(qta.icon('ri.close-line', color='#8e8e93'))
         btn_del.setFixedSize(20, 20)
         btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_del.setStyleSheet("""

@@ -105,7 +105,7 @@ class GitNotesManager:
                     {
                         "type": "sticky_note",
                         "x": 100, "y": 120,
-                        "text": "📌 Physics Exam Prep: Superposition & Wave Functions",
+                        "text": "Physics Exam Prep: Superposition & Wave Functions",
                         "color": "#fff59d"
                     },
                     {

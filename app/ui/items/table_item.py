@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF
 from .base_item import BaseGraphicsItemMixin
+import qtawesome as qta
 
 class HeaderDragBar(QWidget):
     """
@@ -84,7 +85,7 @@ class TableWidgetContainer(QWidget):
         tb_layout.setContentsMargins(0, 0, 0, 0)
         tb_layout.setSpacing(4)
 
-        lbl_drag = QLabel("▤ Table", self.header_bar)
+        lbl_drag = QLabel("Table", self.header_bar)
         lbl_drag.setStyleSheet("font-size: 12px; font-weight: bold; color: #388e3c; background: transparent;")
         tb_layout.addWidget(lbl_drag)
 
@@ -100,7 +101,8 @@ class TableWidgetContainer(QWidget):
         btn_rem_col = QPushButton("- Col", self.header_bar)
         btn_rem_col.clicked.connect(self._rem_col)
 
-        btn_del = QPushButton("✕", self.header_bar)
+        btn_del = QPushButton(self.header_bar)
+        btn_del.setIcon(qta.icon('ri.close-line', color='#8e8e93'))
         btn_del.setFixedSize(20, 20)
         btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_del.setStyleSheet("""

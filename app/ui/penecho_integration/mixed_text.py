@@ -437,7 +437,7 @@ class PenechoMixedTextItem(QGraphicsItem):
 
             painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
             painter.setPen(QPen(text_clr))
-            btn_text = "▴ Hide Full Solution" if self._is_expanded else "💡 Show Full Solution"
+            btn_text = "Hide Full Solution" if self._is_expanded else "Show Full Solution"
             painter.drawText(btn_r, Qt.AlignmentFlag.AlignCenter, btn_text)
 
         painter.restore()

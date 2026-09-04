@@ -33,7 +33,7 @@ class MapPinWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
 
-        map_box = QLabel("◈ MAP PREVIEW\n" + title, self)
+        map_box = QLabel("MAP PREVIEW\n" + title, self)
         map_box.setObjectName("MapPlaceholder")
         map_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
         map_box.setFixedHeight(80)

@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QGraphicsProxyWidget, QWidget, QVBoxLayout, QLabel, 
 from PyQt6.QtCore import Qt, pyqtSignal, QRectF
 from .base_item import BaseGraphicsItemMixin
 from ..widgets.streaming_text import TypewriterLabel, get_handwritten_font
+import qtawesome as qta
 
 class HeaderDragBar(QWidget):
     """
@@ -100,12 +101,13 @@ class AnswerBubbleWidget(QWidget):
         header = QHBoxLayout(self.header_bar)
         header.setContentsMargins(0, 0, 0, 0)
 
-        lbl_icon = QLabel("✎", self.header_bar)
-        lbl_icon.setStyleSheet("font-size: 14px; background: transparent;")
+        lbl_icon = QLabel(self.header_bar)
+        lbl_icon.setPixmap(qta.icon('ri.edit-line', color='#8e8e93').pixmap(14, 14))
         header.addWidget(lbl_icon)
 
-        # Toggle Button: "✦ Reveal Full Solution"
-        self.btn_toggle = QPushButton("✦ Reveal Full Solution", self.header_bar)
+        # Toggle Button: "Reveal Full Solution"
+        self.btn_toggle = QPushButton("Reveal Full Solution", self.header_bar)
+        self.btn_toggle.setIcon(qta.icon('ri.sparkling-line', color='#7c3aed'))
         self.btn_toggle.setObjectName("BtnToggle")
         self.btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_toggle.clicked.connect(self._toggle_full_solution)
@@ -115,8 +117,9 @@ class AnswerBubbleWidget(QWidget):
         if self.is_direct_math or not self.full_solution:
             self.btn_toggle.hide()
 
-        # Delete button [✕]
-        btn_del = QPushButton("✕", self.header_bar)
+        # Delete button
+        btn_del = QPushButton(self.header_bar)
+        btn_del.setIcon(qta.icon('ri.close-line', color='#8e8e93'))
         btn_del.setObjectName("BtnDelete")
         btn_del.setFixedSize(20, 20)
         btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -142,11 +145,11 @@ class AnswerBubbleWidget(QWidget):
             self.btn_toggle.hide()
         elif self.showing_full:
             text = f"Question: {q_clean}\n\n{self.full_solution}" if q_clean else self.full_solution
-            self.btn_toggle.setText("✦ Hide Full Solution")
+            self.btn_toggle.setText("Hide Full Solution")
             self.btn_toggle.show()
         else:
             text = f"Question: {q_clean}\n\n{self.hints}" if q_clean else self.hints
-            self.btn_toggle.setText("✦ Reveal Full Solution")
+            self.btn_toggle.setText("Reveal Full Solution")
             self.btn_toggle.show()
 
         self.stream_label.start_streaming(text)

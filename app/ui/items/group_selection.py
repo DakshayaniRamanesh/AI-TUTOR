@@ -41,7 +41,7 @@ class GroupContainerWidget(QWidget):
 
         # Header
         header_layout = QHBoxLayout()
-        self.lbl_title = QLabel(f"▢ {title}", self)
+        self.lbl_title = QLabel(title, self)
         self.lbl_title.setObjectName("GroupHeader")
         
         self.btn_toggle = QPushButton("Collapse", self)

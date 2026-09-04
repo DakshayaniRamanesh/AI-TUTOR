@@ -36,8 +36,9 @@ class ShareNotebookDialog(QDialog):
 
         # Header Title (Google Drive White Card Style)
         header = QHBoxLayout()
-        lbl_icon = QLabel("☌", self)
-        lbl_icon.setStyleSheet("font-size: 24px; background: transparent;")
+        lbl_icon = QLabel(self)
+        lbl_icon.setPixmap(qta.icon('ri.share-line', color='#007aff').pixmap(24, 24))
+        lbl_icon.setStyleSheet("background: transparent;")
         
         lbl_title = QLabel(f"Share '{self.notebook_name}'", self)
         lbl_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #1c1c1e;")
@@ -77,7 +78,8 @@ class ShareNotebookDialog(QDialog):
         self.list_people = QListWidget(self)
         self.list_people.setFixedHeight(85)
 
-        owner_item = QListWidgetItem("❖ Dakshayani (You)  •  Owner")
+        owner_item = QListWidgetItem("Dakshayani (You)  •  Owner")
+        owner_item.setIcon(qta.icon('ri.user-line'))
         self.list_people.addItem(owner_item)
         layout.addWidget(self.list_people)
 
@@ -88,8 +90,8 @@ class ShareNotebookDialog(QDialog):
 
         row_gen = QHBoxLayout()
         self.cb_general_access = QComboBox(self)
-        self.cb_general_access.addItem("⊕ Anyone with the link (Public)", "public")
-        self.cb_general_access.addItem("☿ Restricted (Only added people)", "restricted")
+        self.cb_general_access.addItem("Anyone with the link (Public)", "public")
+        self.cb_general_access.addItem("Restricted (Only added people)", "restricted")
 
         row_gen.addWidget(self.cb_general_access, 1)
         layout.addLayout(row_gen)
@@ -100,7 +102,8 @@ class ShareNotebookDialog(QDialog):
         self.txt_link_url.setReadOnly(True)
         self.txt_link_url.setText(f"https://aitutor.notes/share?id={self.notebook_id}&token=sec_{self.notebook_id[-6:]}")
 
-        btn_copy = QPushButton("⎘ Copy link", self)
+        btn_copy = QPushButton("Copy link", self)
+        btn_copy.setIcon(qta.icon('ri.file-copy-line', color='#007aff'))
         btn_copy.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_copy.setStyleSheet("background-color: #ffffff; border: 1px solid #d1d1d6; border-radius: 6px; padding: 6px 14px; font-weight: bold; color: #007aff;")
         btn_copy.clicked.connect(self._on_copy_link)
@@ -110,7 +113,8 @@ class ShareNotebookDialog(QDialog):
         layout.addLayout(row_link)
 
         # Section 5: Inline Git Version History Log (Expandable)
-        self.btn_toggle_git = QPushButton("⎇ Inspect Git Version History ▼", self)
+        self.btn_toggle_git = QPushButton("Inspect Git Version History ▼", self)
+        self.btn_toggle_git.setIcon(qta.icon('ri.git-branch-line', color='#007aff'))
         self.btn_toggle_git.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_toggle_git.setStyleSheet("background-color: #f2f2f7; color: #007aff; border: 1px solid #d1d1d6; border-radius: 6px; font-weight: bold; padding: 7px;")
         self.btn_toggle_git.clicked.connect(self._toggle_git_history)
@@ -129,7 +133,8 @@ class ShareNotebookDialog(QDialog):
 
         # Footer Actions
         footer = QHBoxLayout()
-        btn_editor_view = QPushButton("⌕ Launch Editor-Only View", self)
+        btn_editor_view = QPushButton("Launch Editor-Only View", self)
+        btn_editor_view.setIcon(qta.icon('ri.external-link-line', color='white'))
         btn_editor_view.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_editor_view.setStyleSheet("background-color: #34c759; color: white; font-weight: bold; border-radius: 6px; padding: 8px 14px; border: none;")
         btn_editor_view.clicked.connect(self._on_launch_editor_view)
@@ -188,7 +193,8 @@ class ShareNotebookDialog(QDialog):
         if not email:
             return
         role = self.cb_add_role.currentText()
-        item = QListWidgetItem(f"✉ {email}  •  {role}")
+        item = QListWidgetItem(f"{email}  •  {role}")
+        item.setIcon(qta.icon('ri.mail-line'))
         self.list_people.addItem(item)
         self.txt_email_input.clear()
         QMessageBox.information(self, "Invited", f"Added '{email}' as {role}!")
@@ -210,7 +216,7 @@ class ShareNotebookDialog(QDialog):
         visible = not self.list_git_history.isVisible()
         self.list_git_history.setVisible(visible)
         arrow = "▲" if visible else "▼"
-        self.btn_toggle_git.setText(f"⎇ Inspect Git Version History {arrow}")
+        self.btn_toggle_git.setText(f"Inspect Git Version History {arrow}")
 
     def _load_git_history(self):
         self.list_git_history.clear()

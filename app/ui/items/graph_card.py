@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QGraphicsProxyWidget, QWidget, QVBoxLayout, QHBoxLay
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import Qt, pyqtSignal
 from .base_item import BaseGraphicsItemMixin
+import qtawesome as qta
 
 class HeaderDragBar(QWidget):
     def __init__(self, proxy_getter, parent=None):
@@ -70,12 +71,13 @@ class GraphWidget(QWidget):
         header = QHBoxLayout(self.header_bar)
         header.setContentsMargins(0, 0, 0, 0)
 
-        lbl_title = QLabel(f"◈ {title}", self.header_bar)
+        lbl_title = QLabel(title, self.header_bar)
         lbl_title.setObjectName("GraphTitle")
         header.addWidget(lbl_title)
         header.addStretch()
 
-        btn_del = QPushButton("✕", self.header_bar)
+        btn_del = QPushButton(self.header_bar)
+        btn_del.setIcon(qta.icon('ri.close-line', color='#8e8e93'))
         btn_del.setFixedSize(20, 20)
         btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_del.setStyleSheet("""

@@ -13,6 +13,7 @@ from PyQt6.QtMultimediaWidgets import QVideoWidget
 from .base_item import BaseGraphicsItemMixin
 from ...backend.video_generation.video_gen_client import ManimVideoPollWorker, request_video_generation
 from ...storage.downloads_manager import DownloadsManager
+import qtawesome as qta
 
 class VideoPlayerWidget(QWidget):
     download_clicked = pyqtSignal(str, str) # title, file_path
@@ -140,13 +141,15 @@ class VideoPlayerWidget(QWidget):
         self.controls = QHBoxLayout()
         self.controls.setContentsMargins(0, 2, 0, 0)
         
-        self.btn_play = QPushButton("▶ Play", self.player_page)
+        self.btn_play = QPushButton("Play", self.player_page)
+        self.btn_play.setIcon(qta.icon('ri.play-fill'))
         self.btn_play.clicked.connect(self._toggle_play)
         
         self.scrub_slider = QSlider(Qt.Orientation.Horizontal, self.player_page)
         self.scrub_slider.sliderMoved.connect(self.player.setPosition)
         
-        self.btn_download = QPushButton("⤓ Download", self.player_page)
+        self.btn_download = QPushButton("Download", self.player_page)
+        self.btn_download.setIcon(qta.icon('ri.download-line', color='white'))
         self.btn_download.setStyleSheet("background-color: #007aff; font-weight: bold;")
         self.btn_download.clicked.connect(self._on_download)
 
@@ -188,10 +191,11 @@ class VideoPlayerWidget(QWidget):
         self._load_video_source(video_url)
         self.stack.setCurrentIndex(1)
         self.player.play()
-        self.btn_play.setText("⏸ Pause")
+        self.btn_play.setText("Pause")
+        self.btn_play.setIcon(qta.icon('ri.pause-fill'))
 
     def _on_video_failed(self, job_id, err_msg):
-        self.lbl_status.setText(f"⚠ {err_msg}")
+        self.lbl_status.setText(f"{err_msg}")
         self.progress_bar.setValue(0)
 
     def _load_video_source(self, path_or_url: str):
@@ -203,10 +207,12 @@ class VideoPlayerWidget(QWidget):
     def _toggle_play(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
-            self.btn_play.setText("▶ Play")
+            self.btn_play.setText("Play")
+            self.btn_play.setIcon(qta.icon('ri.play-fill'))
         else:
             self.player.play()
-            self.btn_play.setText("⏸ Pause")
+            self.btn_play.setText("Pause")
+            self.btn_play.setIcon(qta.icon('ri.pause-fill'))
 
     def _toggle_minimize(self):
         self.is_minimized = not self.is_minimized
@@ -227,7 +233,7 @@ class VideoPlayerWidget(QWidget):
 
     def _on_download(self):
         if not self.video_path:
-            self.btn_download.setText("⚠ No Video")
+            self.btn_download.setText("No Video")
             return
             
         import shutil
@@ -261,10 +267,12 @@ class VideoPlayerWidget(QWidget):
                 
             entry = dl_mgr.add_download(self.title, local_path)
             self.download_clicked.emit(self.title, entry["file_path"])
-            self.btn_download.setText("✓ Saved")
+            self.btn_download.setText("Saved")
+            self.btn_download.setIcon(qta.icon('ri.check-line', color='white'))
         except Exception as e:
             print(f"Download failed: {e}")
-            self.btn_download.setText("⚠ Failed")
+            self.btn_download.setText("Failed")
+            self.btn_download.setIcon(qta.icon('ri.error-warning-line', color='white'))
 
 class VideoFloatItem(QGraphicsProxyWidget, BaseGraphicsItemMixin):
     def __init__(self, job_id: str = "", title: str = "Manim Video", video_url_or_path: str = "", parent=None):
