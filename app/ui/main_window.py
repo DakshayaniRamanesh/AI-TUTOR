@@ -350,6 +350,7 @@ class MainWindow(QMainWindow):
         self.scene = CanvasScene(self)
         self.scene.ink_written_detected.connect(self._on_ink_written_detected)
         self.scene.auto_ai_requested.connect(self._on_auto_ai_requested)
+        self.scene.auto_ai_failed.connect(self._on_auto_ai_failed)
         # Connect scene_changed to the debounced autosave
         self.scene.scene_changed.connect(self._on_scene_changed)
         self.view = CanvasView(self.scene, self)
@@ -1060,7 +1061,13 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_magic_orb_triggered(self):
-        self.scene.trigger_ai_on_dirty_ink()
+        started = self.scene.trigger_ai_on_dirty_ink()
+        if not started:
+            self.magic_orb.set_state("idle")
+
+    def _on_auto_ai_failed(self, error_msg: str):
+        self.magic_orb.set_state("error")
+        QTimer.singleShot(1500, lambda: self.magic_orb.set_state("idle"))
 
     def _on_auto_ai_toggled(self, enabled: bool):
         self.scene.auto_ai_enabled = enabled

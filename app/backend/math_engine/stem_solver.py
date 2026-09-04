@@ -559,7 +559,7 @@ def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
 
     # 1. Primary: Groq (Fast sub-second response)
     if groq_key:
-        for model in ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "qwen/qwen3.8-27b"]:
+        for model in ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]:
             try:
                 resp = requests.post(
                     "https://api.groq.com/openai/v1/chat/completions",
