@@ -318,11 +318,11 @@ async def test_gemini():
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         last_err = None
-        for model_name in ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash-lite"]:
+        for model_name in ["gemini-3.5-flash-lite"]:
             try:
-                model = genai.GenerativeModel(model_name)
-                model.generate_content("Ping")
-                return {"status": "ok", "message": f"Gemini connected ({model_name})"}
+                # Use get_model instead of generate_content to avoid 10s timeout on overloaded API
+                info = genai.get_model(f"models/{model_name}")
+                return {"status": "ok", "message": f"Gemini connected ({info.name})"}
             except Exception as ex:
                 last_err = ex
         return JSONResponse({"status": "error", "message": str(last_err)}, status_code=500)

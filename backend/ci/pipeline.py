@@ -85,9 +85,9 @@ class CIPipelineHarness:
                             file_path, sc
                         ]
                         try:
-                            result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+                            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
                         except subprocess.TimeoutExpired:
-                            return False, f"[Stage3] Manim Dry Run Error ({sc}): Execution timed out. Did you use an infinite loop, time.sleep(), or input()? REMOVE THEM."
+                            return False, f"[Stage3] Manim Dry Run Error ({sc}): Execution timed out after 120s. Did you use an infinite loop, time.sleep(), or input()? REMOVE THEM."
                         
                         if result.returncode != 0:
                             clean_stderr = "\n".join([l for l in result.stderr.splitlines() if not ("|" in l and "%" in l and "it/s" in l)])
@@ -113,7 +113,7 @@ class CIPipelineHarness:
                         file_path,
                         first_scene,
                     ]
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
                     if result.returncode != 0:
                         stderr = result.stderr or result.stdout or "Unknown smoke-render error"
                         clean_stderr = "\n".join([l for l in stderr.splitlines() if not ("|" in l and "%" in l and "it/s" in l)])

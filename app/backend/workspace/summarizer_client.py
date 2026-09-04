@@ -73,7 +73,7 @@ def summarize_url(url: str, title: str = "") -> str:
 
     # 1. Try Gemini Models for deep AI explanation
     if GOOGLE_API_KEY and combined_text:
-        models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"]
+        models = ["gemini-3.5-flash-lite"]
         prompt = (
             f"You are Kestrel AI Tutor, an expert professor. Create an IN-DEPTH, TEXTBOOK-GRADE STUDY GUIDE "
             f"for a student's notebook based on this reference:\n\n"
