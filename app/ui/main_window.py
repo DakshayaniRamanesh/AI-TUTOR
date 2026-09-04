@@ -2030,7 +2030,7 @@ class MainWindow(QMainWindow):
 
     def _on_latex_status_updated(self, job_id, stage, progress):
         if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.set_progress(progress, stage)
+            self.speedometer_widget.update_progress(stage, progress)
         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
             self.progress_dialog.update_progress(stage, progress)
 
@@ -2042,9 +2042,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'ask_bar'):
             self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
 
-        notebook_title = (self.current_board.title if getattr(self, 'current_board', None) else "LaTeX_Document") or "LaTeX_Document"
+        notebook_title = (self.current_board.title if getattr(self, 'current_board', None) else "notebook") or "notebook"
         self.latex_editor_widget.set_latex_code(latex_code, title=f"LaTeX: {notebook_title}")
-        self._show_or_update_tab(self.latex_editor_widget, "📝 Editable LaTeX")
+        self._show_or_update_tab(self.latex_editor_widget, "📄 notebook.pdf")
 
     def _on_latex_pdf_ready(self, job_id, pdf_url, pdf_b64):
         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
@@ -2052,12 +2052,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'ask_bar'):
             self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
 
-        notebook_title = (self.current_board.title if getattr(self, 'current_board', None) else "Untitled_Notebook") or "Untitled_Notebook"
-        mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
-        action = self.classroom_action_combo.currentText() if hasattr(self, 'classroom_action_combo') else "Action"
-        safe_title = "".join(c for c in notebook_title if c.isalnum() or c in " _-").strip() or "document"
-        filename = f"{safe_title}_{mode}_{action}.pdf".replace(" ", "_")
-
+        filename = "notebook.pdf"
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         export_dir = os.path.join(base_dir, "storage_data", "latex_exports")
         os.makedirs(export_dir, exist_ok=True)
@@ -2079,8 +2074,9 @@ class MainWindow(QMainWindow):
                 print(f"[LaTeX] Notice downloading PDF: {e}")
 
         if os.path.exists(save_path):
-            self.pdf_viewer_widget.load_latex_pdf(save_path)
-            self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {filename}")
+            self.last_compiled_pdf_path = save_path
+            self.latex_editor_widget.load_pdf(save_path)
+            self._show_or_update_tab(self.latex_editor_widget, "📄 notebook.pdf")
 
     def _on_latex_failed(self, job_id, error_msg):
         if hasattr(self, 'speedometer_widget'):
@@ -2360,34 +2356,6 @@ class MainWindow(QMainWindow):
     def _toggle_theme(self):
         ThemeManager.instance().toggle_theme()
 
-    def _close_latex_editor_tab(self):
-        if self.latex_editor_widget.confirm_close():
-            idx = self.canvas_tabs.indexOf(self.latex_editor_widget)
-            if idx != -1:
-                self.canvas_tabs.removeTab(idx)
-            self.canvas_tabs.setCurrentWidget(self.view)
-
-    def _close_pdf_split_screen(self):
-        idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
-        if idx != -1:
-            self.canvas_tabs.removeTab(idx)
-        self.ask_bar.set_pdf_mode(False)
-        self.canvas_tabs.setCurrentWidget(self.view)
-
-    def _on_canvas_tab_closed(self, index: int):
-        if index == 0:
-            return
-        widget = self.canvas_tabs.widget(index)
-        if widget == self.latex_editor_widget:
-            self._close_latex_editor_tab()
-        elif widget == self.pdf_viewer_widget:
-            self._close_pdf_split_screen()
-
-    def _on_pdf_compiled(self, pdf_path: str):
-        self.last_compiled_pdf_path = pdf_path
-        if hasattr(self, 'btn_view_pdf'):
-            self.btn_view_pdf.setVisible(True)
-
     def _open_in_app_pdf_viewer(self):
         if not getattr(self, 'last_compiled_pdf_path', None) or not os.path.exists(self.last_compiled_pdf_path):
             QMessageBox.information(self, "No PDF Available",
@@ -2398,54 +2366,3 @@ class MainWindow(QMainWindow):
         fname = os.path.basename(self.last_compiled_pdf_path)
         tab_title = f"📄 PDF: {fname[:16]}..." if len(fname) > 18 else f"📄 PDF: {fname}"
         self._show_or_update_tab(self.pdf_viewer_widget, tab_title)
-
-    def _on_latex_ready(self, job_id, latex_code):
-        if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.finish_success("LaTeX Ready!")
-        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-
-        notebook_title = self.current_board.title or "LaTeX_Document"
-        self.latex_editor_widget.set_latex_code(latex_code, title=f"LaTeX: {notebook_title}")
-        self._show_or_update_tab(self.latex_editor_widget, "📝 Editable LaTeX")
-
-    def _on_latex_status_updated(self, job_id, stage, progress):
-        if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.update_progress(stage, progress)
-        self.ask_bar.input_field.setPlaceholderText(f"{stage} ({progress}%)")
-        
-    def _on_latex_pdf_ready(self, job_id, pdf_url, pdf_b64):
-        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
-            self.progress_dialog.finish_success()
-        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-
-        notebook_title = self.current_board.title or "Untitled_Notebook"
-        mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
-        action = self.classroom_action_combo.currentText() if hasattr(self, 'classroom_action_combo') else "Action"
-        safe_title = "".join(c for c in notebook_title if c.isalnum() or c in " _-").strip()
-        filename = f"{safe_title}_{mode}_{action}.pdf".replace(" ", "_")
-
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        export_dir = os.path.join(base_dir, "storage_data", "latex_exports")
-        os.makedirs(export_dir, exist_ok=True)
-        save_path = os.path.join(export_dir, filename)
-
-        if pdf_b64:
-            with open(save_path, "wb") as f:
-                f.write(base64.b64decode(pdf_b64))
-        else:
-            try:
-                r = requests.get(pdf_url)
-                with open(save_path, "wb") as f:
-                    f.write(r.content)
-            except Exception as e:
-                QMessageBox.warning(self, "Download Error", f"Failed to download generated PDF:\n{e}")
-                return
-
-        self.pdf_viewer_widget.load_latex_pdf(save_path)
-        self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {filename}")
-
-    def _on_latex_failed(self, job_id, error_msg):
-        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
-            self.progress_dialog.finish_error(error_msg)
-        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-        QMessageBox.warning(self, "LaTeX Error", f"LaTeX generation failed:\n{error_msg}")

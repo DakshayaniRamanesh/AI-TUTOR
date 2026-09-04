@@ -52,73 +52,110 @@ Raw transcription:
 
 
 class LatexTranscribeAgent:
-    """Uses Google Gemini Vision to extract raw LaTeX and math from the handwritten image."""
+    """Uses Groq Vision (primary) or Google Gemini Vision (fallback) to extract raw LaTeX and math from handwriting."""
     
     def __init__(self):
-        self.api_key = os.getenv("GOOGLE_API_KEY")
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
+        self.google_api_key = os.getenv("GOOGLE_API_KEY")
 
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Transcribing Handwriting"
         job.progress_percentage = 10
-        print(f"[{job.job_id}] Transcribing handwriting with Gemini Vision...")
+        print(f"[{job.job_id}] Transcribing handwriting with Groq Vision (default)...")
 
-        if not self.api_key:
+        # Clean base64 string
+        b64_str = job.image_b64 or ""
+        if "," in b64_str:
+            b64_str = b64_str.split(",", 1)[1]
+        b64_str = b64_str.strip()
+
+        if not b64_str:
             job.status = JobStatus.ERROR
-            job.error_message = "GOOGLE_API_KEY missing from environment."
+            job.error_message = "No image data provided for LaTeX transcription."
             return job
 
-        try:
-            import google.generativeai as genai
-            from PIL import Image
-            genai.configure(api_key=self.api_key)
+        prompt = (
+            "Transcribe all handwritten math equations, symbols, problems, diagrams, and text from this image into clean, precise LaTeX. "
+            "Preserve all mathematical variables, formulas, subscripts, superscripts, and problem statements accurately. "
+            "Output ONLY the transcribed LaTeX and text without markdown wrapping or chat preamble."
+        )
 
-            # Clean base64 string
-            b64_str = job.image_b64 or ""
-            if "," in b64_str:
-                b64_str = b64_str.split(",", 1)[1]
-            b64_str = b64_str.strip()
+        response_text = ""
 
-            if not b64_str:
-                job.status = JobStatus.ERROR
-                job.error_message = "No image data provided for LaTeX transcription."
-                return job
+        # 1. PRIMARY: Groq Vision (fast, high quality, no Gemini quota limits)
+        if self.groq_api_key and Groq and not self.groq_api_key.startswith("your_"):
+            try:
+                client = Groq(api_key=self.groq_api_key)
+                groq_vision_models = ["qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]
+                for gvm in groq_vision_models:
+                    try:
+                        g_resp = client.chat.completions.create(
+                            model=gvm,
+                            messages=[{
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": prompt},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_str}"}}
+                                ]
+                            }],
+                            temperature=0.1,
+                            max_tokens=1000,
+                            timeout=25.0
+                        )
+                        if g_resp.choices and g_resp.choices[0].message.content:
+                            txt = g_resp.choices[0].message.content.strip()
+                            # Strip think tags if model is reasoning-based
+                            txt = re.sub(r'<think>.*?</think>', '', txt, flags=re.DOTALL).strip()
+                            if txt:
+                                response_text = txt
+                                print(f"[{job.job_id}] Groq Vision ({gvm}) transcription OK ({len(response_text)} chars)")
+                                break
+                    except Exception as gv_err:
+                        print(f"[{job.job_id}] Groq Vision {gvm} notice: {gv_err}")
+                        continue
+            except Exception as ex:
+                print(f"[{job.job_id}] Groq Vision init notice: {ex}")
 
-            image_bytes = base64.b64decode(b64_str)
-            image = Image.open(io.BytesIO(image_bytes))
+        # 2. FALLBACK: Gemini Vision (only if Groq vision failed or is unconfigured)
+        if not response_text and self.google_api_key and not self.google_api_key.startswith("your_"):
+            try:
+                import warnings
+                import google.generativeai as genai
+                from PIL import Image
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    genai.configure(api_key=self.google_api_key)
 
-            prompt = (
-                "Transcribe all handwritten math equations, symbols, problems, diagrams, and text from this image into clean, precise LaTeX. "
-                "Preserve all mathematical variables, formulas, subscripts, superscripts, and problem statements accurately. "
-                "Output ONLY the transcribed LaTeX and text without markdown wrapping or chat preamble."
-            )
+                image_bytes = base64.b64decode(b64_str)
+                image = Image.open(io.BytesIO(image_bytes))
 
-            response_text = ""
-            models = ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-pro"]
-            for m in models:
-                try:
-                    model = genai.GenerativeModel(m)
-                    resp = model.generate_content([prompt, image])
-                    if resp and resp.text:
-                        response_text = resp.text.strip()
-                        break
-                except Exception as ex:
-                    print(f"[{job.job_id}] Gemini {m} transcribe notice: {ex}")
-                    continue
+                gemini_models = ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-pro"]
+                for m in gemini_models:
+                    try:
+                        model = genai.GenerativeModel(m)
+                        resp = model.generate_content([prompt, image])
+                        if resp and resp.text:
+                            response_text = resp.text.strip()
+                            print(f"[{job.job_id}] Gemini {m} vision fallback OK")
+                            break
+                    except Exception as ex:
+                        print(f"[{job.job_id}] Gemini {m} transcribe notice: {ex}")
+                        continue
+            except Exception as e:
+                print(f"[{job.job_id}] Gemini transcribe notice: {e}")
 
-            if not response_text:
-                raise RuntimeError("All Gemini vision models failed to transcribe the image.")
-
-            job.raw_transcription = response_text
-        except Exception as e:
+        if not response_text:
             job.status = JobStatus.ERROR
-            job.error_message = f"Transcription failed: {str(e)}"
+            job.error_message = "Transcription failed: Unable to extract text from handwriting."
+            return job
 
+        job.raw_transcription = response_text
         return job
 
 
 
 class LatexStructureAgent:
-    """Uses Groq or Gemini text LLM to structure, format, and solve math problems into clean LaTeX."""
+    """Uses Groq (default) or Gemini (fallback) text LLM to structure, format, and solve math problems into clean LaTeX."""
 
     def __init__(self):
         self.groq_api_key = os.getenv("GROQ_API_KEY")
@@ -127,32 +164,36 @@ class LatexStructureAgent:
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Structuring & Solving Math"
         job.progress_percentage = 35
-        print(f"[{job.job_id}] Structuring document & solving math...")
+        print(f"[{job.job_id}] Structuring document & solving math with Groq (default)...")
 
         prompt = STRUCTURE_PROMPT_TEMPLATE.format(
             template_type=job.template_type,
             raw_text=job.raw_transcription or ""
         )
 
-        mode = getattr(job, "mode", "study")
-        action = getattr(job, "classroom_action", "Solve Question")
+        mode = (getattr(job, "mode", "study") or "study").lower()
+        action = getattr(job, "classroom_action", "Solve Question") or "Solve Question"
 
-        if action == "Solve Question" or mode == "study":
+        if mode == "study":
             prompt += (
-                "\n\n**CRITICAL INSTRUCTION: COMPLETE STEP-BY-STEP MATHEMATICAL SOLUTION**\n"
-                "The user needs the fully worked and solved mathematical solution to the problem or questions present in the notes:\n"
-                "1. \\section*{Problem Statement}: State the transcribed problem or equation clearly.\n"
-                "2. \\section*{Key Principles and Formulas}: State the relevant mathematical formulas or methods needed.\n"
-                "3. \\section*{Step-by-Step Solution}: Provide the complete, explicit mathematical solution with all intermediate algebraic and calculus steps using \\begin{align*} ... \\end{align*}.\n"
-                "4. \\section*{Final Answer}: Enclose the final verified answer prominently inside \\boxed{...}.\n"
-                "5. \\section*{Key Takeaways}: 2 concise bullet points explaining intuition or tips.\n"
-                "Do NOT just repeat or transcribe the question; you MUST compute and solve the answer completely."
+                "\n\n**MODE: STUDY MODE (COMPREHENSIVE PEDAGOGICAL DEEP DIVE)**\n"
+                "Format this document as an in-depth, structured study guide designed for a student mastering this concept:\n"
+                "1. \\section*{Problem Statement}: Transcribe and state the problem or equation clearly.\n"
+                "2. \\section*{Key Principles and Formulas}: Explain the core mathematical theorems, formulas, or methods required, including brief intuitive reasoning.\n"
+                "3. \\section*{Detailed Step-by-Step Solution}: Provide the complete, exhaustive mathematical solution. Show every single intermediate algebraic and calculus step explicitly using \\begin{align*} ... \\end{align*} aligned at &=. NEVER omit intermediate steps.\n"
+                "4. \\section*{Final Answer}: Enclose the verified final answer prominently in \\boxed{...}.\n"
+                "5. \\section*{Study Notes and Key Takeaways}: 2-3 bullet points highlighting common student pitfalls, memory tricks, or sanity checks.\n"
+                "You MUST compute and solve the answer completely."
             )
         else:
+            # Classroom Mode
             prompt += (
-                "\n\n**CRITICAL INSTRUCTION: TRANSCRIBE AND TYPESET ONLY**\n"
-                "The user wants clean, beautifully formatted LaTeX exactly representing the notes. "
-                "Organize sections, fix OCR artifacts, and format all equations cleanly."
+                f"\n\n**MODE: CLASSROOM MODE (FORMAL, BOARD-READY PRESENTATION - Action: {action})**\n"
+                "Format this document as a formal, elegant classroom lecture board solution or instructor handout:\n"
+                "1. \\section*{Problem Statement}: Formulate the problem statement or theorem cleanly and concisely.\n"
+                "2. \\section*{Formal Derivation}: Present a rigorous, publication-grade mathematical derivation with clean transitions. Use \\begin{align*} ... \\end{align*} aligned strictly at &=. Do NOT include conversational filler, casual explanations, or study tips.\n"
+                "3. \\section*{Result}: State the formal conclusion or final answer enclosed in \\boxed{...}.\n"
+                "The typesetting must be minimal, formal, and authoritative."
             )
 
         # If retrying after a build error, pass the error to the LLM to fix
@@ -165,7 +206,7 @@ class LatexStructureAgent:
         if self.groq_api_key and Groq and not self.groq_api_key.startswith("your_"):
             try:
                 client = Groq(api_key=self.groq_api_key)
-                groq_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b", "qwen/qwen3.8-27b"]
+                groq_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]
                 for gm in groq_models:
                     try:
                         response = client.chat.completions.create(
@@ -253,6 +294,30 @@ class LatexStructureAgent:
                 else:
                     # Last resort: just drop the first 3000 chars of thinking
                     content = content[3000:].strip() if len(content) > 3000 else content
+
+        # Normalize troublesome Unicode characters that crash Tectonic or terminal codecs
+        unicode_replacements = {
+            '\u2010': '-',   # Hyphen
+            '\u2011': '-',   # Non-breaking hyphen
+            '\u2012': '-',   # Figure dash
+            '\u2013': '--',  # En dash
+            '\u2014': '---', # Em dash
+            '\u2015': '---', # Horizontal bar
+            '\u2212': '-',   # Minus sign
+            '\u00a0': ' ',   # Non-breaking space
+            '\u2018': "'",   # Left single quote
+            '\u2019': "'",   # Right single quote
+            '\u201c': '"',   # Left double quote
+            '\u201d': '"',   # Right double quote
+            '\u2026': r'\dots{}', # Ellipsis
+            '\u2264': r'\le ',    # Less than or equal
+            '\u2265': r'\ge ',    # Greater than or equal
+            '\u00d7': r'\times ', # Multiplication sign
+            '\u00f7': r'\div ',   # Division sign
+            '\u00b1': r'\pm ',    # Plus-minus sign
+        }
+        for u_char, rep in unicode_replacements.items():
+            content = content.replace(u_char, rep)
 
         # Sanitize stray Markdown hashes that crash Tectonic
         content = re.sub(r'^###\s+(.*)$', r'\\subsubsection*{\1}', content, flags=re.MULTILINE)

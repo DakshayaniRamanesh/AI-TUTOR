@@ -1,24 +1,44 @@
 """
-Interactive LaTeX Editor & Live PDF-Level Preview Widget for Kestrel AI Notebook
-Allows real-time viewing, manual editing, live syntax-free PDF page preview, and on-demand PDF compilation.
+Interactive Split-Screen LaTeX Editor & Native Vector PDF Viewer for Kestrel AI Notebook
+Provides simultaneous LaTeX source editing on the left and pixel-perfect compiled vector PDF
+rendering (using QPdfView) on the right, with on-demand background recompilation and export.
 """
 
 import os
-import base64
-import requests
+import shutil
+import tempfile
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QPlainTextEdit, QTextBrowser, QSplitter, QFileDialog, QMessageBox,
-    QApplication, QFrame, QSizePolicy
+    QPlainTextEdit, QSplitter, QFileDialog, QMessageBox,
+    QApplication, QFrame, QSizePolicy, QStackedWidget
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QPointF
+from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtPdf import QPdfDocument
+from PyQt6.QtPdfWidgets import QPdfView
 
-from ...backend.math_engine.latex_formatter import format_math_to_html
 from ..theme_manager import ThemeManager
 
+
+class LatexRecompileWorker(QThread):
+    """Background worker that compiles LaTeX code to a PDF using Tectonic."""
+    compilation_finished = pyqtSignal(bool, str) # success, output_path_or_error
+
+    def __init__(self, latex_code: str, target_pdf_path: str, parent=None):
+        super().__init__(parent)
+        self.latex_code = latex_code
+        self.target_pdf_path = target_pdf_path
+
+    def run(self):
+        try:
+            from ...backend.math_engine.latex_client import compile_custom_latex_pdf
+            success, msg_or_path = compile_custom_latex_pdf(self.latex_code, self.target_pdf_path)
+            self.compilation_finished.emit(success, msg_or_path)
+        except Exception as e:
+            self.compilation_finished.emit(False, str(e))
+
+
 class LatexEditorWidget(QWidget):
-    export_pdf_requested = pyqtSignal(str) # Emits current latex_code
     close_requested = pyqtSignal()
     pdf_compiled = pyqtSignal(str) # Emits compiled pdf_file_path
 
@@ -27,6 +47,10 @@ class LatexEditorWidget(QWidget):
         self.doc_title = "LaTeX Document"
         self.is_dirty = False
         self._initial_code = ""
+        self.pdf_file_path = ""
+        self.current_page = 1
+        self.total_pages = 1
+        self._recompile_worker = None
 
         self.theme_mgr = ThemeManager.instance()
         self.theme_mgr.theme_changed.connect(self._apply_theme)
@@ -39,18 +63,18 @@ class LatexEditorWidget(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        # Header Bar (Compact single line bar)
+        # 1. Top Header Bar
         self.header = QFrame(self)
         self.header.setObjectName("LatexEditorHeader")
-        self.header.setFixedHeight(42)
+        self.header.setFixedHeight(44)
         h_layout = QHBoxLayout(self.header)
-        h_layout.setContentsMargins(10, 4, 10, 4)
+        h_layout.setContentsMargins(12, 4, 12, 4)
         h_layout.setSpacing(10)
 
         lbl_icon = QLabel("📝", self.header)
-        lbl_icon.setFont(QFont("-apple-system", 13))
+        lbl_icon.setFont(QFont("-apple-system", 14))
 
-        self.lbl_title = QLabel("LaTeX Document Editor & Preview", self.header)
+        self.lbl_title = QLabel("LaTeX Document & Compiled PDF", self.header)
         self.lbl_title.setFont(QFont("-apple-system", 12, QFont.Weight.Bold))
 
         h_layout.addWidget(lbl_icon)
@@ -62,62 +86,142 @@ class LatexEditorWidget(QWidget):
         self.btn_copy.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_copy.clicked.connect(self._copy_to_clipboard)
 
-        self.btn_refresh = QPushButton("🔄 Refresh Preview", self.header)
-        self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_refresh.clicked.connect(self.update_preview)
+        self.btn_recompile = QPushButton("🔄 Recompile Preview", self.header)
+        self.btn_recompile.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_recompile.setStyleSheet("font-weight: 700; color: #7c3aed;")
+        self.btn_recompile.clicked.connect(self.recompile_preview)
 
         self.btn_export = QPushButton("📥 Export as PDF", self.header)
         self.btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_export.clicked.connect(self._export_pdf)
 
         self.btn_close = QPushButton("✕ Close", self.header)
+        self.btn_close.setObjectName("BtnCloseLatex")
         self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_close.clicked.connect(self._on_close_clicked)
 
         h_layout.addWidget(self.btn_copy)
-        h_layout.addWidget(self.btn_refresh)
+        h_layout.addWidget(self.btn_recompile)
         h_layout.addWidget(self.btn_export)
         h_layout.addWidget(self.btn_close)
 
         layout.addWidget(self.header)
 
-        # Splitter (Editor vs PDF-Page Live Preview)
+        # 2. Main Horizontal Splitter (Left: Code Editor | Right: Native Vector PDF Viewer)
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # Left: Monospace Code Editor
+        # ---- Left Panel: Monospace Code Editor ----
         left_container = QWidget(self.splitter)
         left_layout = QVBoxLayout(left_container)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(4)
+        left_layout.setSpacing(6)
 
-        lbl_editor = QLabel("LaTeX Source Code (Editable):", left_container)
+        left_header_frame = QFrame(left_container)
+        left_header_layout = QHBoxLayout(left_header_frame)
+        left_header_layout.setContentsMargins(4, 2, 4, 2)
+        lbl_editor = QLabel("LaTeX Source Code (Editable):", left_header_frame)
         lbl_editor.setFont(QFont("-apple-system", 11, QFont.Weight.Bold))
+        left_header_layout.addWidget(lbl_editor)
+        left_header_layout.addStretch()
 
         self.editor = QPlainTextEdit(left_container)
         font = QFont("Consolas", 11)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.editor.setFont(font)
-        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.editor.textChanged.connect(self._on_text_changed_debounced)
+        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.editor.textChanged.connect(self._on_text_changed)
 
-        left_layout.addWidget(lbl_editor)
+        left_layout.addWidget(left_header_frame)
         left_layout.addWidget(self.editor)
 
-        # Right: PDF-Styled Page Preview (Pure Black & White)
+        # ---- Right Panel: Native QPdfView Vector PDF Viewer ----
         right_container = QWidget(self.splitter)
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(4)
+        right_layout.setSpacing(6)
 
-        lbl_preview = QLabel("PDF Page Live Preview (Pure Black & White):", right_container)
+        # PDF Navigation Bar
+        self.pdf_nav_bar = QFrame(right_container)
+        self.pdf_nav_bar.setObjectName("PdfNavBar")
+        self.pdf_nav_bar.setFixedHeight(36)
+        pdf_nav_layout = QHBoxLayout(self.pdf_nav_bar)
+        pdf_nav_layout.setContentsMargins(6, 2, 6, 2)
+        pdf_nav_layout.setSpacing(8)
+
+        lbl_preview = QLabel("📄 Vector PDF Preview:", self.pdf_nav_bar)
         lbl_preview.setFont(QFont("-apple-system", 11, QFont.Weight.Bold))
 
-        self.preview_browser = QTextBrowser(right_container)
-        self.preview_browser.setOpenExternalLinks(True)
+        self.btn_prev = QPushButton("◀ Prev", self.pdf_nav_bar)
+        self.btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_prev.clicked.connect(self._prev_page)
 
-        right_layout.addWidget(lbl_preview)
-        right_layout.addWidget(self.preview_browser)
+        self.lbl_page = QLabel("Page 1 of 1", self.pdf_nav_bar)
+        self.lbl_page.setStyleSheet("font-size: 11px; font-weight: 600; color: #8e8e93;")
+
+        self.btn_next = QPushButton("Next ▶", self.pdf_nav_bar)
+        self.btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_next.clicked.connect(self._next_page)
+
+        self.btn_zoom_in = QPushButton("🔍+", self.pdf_nav_bar)
+        self.btn_zoom_in.setToolTip("Zoom In")
+        self.btn_zoom_in.clicked.connect(self._zoom_in)
+
+        self.btn_zoom_out = QPushButton("🔍-", self.pdf_nav_bar)
+        self.btn_zoom_out.setToolTip("Zoom Out")
+        self.btn_zoom_out.clicked.connect(self._zoom_out)
+
+        self.btn_fit_width = QPushButton("↔ Fit Width", self.pdf_nav_bar)
+        self.btn_fit_width.clicked.connect(self._fit_width)
+
+        pdf_nav_layout.addWidget(lbl_preview)
+        pdf_nav_layout.addStretch()
+        pdf_nav_layout.addWidget(self.btn_prev)
+        pdf_nav_layout.addWidget(self.lbl_page)
+        pdf_nav_layout.addWidget(self.btn_next)
+        pdf_nav_layout.addSpacing(6)
+        pdf_nav_layout.addWidget(self.btn_zoom_in)
+        pdf_nav_layout.addWidget(self.btn_zoom_out)
+        pdf_nav_layout.addWidget(self.btn_fit_width)
+
+        right_layout.addWidget(self.pdf_nav_bar)
+
+        # Right Stacked Widget: Page 0 = Placeholder / Compiling, Page 1 = Native QPdfView
+        self.pdf_stack = QStackedWidget(right_container)
+        
+        # Placeholder View
+        self.placeholder_widget = QFrame(self.pdf_stack)
+        self.placeholder_widget.setObjectName("PdfPlaceholderFrame")
+        ph_layout = QVBoxLayout(self.placeholder_widget)
+        ph_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ph_layout.setSpacing(12)
+
+        self.lbl_ph_icon = QLabel("📄", self.placeholder_widget)
+        self.lbl_ph_icon.setFont(QFont("-apple-system", 36))
+        self.lbl_ph_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.lbl_ph_text = QLabel("Compiling PDF Preview with Tectonic...\nPlease wait.", self.placeholder_widget)
+        self.lbl_ph_text.setFont(QFont("-apple-system", 12))
+        self.lbl_ph_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_ph_text.setStyleSheet("color: #8e8e93;")
+
+        ph_layout.addWidget(self.lbl_ph_icon)
+        ph_layout.addWidget(self.lbl_ph_text)
+
+        # QPdfView View
+        self.pdf_doc = QPdfDocument(self)
+        self.pdf_view = QPdfView(self.pdf_stack)
+        self.pdf_view.setDocument(self.pdf_doc)
+        self.pdf_view.setPageMode(QPdfView.PageMode.SinglePage)
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
+        if hasattr(self.pdf_view, 'pageNavigator') and self.pdf_view.pageNavigator():
+            self.pdf_view.pageNavigator().currentPageChanged.connect(self._on_visual_page_changed)
+
+        self.pdf_stack.addWidget(self.placeholder_widget) # Index 0
+        self.pdf_stack.addWidget(self.pdf_view)           # Index 1
+        self.pdf_stack.setCurrentIndex(0)
+
+        right_layout.addWidget(self.pdf_stack, stretch=1)
 
         self.splitter.addWidget(left_container)
         self.splitter.addWidget(right_container)
@@ -125,131 +229,119 @@ class LatexEditorWidget(QWidget):
 
         layout.addWidget(self.splitter, stretch=1)
 
-        # Debounce timer for preview update while typing
-        from PyQt6.QtCore import QTimer
-        self._update_timer = QTimer(self)
-        self._update_timer.setSingleShot(True)
-        self._update_timer.setInterval(300)
-        self._update_timer.timeout.connect(self.update_preview)
-
     def set_latex_code(self, code: str, title: str = "LaTeX Document"):
         self.doc_title = title
         self.lbl_title.setText(f"📝 {title}")
         self._initial_code = code
         self.is_dirty = False
         self.editor.setPlainText(code)
-        self.update_preview()
 
     def get_latex_code(self) -> str:
         return self.editor.toPlainText()
 
-    def _on_text_changed_debounced(self):
+    def _on_text_changed(self):
         if self.editor.toPlainText() != self._initial_code:
             self.is_dirty = True
-        self._update_timer.start()
 
-    def update_preview(self):
-        code = self.editor.toPlainText()
-        if not code.strip():
-            self.preview_browser.setHtml("<p style='color:#666; font-style:italic; padding: 20px;'>No LaTeX code provided.</p>")
+    def load_pdf(self, file_path: str) -> bool:
+        """Loads a compiled vector PDF into QPdfView on the right side of the split screen."""
+        if not file_path or not os.path.exists(file_path):
+            self.lbl_ph_text.setText("PDF preview not found.\nClick '🔄 Recompile Preview' to compile.")
+            self.pdf_stack.setCurrentIndex(0)
+            return False
+
+        try:
+            self.pdf_file_path = file_path
+            self.pdf_doc.load(file_path)
+            self.total_pages = max(1, self.pdf_doc.pageCount())
+            self.current_page = 1
+            self._render_current_page()
+            self.pdf_stack.setCurrentIndex(1)
+            return True
+        except Exception as e:
+            print(f"[LatexEditorWidget] Error loading PDF {file_path}: {e}")
+            self.lbl_ph_text.setText(f"Could not load PDF: {e}")
+            self.pdf_stack.setCurrentIndex(0)
+            return False
+
+    def recompile_preview(self):
+        """Compiles the currently edited LaTeX source and reloads the QPdfView."""
+        code = self.editor.toPlainText().strip()
+        if not code:
+            QMessageBox.warning(self, "Empty LaTeX", "Cannot compile an empty LaTeX document.")
             return
 
-        formatted_body = format_math_to_html(code)
+        # Target PDF in temp storage
+        temp_dir = tempfile.gettempdir()
+        safe_name = "".join(c for c in self.doc_title if c.isalnum() or c in " _-").strip().replace(" ", "_") or "preview"
+        target_path = os.path.join(temp_dir, f"{safe_name}_preview.pdf")
 
-        is_dark = self.theme_mgr.is_dark()
-        page_bg = "#ffffff" if not is_dark else "#1c1c1e"
-        outer_bg = "#f4f4f6" if not is_dark else "#111113"
-        text_col = "#111111" if not is_dark else "#e8e8ed"
-        border_col = "transparent"
+        self.btn_recompile.setEnabled(False)
+        self.btn_recompile.setText("⏳ Compiling...")
+        self.lbl_ph_text.setText("Compiling LaTeX with Tectonic...\nPlease wait.")
+        if self.pdf_stack.currentIndex() == 0:
+            self.lbl_ph_icon.setText("⏳")
 
-        html_doc = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <style>
-                body {{
-                    background-color: {outer_bg};
-                    margin: 0;
-                    padding: 24px 12px;
-                    display: flex;
-                    justify-content: center;
-                    font-family: 'Latin Modern Roman', 'Computer Modern Roman', 'CMU Serif', 'Times New Roman', 'Nimbus Roman', 'Times', serif;
-                    -webkit-font-smoothing: antialiased;
-                }}
-                .pdf-page {{
-                    background-color: {page_bg};
-                    color: {text_col};
-                    width: 90%;
-                    max-width: 720px;
-                    min-height: 960px;
-                    margin: 0 auto;
-                    padding: 50px 65px;
-                    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
-                    border: none;
-                    box-sizing: border-box;
-                    font-size: 15px;
-                    line-height: 1.45;
-                }}
-                .pdf-sec-head {{
-                    font-size: 19px;
-                    font-weight: bold;
-                    color: {text_col};
-                    margin-top: 22px;
-                    margin-bottom: 8px;
-                    font-family: 'Latin Modern Roman', 'Computer Modern Roman', 'CMU Serif', 'Times New Roman', serif;
-                }}
-                .pdf-subsec-head {{
-                    font-size: 16px;
-                    font-weight: bold;
-                    color: {text_col};
-                    margin-top: 16px;
-                    margin-bottom: 6px;
-                    font-family: 'Latin Modern Roman', 'Computer Modern Roman', 'CMU Serif', 'Times New Roman', serif;
-                }}
-                .pdf-display-math {{
-                    font-size: 17px;
-                    text-align: center;
-                    margin: 14px 0;
-                    padding: 0;
-                    background: transparent;
-                    border: none;
-                    color: {text_col};
-                }}
-                .pdf-inline-math {{
-                    font-size: 15px;
-                    font-weight: 600;
-                    color: {text_col};
-                    padding: 0 1px;
-                }}
-                .math-frac {{
-                    display: inline-block;
-                    vertical-align: middle;
-                    text-align: center;
-                    font-size: 0.95em;
-                    padding: 0 2px;
-                }}
-                .math-num {{
-                    display: block;
-                    border-bottom: 1px solid currentColor;
-                    padding: 0 2px;
-                }}
-                .math-den {{
-                    display: block;
-                    padding: 0 2px;
-                }}
-                table {{
-                    font-family: inherit;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="pdf-page">
-                {formatted_body}
-            </div>
-        </body>
-        </html>
-        """
-        self.preview_browser.setHtml(html_doc)
+        # Stop previous worker if running
+        if self._recompile_worker and self._recompile_worker.isRunning():
+            self._recompile_worker.wait(100)
+
+        self._recompile_worker = LatexRecompileWorker(code, target_path, parent=self)
+        self._recompile_worker.compilation_finished.connect(self._on_recompilation_finished)
+        self._recompile_worker.start()
+
+    def _on_recompilation_finished(self, success: bool, msg_or_path: str):
+        self.btn_recompile.setEnabled(True)
+        self.btn_recompile.setText("🔄 Recompile Preview")
+        self.lbl_ph_icon.setText("📄")
+
+        if success and os.path.exists(msg_or_path):
+            self.is_dirty = False
+            self.load_pdf(msg_or_path)
+            self.pdf_compiled.emit(msg_or_path)
+            # Subtle indicator on button
+            self.btn_recompile.setText("✓ PDF Updated!")
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(1500, lambda: self.btn_recompile.setText("🔄 Recompile Preview"))
+        else:
+            self.lbl_ph_text.setText(f"Compilation notice:\n{msg_or_path[:200]}")
+            QMessageBox.warning(
+                self, "Compilation Notice",
+                f"LaTeX compilation encountered an issue:\n\n{msg_or_path[:400]}"
+            )
+
+    def _prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self._render_current_page()
+
+    def _next_page(self):
+        if self.current_page < self.total_pages:
+            self.current_page += 1
+            self._render_current_page()
+
+    def _render_current_page(self):
+        self.lbl_page.setText(f"Page {self.current_page} of {self.total_pages}")
+        if hasattr(self.pdf_view, 'pageNavigator') and self.pdf_view.pageNavigator():
+            try:
+                self.pdf_view.pageNavigator().jump(self.current_page - 1, QPointF())
+            except Exception:
+                pass
+
+    def _on_visual_page_changed(self, page_index: int):
+        self.current_page = page_index + 1
+        self.lbl_page.setText(f"Page {self.current_page} of {self.total_pages}")
+
+    def _zoom_in(self):
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
+        self.pdf_view.setZoomFactor(self.pdf_view.zoomFactor() * 1.2)
+
+    def _zoom_out(self):
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
+        self.pdf_view.setZoomFactor(self.pdf_view.zoomFactor() / 1.2)
+
+    def _fit_width(self):
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
 
     def _copy_to_clipboard(self):
         QApplication.clipboard().setText(self.editor.toPlainText())
@@ -258,13 +350,13 @@ class LatexEditorWidget(QWidget):
         QTimer.singleShot(1500, lambda: self.btn_copy.setText("📋 Copy Code"))
 
     def confirm_close(self) -> bool:
-        if not self.is_dirty and not self.editor.toPlainText().strip():
+        if not self.is_dirty:
             return True
 
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Close LaTeX Document?")
-        msg_box.setText("You have an active LaTeX document workspace.")
-        msg_box.setInformativeText("Would you like to export the latest edited LaTeX as a PDF before closing, or discard it?")
+        msg_box.setText("You have unsaved changes in your LaTeX document.")
+        msg_box.setInformativeText("Would you like to export the latest edited document as a PDF before closing?")
         
         btn_export = msg_box.addButton("📥 Export as PDF", QMessageBox.ButtonRole.AcceptRole)
         btn_discard = msg_box.addButton("🗑️ Discard Changes", QMessageBox.ButtonRole.DestructiveRole)
@@ -287,7 +379,6 @@ class LatexEditorWidget(QWidget):
             self.close_requested.emit()
 
     def _export_pdf(self) -> bool:
-        # ALWAYS fetch the latest edited LaTeX code string from the code editor
         code = self.editor.toPlainText().strip()
         if not code:
             QMessageBox.warning(self, "Empty LaTeX", "Cannot compile empty LaTeX source.")
@@ -300,16 +391,28 @@ class LatexEditorWidget(QWidget):
         if not file_path:
             return False
 
+        # If already compiled and not modified, copy the existing PDF
+        if not self.is_dirty and self.pdf_file_path and os.path.exists(self.pdf_file_path):
+            try:
+                shutil.copy2(self.pdf_file_path, file_path)
+                QMessageBox.information(
+                    self, "PDF Saved",
+                    f"PDF saved successfully to:\n{file_path}"
+                )
+                return True
+            except Exception as e:
+                print(f"[LatexEditor] Notice copying PDF: {e}")
+
         self.btn_export.setText("Compiling PDF...")
         self.btn_export.setEnabled(False)
         QApplication.processEvents()
 
         try:
             from ...backend.math_engine.latex_client import compile_custom_latex_pdf
-            # Compiles the current (edited/non-edited) LaTeX code from the editor
             success, msg_or_path = compile_custom_latex_pdf(code, file_path)
             if success:
                 self.is_dirty = False
+                self.pdf_file_path = file_path
                 self.pdf_compiled.emit(file_path)
                 QMessageBox.information(
                     self, "PDF Exported",
@@ -338,17 +441,20 @@ class LatexEditorWidget(QWidget):
                 border-bottom: 1px solid {c['border_color']};
                 border-radius: 6px;
             }}
+            QFrame#PdfNavBar {{
+                background-color: {c['bg_titlebar']};
+                border-bottom: 1px solid {c['border_color']};
+                border-radius: 4px;
+            }}
+            QFrame#PdfPlaceholderFrame {{
+                background-color: {c['canvas_bg']};
+                border: 1px dashed {c['border_color']};
+                border-radius: 6px;
+            }}
             QLabel {{
                 color: {c['text_primary']};
             }}
             QPlainTextEdit {{
-                background-color: {c['editor_bg']};
-                color: {c['text_primary']};
-                border: 1px solid {c['border_color']};
-                border-radius: 6px;
-                padding: 8px;
-            }}
-            QTextBrowser {{
                 background-color: {c['editor_bg']};
                 color: {c['text_primary']};
                 border: 1px solid {c['border_color']};
@@ -367,8 +473,17 @@ class LatexEditorWidget(QWidget):
                 background-color: {c['accent']};
                 color: #ffffff;
             }}
+            QPushButton#BtnCloseLatex {{
+                background-color: #ef4444;
+                color: #ffffff;
+                border: none;
+            }}
+            QPushButton#BtnCloseLatex:hover {{
+                background-color: #dc2626;
+            }}
             QSplitter::handle {{
                 background-color: {c['border_color']};
+                width: 3px;
             }}
         """)
-        self.update_preview()
+
