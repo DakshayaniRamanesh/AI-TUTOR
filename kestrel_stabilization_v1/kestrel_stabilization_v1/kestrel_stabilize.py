@@ -414,8 +414,7 @@ def patch_storyboard(text: str) -> str:
 
 
 def patch_local_server(text: str) -> str:
-    text = once(
-        text,
+    text = text.replace(
         '''    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     local_tectonic = os.path.join(project_root, "tectonic.exe")
     tectonic_cmd = local_tectonic if os.path.exists(local_tectonic) else "tectonic"
@@ -442,8 +441,7 @@ def patch_local_server(text: str) -> str:
             },
             status_code=503,
         )
-''',
-        "local compile_pdf Tectonic detection",
+'''
     )
     text = once(
         text,
