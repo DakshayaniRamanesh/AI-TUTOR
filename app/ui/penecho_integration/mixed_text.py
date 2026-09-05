@@ -323,10 +323,20 @@ def mixed_tokens_to_html(tokens: List[Dict[str, Any]]) -> str:
 class PenechoMixedTextItem(QGraphicsItem):
     """
     QGraphicsItem that renders handwritten ink responses and equations directly on the canvas.
-    Renders with authentic handwritten typography with transparent background.
+    Supports a 'Show Full Solution' / 'Hide Explanation' interactive toggle.
     """
 
-    def __init__(self, raw_text: str = "", font_size: int = 17, width: float = 340.0, is_ink_mode: bool = True, parent=None):
+    def __init__(
+        self,
+        raw_text: str = "",
+        font_size: int = 17,
+        width: float = 340.0,
+        is_ink_mode: bool = True,
+        short_text: Optional[str] = None,
+        full_text: Optional[str] = None,
+        is_expanded: bool = False,
+        parent=None
+    ):
         super().__init__(parent)
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
@@ -334,14 +344,34 @@ class PenechoMixedTextItem(QGraphicsItem):
             QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setAcceptHoverEvents(True)
-        self._raw_text = raw_text or "Type text: **E = mc²**"
+
+        if full_text is None and "Explanation:" in raw_text:
+            self._full_text = raw_text.strip()
+            self._short_text = raw_text.split("Explanation:")[0].strip()
+        else:
+            self._short_text = (short_text or raw_text or "Type text: **E = mc²**").strip()
+            self._full_text = (full_text or raw_text or "Type text: **E = mc²**").strip()
+
+        self._is_expanded = is_expanded
+        self._raw_text = self._full_text if self._is_expanded else self._short_text
         self._font_size = font_size
-        self._card_width = max(180.0, width)
+        self._card_width = max(240.0, width)
         self._is_ink_mode = is_ink_mode
         self._text_color = QColor("#1e293b")
+        self._btn_hovered = False
 
         self._doc = QTextDocument()
         self._update_document()
+
+    @property
+    def can_toggle_solution(self) -> bool:
+        return bool(self._full_text and self._short_text and self._full_text.strip() != self._short_text.strip())
+
+    def _btn_rect(self) -> QRectF:
+        if not self.can_toggle_solution:
+            return QRectF()
+        doc_height = self._doc.size().height()
+        return QRectF(4.0, doc_height + 8.0, 184.0, 28.0)
 
     def _update_document(self):
         from ...backend.math_engine.latex_formatter import format_math_to_html
@@ -360,7 +390,11 @@ class PenechoMixedTextItem(QGraphicsItem):
 
     def boundingRect(self) -> QRectF:
         doc_height = self._doc.size().height()
-        return QRectF(0, 0, self._card_width, max(40.0, doc_height + 10))
+        if self.can_toggle_solution:
+            total_h = doc_height + 8.0 + 28.0 + 8.0
+        else:
+            total_h = max(40.0, doc_height + 10.0)
+        return QRectF(0, 0, self._card_width, total_h)
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None):
         painter.save()
@@ -378,9 +412,72 @@ class PenechoMixedTextItem(QGraphicsItem):
             painter.drawPath(path)
 
         # Render handwritten document content directly on canvas
-        self._doc.drawContents(painter, QRectF(0, 0, self._card_width, rect.height()))
+        self._doc.drawContents(painter, QRectF(0, 0, self._card_width, self._doc.size().height()))
+
+        # If full solution toggle is available, draw sleek pill button
+        if self.can_toggle_solution:
+            btn_r = self._btn_rect()
+            btn_path = QPainterPath()
+            btn_path.addRoundedRect(btn_r, 14, 14)
+
+            if self._btn_hovered:
+                painter.setBrush(QBrush(QColor("#2563eb")))
+                painter.setPen(QPen(QColor("#1d4ed8"), 1.0))
+                text_clr = QColor("#ffffff")
+            elif self._is_expanded:
+                painter.setBrush(QBrush(QColor("#f1f5f9")))
+                painter.setPen(QPen(QColor("#94a3b8"), 1.0))
+                text_clr = QColor("#334155")
+            else:
+                painter.setBrush(QBrush(QColor("#eff6ff")))
+                painter.setPen(QPen(QColor("#bfdbfe"), 1.2))
+                text_clr = QColor("#1d4ed8")
+
+            painter.drawPath(btn_path)
+
+            painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+            painter.setPen(QPen(text_clr))
+            btn_text = "▴ Hide Full Solution" if self._is_expanded else "💡 Show Full Solution"
+            painter.drawText(btn_r, Qt.AlignmentFlag.AlignCenter, btn_text)
 
         painter.restore()
+
+    def hoverMoveEvent(self, event):
+        if self.can_toggle_solution:
+            inside = self._btn_rect().contains(event.pos())
+            if inside != self._btn_hovered:
+                self._btn_hovered = inside
+                self.update()
+                if inside:
+                    self.setCursor(Qt.CursorShape.PointingHandCursor)
+                else:
+                    self.unsetCursor()
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        if self._btn_hovered:
+            self._btn_hovered = False
+            self.unsetCursor()
+            self.update()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if self.can_toggle_solution and self._btn_rect().contains(event.pos()):
+            self.toggle_solution()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def toggle_solution(self):
+        """Toggles between concise Question+Answer and full step-by-step solution."""
+        self._is_expanded = not self._is_expanded
+        self._raw_text = self._full_text if self._is_expanded else self._short_text
+        self.prepareGeometryChange()
+        self._update_document()
+        self.update()
+        if self.parentItem():
+            self.parentItem().prepareGeometryChange()
+            self.parentItem().update()
 
     def mouseDoubleClickEvent(self, event):
         new_text, ok = QInputDialog.getMultiLineText(
@@ -392,8 +489,13 @@ class PenechoMixedTextItem(QGraphicsItem):
         if ok and new_text.strip():
             self.prepareGeometryChange()
             self._raw_text = new_text
+            self._short_text = new_text
+            self._full_text = new_text
             self._update_document()
             self.update()
+            if self.parentItem():
+                self.parentItem().prepareGeometryChange()
+                self.parentItem().update()
         event.accept()
 
     def to_dict(self) -> Dict[str, Any]:
@@ -403,6 +505,9 @@ class PenechoMixedTextItem(QGraphicsItem):
             "y": self.pos().y(),
             "z_value": self.zValue(),
             "raw_text": self._raw_text,
+            "short_text": self._short_text,
+            "full_text": self._full_text,
+            "is_expanded": self._is_expanded,
             "font_size": self._font_size,
             "card_width": self._card_width
         }
@@ -412,6 +517,9 @@ class PenechoMixedTextItem(QGraphicsItem):
         item = cls(
             raw_text=data.get("raw_text", ""),
             font_size=int(data.get("font_size", 15)),
-            width=float(data.get("card_width", 320.0))
+            width=float(data.get("card_width", 340.0)),
+            short_text=data.get("short_text"),
+            full_text=data.get("full_text"),
+            is_expanded=bool(data.get("is_expanded", False))
         )
         return item

@@ -135,8 +135,10 @@ class AnswerBubbleWidget(QWidget):
 
     def _render_current_view(self):
         q_clean = self.question.replace("Question:", "").strip() if self.question else ""
-        if self.is_direct_math:
-            text = f"Question: {q_clean}\n\n{self.hints}" if q_clean else self.hints
+        has_full_sol = bool(self.full_solution and self.hints and self.full_solution.strip() != self.hints.strip())
+
+        if not has_full_sol:
+            text = f"Question: {q_clean}\n\n{self.hints}" if q_clean else (self.hints or self.full_solution)
             self.btn_toggle.hide()
         elif self.showing_full:
             text = f"Question: {q_clean}\n\n{self.full_solution}" if q_clean else self.full_solution

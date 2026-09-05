@@ -349,6 +349,7 @@ class MainWindow(QMainWindow):
         self.scene = CanvasScene(self)
         self.scene.ink_written_detected.connect(self._on_ink_written_detected)
         self.scene.auto_ai_requested.connect(self._on_auto_ai_requested)
+        self.scene.auto_ai_failed.connect(self._on_auto_ai_failed)
         # Connect scene_changed to the debounced autosave
         self.scene.scene_changed.connect(self._on_scene_changed)
         self.view = CanvasView(self.scene, self)
@@ -1024,14 +1025,15 @@ class MainWindow(QMainWindow):
         outer.addWidget(pill)
         return hud
 
-    def _on_auto_ai_requested(self, query: str, target_pos: QPointF):
+    def _on_auto_ai_requested(self, query: str, target_pos: QPointF, mode: str = None):
         from .penecho_integration.ai_canvas_bridge import AICanvasWorker, create_draft_from_payload
         self.magic_orb.set_state("thinking", "Analyzing...")
 
         # Collision-free positioning
         clean_pos = self._find_non_overlapping_pos(target_pos, width=400.0, height=200.0)
+        active_mode = mode or (self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study")
 
-        worker = AICanvasWorker(query_text=query, target_pos=clean_pos, parent=self)
+        worker = AICanvasWorker(query_text=query, target_pos=clean_pos, mode=active_mode, parent=self)
 
         def _on_finished(payload_dict, pos, msg):
             draft_item = create_draft_from_payload(payload_dict)
@@ -1053,7 +1055,13 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_magic_orb_triggered(self):
-        self.scene.trigger_ai_on_dirty_ink()
+        started = self.scene.trigger_ai_on_dirty_ink()
+        if not started:
+            self.magic_orb.set_state("idle")
+
+    def _on_auto_ai_failed(self, error_msg: str):
+        self.magic_orb.set_state("error")
+        QTimer.singleShot(1500, lambda: self.magic_orb.set_state("idle"))
 
     def _on_auto_ai_toggled(self, enabled: bool):
         self.scene.auto_ai_enabled = enabled
@@ -1965,6 +1973,7 @@ class MainWindow(QMainWindow):
 
     def _toggle_theme(self):
         ThemeManager.instance().toggle_theme()
+
 
     def _close_latex_editor_tab(self):
         if self.latex_editor_widget.confirm_close():
