@@ -270,8 +270,8 @@ class _FallbackPipeline:
         return state
 
 
-class VideoGenerationPipeline:
-    """Public facade used by local_server.py and modal_app.py."""
+class ManimVideoPipeline:
+    """Legacy/experimental Manim Python video generation pipeline."""
 
     def __init__(self, rag_store: Optional[QdrantRAGStore] = None):
         self._graph = build_graph(rag_store)
@@ -287,6 +287,29 @@ class VideoGenerationPipeline:
         else:
             job = self._graph.invoke(job)
         return job
+
+
+class VideoGenerationPipeline:
+    """
+    Public facade used by local_server.py, desktop client, and modal_app.py.
+    Routes to LatexVideoPipeline (active default) or ManimVideoPipeline based on config.VIDEO_RENDERER.
+    """
+
+    def __init__(self, rag_store: Optional[QdrantRAGStore] = None):
+        import backend.config as config
+        self.active_backend = getattr(config, "VIDEO_RENDERER", "latex").strip().lower()
+        if self.active_backend == "manim":
+            self._manim_pipeline = ManimVideoPipeline(rag_store)
+            self._latex_pipeline = None
+        else:
+            from backend.latex_video.pipeline import LatexVideoPipeline
+            self._latex_pipeline = LatexVideoPipeline()
+            self._manim_pipeline = None
+
+    def run_pipeline(self, job: VideoJob) -> VideoJob:
+        if self.active_backend == "manim" and self._manim_pipeline:
+            return self._manim_pipeline.run_pipeline(job)
+        return self._latex_pipeline.run_pipeline(job)
 
     def run_annotation_patch(self, job: VideoJob) -> VideoJob:
         """Legacy lightweight annotation repair path."""

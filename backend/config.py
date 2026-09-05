@@ -9,6 +9,11 @@ BACKEND_HOST = os.getenv("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 BACKEND_URL = os.getenv("BACKEND_URL", f"http://{BACKEND_HOST}:{BACKEND_PORT}")
 
+# --- VIDEO BACKEND CONFIGURATION ---
+# "latex" (active default): reliable, high-resolution LaTeX animated frame pipeline
+# "manim": legacy experimental Manim Python code generation pipeline
+VIDEO_RENDERER = os.getenv("VIDEO_RENDERER", "latex").strip().lower()
+
 # --- MODAL CLOUD CONFIGURATION ---
 MODAL_WORKSPACE = os.getenv("MODAL_WORKSPACE", "your-workspace-name")
 MODAL_APP_NAME = os.getenv("MODAL_APP_NAME", "manim-video-pipeline")

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Home View — Minimal Brutalist / Technical Hero Landing
 Matches the Figma reference design:
 - Uppercase monospace category headers

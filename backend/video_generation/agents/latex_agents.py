@@ -35,6 +35,9 @@ CRITICAL RULES:
    - If the content contains a problem, equation to solve, integral, derivative, proof, or question, PROVIDE A COMPLETE STEP-BY-STEP MATHEMATICAL SOLUTION.
    - Show all necessary algebraic/calculus intermediate steps.
    - Always enclose the final answer inside `\\boxed{{...}}`.
+   - **STRICT ANTI-PLACEHOLDER RULE**:
+     * NEVER output apologies, excuses, or placeholders like "[The problem statement was not provided in the transcription]" or "[Insert description here]".
+     * If the input contains a concept, formula, theorem, or diagram rather than an explicit homework problem, state the concept as the topic, derive its core mathematical formulation step-by-step, and present a clear worked example demonstrating it!
 3. **Template-Specific Formatting**:
    - **Lecture Slides (Beamer)**: Wrap logical slides in `\\begin{{frame}}{{Slide Title}} ... \\end{{frame}}`.
    - **Standard Documents**: Use `\\section*{{}}` and `\\subsection*{{}}` for clear organization. Use `\\begin{{itemize}}` or `\\begin{{enumerate}}` for lists.
@@ -404,6 +407,7 @@ class TemplateApplyAgent:
                 )
             job.final_tex_code = final_tex
             job.step = "LaTeX Generated"
+            job.status = JobStatus.DONE
             job.progress_percentage = 60
         except Exception as e:
             job.status = JobStatus.ERROR

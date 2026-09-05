@@ -183,7 +183,7 @@ class LatexPollWorker(QThread):
                     return
 
             stage_name = "Transcribing & Structuring" if attempts < 10 else "Processing LaTeX"
-            self.status_updated.emit(self.job_id, f"📝 {stage_name} ({attempts*2}s)...", min(95, attempts * 3))
+            self.status_updated.emit(self.job_id, f"{stage_name} ({attempts*2}s)...", min(95, attempts * 3))
 
         # Fallback to direct local if polling timed out
         if self._running:
