@@ -108,7 +108,6 @@ class FeatherAIButton(QWidget):
             self._stop_pulse()
             self.lbl_status.setText("")
             self._state = state
-            # Reset to idle after a brief moment
             QTimer.singleShot(1500, lambda: setattr(self, '_state', 'idle'))
 
         else:  # idle
@@ -119,9 +118,12 @@ class FeatherAIButton(QWidget):
     # ── Click Handler ─────────────────────────────────────────────────────
 
     def _on_feather_clicked(self):
-        if self._state == "idle":
-            self.set_state("thinking", "Feathering…")
-            self.trigger_ai_requested.emit()
+        if self._state == "thinking":
+            # Allow user to cancel or reset if clicked while thinking
+            self.set_state("idle")
+            return
+        self.set_state("thinking", "Feathering…")
+        self.trigger_ai_requested.emit()
 
     # ── Pulse Animation (matches mic button recording pattern) ────────────
 

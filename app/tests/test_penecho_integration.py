@@ -158,6 +158,45 @@ def test_penecho_mixed_text_item_serialization(scene):
     assert restored._raw_text == raw
 
 
+def test_penecho_mixed_text_solution_toggle(scene):
+    from app.ui.penecho_integration.mixed_text import PenechoMixedTextItem
+    from app.ui.penecho_integration.ai_canvas_bridge import create_draft_from_payload
+
+    short_text = "Question: differentiate 5x^3\nAnswer: d/dx(5x³) = 15x²"
+    full_text = f"{short_text}\n\nExplanation:\n• Apply power rule\n• 15x²"
+
+    payload = {
+        "kind": "mixed_text",
+        "title": "Handwritten Solution",
+        "data": short_text,
+        "short_solution": short_text,
+        "full_solution": full_text
+    }
+    draft = create_draft_from_payload(payload)
+    scene.addItem(draft)
+
+    mixed = draft.inner_item
+    assert isinstance(mixed, PenechoMixedTextItem)
+    assert mixed.can_toggle_solution is True
+    assert mixed._is_expanded is False
+
+    h_collapsed = mixed.boundingRect().height()
+    draft_h_collapsed = draft.boundingRect().height()
+
+    # Toggle to full solution
+    mixed.toggle_solution()
+    assert mixed._is_expanded is True
+    assert "Explanation" in mixed._raw_text
+    assert mixed.boundingRect().height() > h_collapsed
+    assert draft.boundingRect().height() > draft_h_collapsed
+
+    # Toggle back to short solution
+    mixed.toggle_solution()
+    assert mixed._is_expanded is False
+    assert mixed.boundingRect().height() == h_collapsed
+    assert draft.boundingRect().height() == draft_h_collapsed
+
+
 # ==============================================================================
 # 3. Declarative Animation Engine Tests
 # ==============================================================================
