@@ -106,7 +106,7 @@ class SharedPanel(QWidget):
         self.list_contribs.itemClicked.connect(self._on_contrib_item_clicked)
         lbl_layout.addWidget(self.list_contribs)
 
-        btn_refresh_contribs = QPushButton("⟳ Refresh Contributions", left_box)
+        btn_refresh_contribs = QPushButton("REFRESH", left_box)
         btn_refresh_contribs.clicked.connect(self.refresh_contributions)
         lbl_layout.addWidget(btn_refresh_contribs)
 
@@ -125,7 +125,7 @@ class SharedPanel(QWidget):
         self.browser_contrib_diff.setStyleSheet("background-color: #ffffff; padding: 12px; border: 1px solid #d1d1d6; border-radius: 6px;")
         rb_layout.addWidget(self.browser_contrib_diff, 1)
 
-        self.btn_merge_contrib = QPushButton("⎇ Merge Contribution into Main", right_box)
+        self.btn_merge_contrib = QPushButton("MERGE INTO MAIN", right_box)
         self.btn_merge_contrib.setStyleSheet("""
             QPushButton {
                 background-color: #28a745;
@@ -169,8 +169,8 @@ class SharedPanel(QWidget):
         self.cb_notes_to_share = QComboBox(row1)
         r1_layout.addWidget(self.cb_notes_to_share, 1)
 
-        btn_gen_link = QPushButton("⚡ Generate Link", row1)
-        btn_gen_link.setStyleSheet("background-color: #007aff; color: white; font-weight: bold;")
+        btn_gen_link = QPushButton("GENERATE LINK", row1)
+        btn_gen_link.setStyleSheet("")
         btn_gen_link.clicked.connect(self._on_generate_link_clicked)
         r1_layout.addWidget(btn_gen_link)
 
@@ -185,12 +185,12 @@ class SharedPanel(QWidget):
         self.txt_share_link.setPlaceholderText("Generated share link will appear here...")
         r2_layout.addWidget(self.txt_share_link, 1)
 
-        btn_copy_link = QPushButton("⎘ Copy Link", row2)
+        btn_copy_link = QPushButton("COPY LINK", row2)
         btn_copy_link.clicked.connect(self._on_copy_link_clicked)
         r2_layout.addWidget(btn_copy_link)
 
-        btn_test_editor = QPushButton("⌕ Launch Editor-Only View", row2)
-        btn_test_editor.setStyleSheet("background-color: #34c759; color: white; font-weight: bold;")
+        btn_test_editor = QPushButton("LAUNCH EDITOR VIEW", row2)
+        btn_test_editor.setStyleSheet("")
         btn_test_editor.clicked.connect(self._on_launch_editor_only)
         r2_layout.addWidget(btn_test_editor)
 
@@ -201,9 +201,9 @@ class SharedPanel(QWidget):
         p_layout = QHBoxLayout(perm_box)
         p_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.rad_public = QRadioButton("⊕ Public (Anyone with link)", perm_box)
+        self.rad_public = QRadioButton("Public (Anyone with link)", perm_box)
         self.rad_public.setChecked(True)
-        self.rad_restricted = QRadioButton("☿ Restricted to specified emails", perm_box)
+        self.rad_restricted = QRadioButton("Restricted (Specified emails)", perm_box)
 
         p_layout.addWidget(self.rad_public)
         p_layout.addWidget(self.rad_restricted)
@@ -212,7 +212,7 @@ class SharedPanel(QWidget):
 
         p_layout.addWidget(QLabel("Role:"))
         self.cb_role = QComboBox(perm_box)
-        self.cb_role.addItems(["✎ Can Edit (Editor-Only)", "⌕ View Only"])
+        self.cb_role.addItems(["Can Edit (Editor-Only)", "View Only"])
         p_layout.addWidget(self.cb_role)
 
         lb_layout.addWidget(perm_box)
@@ -236,8 +236,8 @@ class SharedPanel(QWidget):
         lbl_git_info.setStyleSheet("color: #6e6e73; font-style: italic;")
         cb_layout.addWidget(lbl_git_info)
 
-        btn_trigger_conflict = QPushButton("⚡ Trigger Simulated Concurrent Edit Conflict", conflict_box)
-        btn_trigger_conflict.setStyleSheet("background-color: #ff9500; color: white; font-weight: bold; padding: 6px;")
+        btn_trigger_conflict = QPushButton("TRIGGER SIMULATED CONFLICT", conflict_box)
+        btn_trigger_conflict.setStyleSheet("")
         btn_trigger_conflict.clicked.connect(self._on_trigger_conflict)
         cb_layout.addWidget(btn_trigger_conflict)
 
@@ -245,10 +245,10 @@ class SharedPanel(QWidget):
         self.card_conflict = QWidget(conflict_box)
         cc_layout = QVBoxLayout(self.card_conflict)
         cc_layout.setContentsMargins(10, 10, 10, 10)
-        self.card_conflict.setStyleSheet("background-color: #fffbe6; border: 1px solid #ffe58f; border-radius: 8px;")
+        self.card_conflict.setStyleSheet("")
 
         self.lbl_conflict_status = QLabel("No conflict detected.", self.card_conflict)
-        self.lbl_conflict_status.setStyleSheet("font-weight: bold; color: #b45309;")
+        self.lbl_conflict_status.setStyleSheet("font-weight: bold;")
         cc_layout.addWidget(self.lbl_conflict_status)
 
         self.browser_conflict = QTextBrowser(self.card_conflict)
@@ -278,46 +278,6 @@ class SharedPanel(QWidget):
         layout.addWidget(conflict_box, 1)
         return w
 
-    def _apply_theme(self):
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #ffffff;
-                color: #1c1c1e;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #d1d1d6;
-                border-radius: 8px;
-                margin-top: 6px;
-                padding-top: 14px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 4px;
-                color: #007aff;
-            }
-            QListWidget {
-                border: 1px solid #d1d1d6;
-                border-radius: 6px;
-                background-color: #ffffff;
-            }
-            QListWidget::item {
-                padding: 8px;
-                border-bottom: 1px solid #f2f2f7;
-            }
-            QListWidget::item:selected {
-                background-color: #007aff;
-                color: white;
-            }
-            QLineEdit, QComboBox {
-                border: 1px solid #d1d1d6;
-                border-radius: 6px;
-                padding: 6px;
-                background-color: #ffffff;
-            }
-        """)
 
     def switch_tab(self, index: int):
         self.btn_tab_async.setChecked(index == 0)
@@ -332,14 +292,14 @@ class SharedPanel(QWidget):
         self.cb_notes_to_share.clear()
         files = self.git_mgr.get_files_status()["all_files"]
         for f in files:
-            self.cb_notes_to_share.addItem(f"🗎 {f}", f)
+            self.cb_notes_to_share.addItem(f, f)
 
     def refresh_contributions(self):
         self.list_contribs.clear()
         contribs = self.collab_mgr.get_incoming_contributions()
 
         for c in contribs:
-            item = QListWidgetItem(f"⎇ {c['title']}\nBranch: {c['branch']} • Target: {c['target_branch']}")
+            item = QListWidgetItem(f"{c['title']}  [branch: {c['branch']} → {c['target_branch']}]")
             item.setData(Qt.ItemDataRole.UserRole, c)
             self.list_contribs.addItem(item)
 
@@ -425,7 +385,7 @@ class SharedPanel(QWidget):
         conflict = self.collab_mgr.simulate_simultaneous_conflict(fname)
         self.active_conflict = conflict
 
-        self.lbl_conflict_status.setText(f"⚠ SIMULTANEOUS EDIT CONFLICT DETECTED in '{fname}'!")
+        self.lbl_conflict_status.setText(f"CONFLICT DETECTED in '{fname}'!")
         
         diff_html = f"""
         <div style='font-family:monospace; font-size:11px;'>
@@ -446,8 +406,8 @@ class SharedPanel(QWidget):
         c = self.active_conflict
         res = self.collab_mgr.resolve_and_commit_conflict(c["filename"], choice, c["mine"], c["theirs"])
         if res:
-            self.lbl_conflict_status.setText(f"✓ Conflict resolved ({choice.title()}) and saved to Git commit history!")
-            self.lbl_conflict_status.setStyleSheet("color: #28a745; font-weight: bold;")
+            self.lbl_conflict_status.setText(f"Conflict resolved ({choice.title()}) — saved to Git commit history.")
+            self.lbl_conflict_status.setStyleSheet("font-weight: bold;")
             self.browser_conflict.setHtml(f"<p style='color:#28a745;'>State cleanly merged & committed into Git.</p>")
             self.active_conflict = None
             self.refresh_all()

@@ -188,46 +188,55 @@ class PdfViewerWidget(QWidget):
 
         self.pdf_doc = QPdfDocument(self)
         
-        self.setStyleSheet("""
-            QWidget#PdfViewerRoot {
-                background-color: #ffffff;
-                border-right: 2px solid #d1d1d6;
-            }
-            QFrame#HeaderBar {
-                background-color: #f8f8fa;
-                border-bottom: 1px solid #d1d1d6;
-            }
-            QLabel#DocTitleLabel {
-                font-size: 13px;
+        from app.ui.theme_manager import ThemeManager
+        from app.ui.kestrel_theme import MONO_FONT
+        c = ThemeManager.instance().get_colors()
+        self.setStyleSheet(f"""
+            QWidget#PdfViewerRoot {{
+                background-color: {c['bg_app']};
+                border-right: 1px solid {c['border_color']};
+            }}
+            QFrame#HeaderBar {{
+                background-color: {c['bg_card']};
+                border-bottom: 1px solid {c['border_color']};
+            }}
+            QLabel#DocTitleLabel {{
+                font-size: 12px;
                 font-weight: 700;
-                color: #1c1c1e;
-            }
-            QLabel#PageNumLabel {
-                font-size: 12px;
+                color: {c['text_primary']};
+                font-family: {MONO_FONT};
+                letter-spacing: 0.5px;
+            }}
+            QLabel#PageNumLabel {{
+                font-size: 11px;
                 font-weight: 600;
-                color: #8e8e93;
-            }
-            QPushButton {
-                background-color: #ffffff;
-                border: 1px solid #d1d1d6;
-                border-radius: 6px;
-                padding: 4px 8px;
-                font-size: 12px;
+                color: {c['text_secondary']};
+                font-family: {MONO_FONT};
+            }}
+            QPushButton {{
+                background-color: {c['bg_card']};
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
+                padding: 4px 10px;
+                font-size: 11px;
                 font-weight: 600;
-                color: #1c1c1e;
-            }
-            QPushButton:hover {
-                background-color: #e5e5ea;
-            }
-            QPushButton#BtnClosePdf {
-                background-color: #ff3b30;
-                color: white;
-                border: none;
+                color: {c['text_primary']};
+                font-family: {MONO_FONT};
+            }}
+            QPushButton:hover {{
+                background-color: {c['panel_card_bg']};
+                border-color: {c['accent']};
+            }}
+            QPushButton#BtnClosePdf {{
+                background-color: transparent;
+                color: {c['text_secondary']};
+                border: 1px solid {c['border_color']};
                 font-weight: bold;
-            }
-            QPushButton#BtnClosePdf:hover {
-                background-color: #d32f2f;
-            }
+            }}
+            QPushButton#BtnClosePdf:hover {{
+                border-color: #cc3333;
+                color: #cc3333;
+            }}
         """)
 
         self.setObjectName("PdfViewerRoot")
@@ -243,7 +252,7 @@ class PdfViewerWidget(QWidget):
         h_layout.setContentsMargins(12, 4, 12, 4)
         h_layout.setSpacing(8)
 
-        self.lbl_title = QLabel("📄 Document", header)
+        self.lbl_title = QLabel("DOCUMENT", header)
         self.lbl_title.setObjectName("DocTitleLabel")
 
         # Tabs
@@ -257,41 +266,54 @@ class PdfViewerWidget(QWidget):
         self.tab_latex.setVisible(False)  # Hidden until latex is loaded
         self.tab_latex.clicked.connect(lambda: self._switch_mode("latex"))
         
-        self.btn_generate_video = QPushButton("🎬 Generate Animation Video", header)
-        self.btn_generate_video.setStyleSheet("background-color: #34c759; color: white; border: none;")
+        self.btn_generate_video = QPushButton("GENERATE ANIMATION", header)
+        self.btn_generate_video.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['accent']};
+                color: {c['accent_text']};
+                border: none;
+                font-weight: 700;
+                font-family: {MONO_FONT};
+                font-size: 11px;
+                padding: 4px 10px;
+                border-radius: 2px;
+            }}
+            QPushButton:hover {{ opacity: 0.85; }}
+        """)
         self.btn_generate_video.setVisible(False)
         self.btn_generate_video.clicked.connect(self._on_generate_clicked)
 
         self.video_progress_bar = QProgressBar(header)
         self.video_progress_bar.setRange(0, 100)
         self.video_progress_bar.setFixedSize(120, 20)
-        self.video_progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #d1d1d6;
-                border-radius: 4px;
+        self.video_progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: 1px solid {c['border_color']};
+                border-radius: 2px;
                 text-align: center;
-                background-color: #f2f2f7;
-                color: #1c1c1e;
+                background-color: {c['bg_app']};
+                color: {c['text_secondary']};
                 font-size: 10px;
                 font-weight: bold;
-            }
-            QProgressBar::chunk {
-                background-color: #34c759;
-                border-radius: 3px;
-            }
+                font-family: {MONO_FONT};
+            }}
+            QProgressBar::chunk {{
+                background-color: {c['accent']};
+                border-radius: 1px;
+            }}
         """)
         self.video_progress_bar.setVisible(False)
 
         self.lbl_page = QLabel("Page 1 of 1", header)
         self.lbl_page.setObjectName("PageNumLabel")
 
-        btn_prev = QPushButton("◀ Prev", header)
+        btn_prev = QPushButton("PREV", header)
         btn_prev.clicked.connect(self._prev_page)
 
-        btn_next = QPushButton("Next ▶", header)
+        btn_next = QPushButton("NEXT", header)
         btn_next.clicked.connect(self._next_page)
 
-        btn_close = QPushButton("✕ Close", header)
+        btn_close = QPushButton("CLOSE", header)
         btn_close.setObjectName("BtnClosePdf")
         btn_close.clicked.connect(self.close_requested.emit)
 
@@ -379,7 +401,7 @@ class PdfViewerWidget(QWidget):
             self.tab_latex.setChecked(False)
             
             fname = os.path.basename(file_path)
-            self.lbl_title.setText(f"📄 {fname[:24]}..." if len(fname) > 26 else f"📄 {fname}")
+            self.lbl_title.setText(fname[:24] + "..." if len(fname) > 26 else fname)
 
             self.pdf_doc.load(file_path)
             self.total_pages = self.pdf_doc.pageCount() if self.pdf_doc.pageCount() > 0 else 1
@@ -424,7 +446,7 @@ class PdfViewerWidget(QWidget):
         self.video_progress_bar.setValue(progress)
         
         # Clean up the stage string for a small progress bar
-        short_stage = stage.replace("🎬 ", "").replace("Manim: ", "")
+        short_stage = stage.replace("Manim: ", "")
         if len(short_stage) > 15:
             short_stage = short_stage[:15] + "..."
             
@@ -432,7 +454,7 @@ class PdfViewerWidget(QWidget):
         
         if progress >= 100:
             self.video_progress_bar.setVisible(False)
-            self.btn_generate_video.setText("✓ Video Generated")
+            self.btn_generate_video.setText("VIDEO READY")
             self.btn_generate_video.setVisible(True)
 
     def _switch_mode(self, mode: str):
