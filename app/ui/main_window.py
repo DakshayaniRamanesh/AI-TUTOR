@@ -1937,7 +1937,7 @@ class MainWindow(QMainWindow):
         action = self.classroom_action_combo.currentText()
 
         try:
-            job_id = request_latex_generation(image_b64, template_type, current_mode, action)
+            job_id, is_local_direct = request_latex_generation(image_b64, template_type, current_mode, action)
         except Exception as e:
             QMessageBox.warning(self, "API Connection Error",
                 f"Could not connect to the backend server.\n"
@@ -1947,7 +1947,14 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'speedometer_widget'):
             self.speedometer_widget.start_task(f"Generating {template_type}...")
 
-        self.latex_worker = LatexPollWorker(job_id, self)
+        self.latex_worker = LatexPollWorker(
+            job_id,
+            image_b64=image_b64,
+            template_type=template_type,
+            mode=current_mode,
+            classroom_action=action,
+            is_local_direct=is_local_direct,
+        )
         self.latex_worker.status_updated.connect(self._on_latex_status_updated)
         self.latex_worker.latex_ready.connect(self._on_latex_ready)
         self.latex_worker.pdf_ready.connect(self._on_latex_pdf_ready)
