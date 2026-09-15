@@ -373,6 +373,36 @@ class LatexStructureAgent:
 class TemplateApplyAgent:
     """Merges structured content into the selected .tex template."""
 
+    # ── helpers ──────────────────────────────────────────────────────────────
+    @staticmethod
+    def _extract_topic(job: "LatexJob") -> str:
+        """
+        Try to derive a meaningful topic title from the generated LaTeX.
+        Priority:
+          1. First \\section* or \\section heading in structured_latex
+          2. First 60 chars of raw_transcription (cleaned)
+          3. template_type as fallback (e.g. "Homework")
+        """
+        import re as _re
+
+        if job.structured_latex:
+            # Match \section*{...} or \section{...}
+            m = _re.search(r'\\section\*?\{([^}]+)\}', job.structured_latex)
+            if m:
+                return m.group(1).strip()
+
+        if job.raw_transcription:
+            # Take the first meaningful line, stripped of LaTeX commands
+            first_line = job.raw_transcription.strip().split('\n')[0]
+            # Remove common LaTeX markup
+            first_line = _re.sub(r'\\[a-zA-Z]+(\{[^}]*\})?', '', first_line)
+            first_line = first_line.strip(" {}$\\")
+            if first_line:
+                return first_line[:72] if len(first_line) > 72 else first_line
+
+        return job.template_type or "Document"
+
+    # ── main run ─────────────────────────────────────────────────────────────
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Applying Template"
         job.progress_percentage = 60
@@ -385,16 +415,27 @@ class TemplateApplyAgent:
             "Homework": "homework.tex",
             "Lecture Slides": "lecture_slides.tex"
         }
-        
+
         filename = template_map.get(job.template_type, "homework.tex")
         template_path = os.path.join(os.path.dirname(__file__), "..", "templates", filename)
         template_path = os.path.abspath(template_path)
+
+        topic = self._extract_topic(job)
+        # Escape any LaTeX special chars that may appear in a topic title
+        _special = {'&': r'\&', '%': r'\%', '$': r'\$', '#': r'\#',
+                    '_': r'\_', '{': r'\{', '}': r'\}', '~': r'\textasciitilde{}',
+                    '^': r'\textasciicircum{}'}
+        safe_topic = ''.join(_special.get(c, c) for c in topic)
 
         try:
             if os.path.exists(template_path):
                 with open(template_path, "r", encoding="utf-8") as f:
                     template_content = f.read()
-                final_tex = template_content.replace("{{CONTENT_BODY}}", job.structured_latex or "")
+                final_tex = (
+                    template_content
+                    .replace("{{TOPIC}}", safe_topic)
+                    .replace("{{CONTENT_BODY}}", job.structured_latex or "")
+                )
             else:
                 # Minimal fallback document if template file is missing
                 final_tex = (
@@ -402,6 +443,7 @@ class TemplateApplyAgent:
                     "\\usepackage[margin=1in]{geometry}\n"
                     "\\usepackage{amsmath, amssymb, amsthm, xcolor}\n"
                     "\\begin{document}\n\n"
+                    f"{{\\Large\\textbf{{{safe_topic}}}}}\n\n"
                     f"{job.structured_latex or ''}\n\n"
                     "\\end{document}\n"
                 )
@@ -414,6 +456,7 @@ class TemplateApplyAgent:
             job.error_message = f"Template apply failed: {str(e)}"
 
         return job
+
 
 
 class TectonicCompileAgent:
