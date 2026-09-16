@@ -37,6 +37,7 @@ class AudioSegment:
     path: str                 # Absolute path to the generated MP3 file
     duration_seconds: float   # Actual audio duration (measured, not estimated)
     text: str                 # The narration text that was synthesised
+    frame_index: int = 0      # Which progressive frame (1-indexed) this audio belongs to
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ class TTSService(ABC):
         text: str,
         output_path: str,
         scene_index: int = 0,
+        frame_index: int = 0,
     ) -> Optional[AudioSegment]:
         """
         Synthesise `text` to audio and write the file to `output_path`.
@@ -64,18 +66,26 @@ class TTSService(ABC):
 
     def generate_batch(
         self,
-        items: List[tuple[int, str, str]],
+        items: List[tuple],
     ) -> List[Optional[AudioSegment]]:
         """
-        Generate audio for multiple (scene_index, text, output_path) tuples.
+        Generate audio for multiple tuples:
+        Either (scene_index, text, output_path)
+        or (scene_index, text, output_path, frame_index).
         Items whose `text` is empty are skipped and return None.
         """
         results: List[Optional[AudioSegment]] = []
-        for scene_index, text, output_path in items:
+        for item in items:
+            if len(item) == 4:
+                scene_index, text, output_path, frame_index = item
+            else:
+                scene_index, text, output_path = item
+                frame_index = 0
+
             if not text or not text.strip():
                 results.append(None)
                 continue
-            results.append(self.generate(text, output_path, scene_index=scene_index))
+            results.append(self.generate(text, output_path, scene_index=scene_index, frame_index=frame_index))
         return results
 
 
@@ -91,14 +101,22 @@ class EdgeTTSProvider(TTSService):
     and supports a wide range of neural voices.  No API key required.
     """
 
-    def __init__(self, voice: str = "en-US-AriaNeural"):
+    def __init__(
+        self,
+        voice: str = "en-GB-RyanNeural",
+        rate: str = "+4%",
+        pitch: str = "+0Hz",
+    ):
         self.voice = voice
+        self.rate = rate
+        self.pitch = pitch
 
     def generate(
         self,
         text: str,
         output_path: str,
         scene_index: int = 0,
+        frame_index: int = 0,
     ) -> Optional[AudioSegment]:
         """Synthesise text to MP3 and return an AudioSegment with real duration."""
         if not text or not text.strip():
@@ -115,11 +133,13 @@ class EdgeTTSProvider(TTSService):
             # edge-tts is async; run it in a new event loop
             asyncio.run(self._async_generate(edge_tts, text, output_path))
         except Exception as gen_err:
-            print(f"[TTSService] TTS generation failed for scene {scene_index}: {gen_err}")
+            label = f"frame {frame_index}" if frame_index else f"scene {scene_index}"
+            print(f"[TTSService] TTS generation failed for {label}: {gen_err}")
             return None
 
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            print(f"[TTSService] TTS produced an empty file for scene {scene_index}.")
+            label = f"frame {frame_index}" if frame_index else f"scene {scene_index}"
+            print(f"[TTSService] TTS produced an empty file for {label}.")
             return None
 
         duration = _measure_mp3_duration(output_path)
@@ -128,10 +148,16 @@ class EdgeTTSProvider(TTSService):
             path=output_path,
             duration_seconds=duration,
             text=text,
+            frame_index=frame_index,
         )
 
     async def _async_generate(self, edge_tts, text: str, output_path: str) -> None:
-        communicate = edge_tts.Communicate(text, self.voice)
+        communicate = edge_tts.Communicate(
+            text,
+            self.voice,
+            rate=self.rate,
+            pitch=self.pitch,
+        )
         await communicate.save(output_path)
 
 
@@ -164,7 +190,12 @@ def _measure_mp3_duration(path: str) -> float:
 # Factory
 # ---------------------------------------------------------------------------
 
-def create_tts_service(provider: str = "edge_tts", voice: str = "en-US-AriaNeural") -> TTSService:
+def create_tts_service(
+    provider: str = "edge_tts",
+    voice: str = "en-GB-RyanNeural",
+    rate: str = "+4%",
+    pitch: str = "+0Hz",
+) -> TTSService:
     """
     Factory that returns a TTSService for the requested provider.
 
@@ -173,8 +204,12 @@ def create_tts_service(provider: str = "edge_tts", voice: str = "en-US-AriaNeura
     provider : str
         "edge_tts" (default).  Extend here to support other providers.
     voice : str
-        Provider-specific voice identifier.
+        Provider-specific voice identifier (default: en-GB-RyanNeural — British English).
+    rate : str
+        Speech rate offset (default: +4% for active, responsive pacing).
+    pitch : str
+        Speech pitch offset (default: +0Hz for natural warm tone).
     """
     if provider == "edge_tts":
-        return EdgeTTSProvider(voice=voice)
+        return EdgeTTSProvider(voice=voice, rate=rate, pitch=pitch)
     raise ValueError(f"Unknown TTS provider: {provider!r}. Supported: 'edge_tts'")

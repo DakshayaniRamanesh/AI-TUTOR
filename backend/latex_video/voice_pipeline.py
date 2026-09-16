@@ -34,6 +34,7 @@ from typing import Optional, Callable, List
 import backend.config as config
 from backend.video_generation.models import VideoJob, JobStatus
 
+from .document_model import ElementType
 from .pipeline import LatexVideoPipeline
 from .narration_planner import NarrationPlanner, NarrationPlan, NarrationSegment
 from .tts_service import TTSService, AudioSegment, create_tts_service
@@ -98,9 +99,9 @@ class VoiceEnabledPipeline:
             timeline = self._base.planner.plan(document)
 
             # ── Step 5: build narration plan ─────────────────────────────────
-            self._progress(job, 50, "narration_planning", "Writing narration…", progress_callback)
-            narration_plan = self._narration_planner.plan(timeline)
-            print(f"[{job.job_id}] Narration plan: {len(narration_plan.segments)} scene segments.")
+            self._progress(job, 50, "narration_planning", "Writing teacher narration…", progress_callback)
+            narration_plan = self._narration_planner.plan(timeline, by_frame=True, lesson_title=doc_title)
+            print(f"[{job.job_id}] Narration plan: {len(narration_plan.segments)} frame segments.")
 
             # ── Step 6: synthesise audio ──────────────────────────────────────
             self._progress(job, 57, "tts_generation", "Generating voice narration…", progress_callback)
@@ -191,6 +192,8 @@ class VoiceEnabledPipeline:
             self._tts = create_tts_service(
                 provider=config.VOICE_PROVIDER,
                 voice=config.VOICE_LANG,
+                rate=getattr(config, "VOICE_RATE", "+4%"),
+                pitch=getattr(config, "VOICE_PITCH", "+0Hz"),
             )
         return self._tts
 
@@ -201,16 +204,21 @@ class VoiceEnabledPipeline:
     ) -> List[Optional[AudioSegment]]:
         """
         Synthesise TTS for each narration segment.
+        Supports both frame-level segments (seg.frame_index > 0) and scene-level segments.
         Returns a list aligned to narration_plan.segments (None on failure).
         """
         tts = self._get_tts()
-        items: List[tuple[int, str, str]] = []
+        items: List[tuple] = []
 
         for seg in narration_plan.segments:
-            audio_filename = f"{job_id}_scene_{seg.scene_index:03d}.mp3"
+            if seg.frame_index > 0:
+                audio_filename = f"{job_id}_frame_{seg.frame_index:03d}.mp3"
+            else:
+                audio_filename = f"{job_id}_scene_{seg.scene_index:03d}.mp3"
+
             audio_path = os.path.join(config.AUDIO_DIR, audio_filename)
             seg.audio_path = audio_path
-            items.append((seg.scene_index, seg.text, audio_path))
+            items.append((seg.scene_index, seg.text, audio_path, seg.frame_index))
 
         raw_results = tts.generate_batch(items)
 
@@ -219,8 +227,9 @@ class VoiceEnabledPipeline:
         for seg, audio in zip(narration_plan.segments, raw_results):
             if audio is not None:
                 seg.duration_seconds = audio.duration_seconds
+                tag = f"Frame {seg.frame_index}" if seg.frame_index > 0 else f"Scene {seg.scene_index}"
                 print(
-                    f"[TTS] Scene {seg.scene_index}: {audio.duration_seconds:.2f}s — "
+                    f"[TTS] {tag}: {audio.duration_seconds:.2f}s — "
                     f"{seg.text[:60]}…"
                 )
             results.append(audio)
@@ -238,38 +247,60 @@ class VoiceEnabledPipeline:
     ) -> None:
         """
         Replace hold_duration in each TimelineState so the visual stays
-        on screen for at least the duration of its scene's narration audio.
+        on screen for at least the duration of its narration audio.
 
-        Strategy: for each scene, total narration time is distributed evenly
-        across all states in that scene.  A 10% buffer is added so the audio
-        always finishes before the next slide appears.
+        Supports both:
+        1. Frame-level matching (when audio has frame_index > 0): each state gets
+           hold_duration = max(default, audio_duration + 0.6s).
+           Introductory/Heading frames are capped at 2.5-3.0s so content reveals rapidly!
+        2. Scene-level matching (legacy): total scene audio is distributed evenly
+           across all states in that scene.
         """
-        # Build scene_index → audio_duration mapping
-        duration_by_scene: dict[int, float] = {}
-        for audio in audio_segments:
-            if audio is not None:
-                duration_by_scene[audio.scene_index] = audio.duration_seconds
-
-        if not duration_by_scene:
+        valid_audios = [a for a in audio_segments if a is not None]
+        if not valid_audios or not timeline.states:
             return
 
-        # Group states by scene
-        states_by_scene: dict[int, list] = {}
-        for state in timeline.states:
-            states_by_scene.setdefault(state.scene_index, []).append(state)
+        is_frame_level = any(a.frame_index > 0 for a in valid_audios)
 
-        total_duration = 0.0
+        if is_frame_level:
+            duration_by_frame: dict[int, float] = {}
+            for a in valid_audios:
+                if a.frame_index > 0:
+                    duration_by_frame[a.frame_index] = a.duration_seconds
 
-        for scene_idx, audio_dur in duration_by_scene.items():
-            scene_states = states_by_scene.get(scene_idx, [])
-            if not scene_states:
-                continue
+            for idx, state in enumerate(timeline.states):
+                frame_num = idx + 1
+                if frame_num in duration_by_frame:
+                    audio_dur = duration_by_frame[frame_num]
+                    # Check if this is an introductory heading / problem statement frame
+                    is_intro_heading = (idx == 0) or (
+                        state.new_element is not None and
+                        hasattr(state.new_element, "type") and
+                        state.new_element.type in (ElementType.TITLE, ElementType.SECTION)
+                    )
+                    if is_intro_heading:
+                        # Cap introductory heading hold to 2.2s - 3.0s so working content
+                        # appears within 2 to 3 seconds as requested!
+                        state.hold_duration = max(1.8, min(3.0, audio_dur + 0.3))
+                    else:
+                        state.hold_duration = max(state.hold_duration, audio_dur + 0.6)
+        else:
+            # Build scene_index → audio_duration mapping (legacy)
+            duration_by_scene: dict[int, float] = {}
+            for audio in valid_audios:
+                duration_by_scene[audio.scene_index] = audio.duration_seconds
 
-            # Distribute audio duration evenly; keep transition + pause_after intact
-            per_state_hold = (audio_dur * 1.1) / len(scene_states)
-            for state in scene_states:
-                # Only increase hold — never shorten a state that was already longer
-                state.hold_duration = max(state.hold_duration, per_state_hold)
+            states_by_scene: dict[int, list] = {}
+            for state in timeline.states:
+                states_by_scene.setdefault(state.scene_index, []).append(state)
+
+            for scene_idx, audio_dur in duration_by_scene.items():
+                scene_states = states_by_scene.get(scene_idx, [])
+                if not scene_states:
+                    continue
+                per_state_hold = (audio_dur * 1.1) / len(scene_states)
+                for state in scene_states:
+                    state.hold_duration = max(state.hold_duration, per_state_hold)
 
         # Recompute total_duration on the timeline
         current_time = 0.0
@@ -297,18 +328,16 @@ class VoiceEnabledPipeline:
     ) -> bool:
         """
         Merge the silent video with the narration audio segments using FFmpeg.
-
-        Strategy
-        --------
-        Each audio segment belongs to a SlideScene.  We look up the start_time
-        of the first state in that scene and use FFmpeg's `adelay` filter to
-        place the audio at the correct timestamp.  All delayed streams are then
-        mixed together (amix) and muxed with the video.
-
-        Returns True on success, False on any FFmpeg error.
+        Supports both frame-level alignment (frame_index > 0) and scene-level alignment.
         """
-        if not audio_segments:
+        valid_segs = [
+            seg for seg in audio_segments
+            if seg.path and os.path.exists(seg.path) and os.path.getsize(seg.path) > 0
+        ]
+        if not valid_segs or not timeline.states:
             return False
+
+        is_frame_level = any(seg.frame_index > 0 for seg in valid_segs)
 
         # Map scene_index → scene start_time (first state in scene)
         scene_start: dict[int, float] = {}
@@ -316,21 +345,19 @@ class VoiceEnabledPipeline:
             if state.scene_index not in scene_start:
                 scene_start[state.scene_index] = state.start_time
 
-        # Build FFmpeg filter_complex for audio mixing
-        # Each audio input gets an adelay equal to scene start time (milliseconds)
         inputs: List[str] = ["-i", silent_video]
         filter_parts: List[str] = []
         audio_labels: List[str] = []
 
-        valid_segs = [
-            seg for seg in audio_segments
-            if seg.path and os.path.exists(seg.path) and os.path.getsize(seg.path) > 0
-        ]
-        if not valid_segs:
-            return False
-
         for i, seg in enumerate(valid_segs):
-            delay_ms = int(scene_start.get(seg.scene_index, 0.0) * 1000)
+            if is_frame_level and seg.frame_index > 0 and (seg.frame_index - 1) < len(timeline.states):
+                state = timeline.states[seg.frame_index - 1]
+                # Start narration right at the state start, slightly into reveal
+                delay_sec = state.start_time + min(0.2, state.transition_duration)
+            else:
+                delay_sec = scene_start.get(seg.scene_index, 0.0)
+
+            delay_ms = max(0, int(delay_sec * 1000))
             inputs += ["-i", seg.path]
             label = f"[a{i}]"
             audio_labels.append(label)
@@ -338,9 +365,6 @@ class VoiceEnabledPipeline:
                 f"[{i + 1}:a]adelay={delay_ms}|{delay_ms}[a{i}]"
             )
 
-        # Mix all audio streams together.
-        # IMPORTANT: use duration=longest so FFmpeg waits for all adelay-placed
-        # segments to finish, not just the first one (which is only ~3s long).
         n = len(valid_segs)
         mix_inputs = "".join(audio_labels)
         filter_parts.append(

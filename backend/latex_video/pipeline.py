@@ -194,15 +194,27 @@ class LatexVideoPipeline:
             assembled_raw = "Mathematical Foundations and Core Principles"
 
         # 3. Use LatexStructureAgent to structure and solve the content
-        from backend.video_generation.agents.latex_agents import LatexStructureAgent
+        from backend.video_generation.agents.latex_agents import LatexStructureAgent, _detect_educational_intent
         structure_agent = LatexStructureAgent()
-        
+
+        # Detect intent from available text to set the right classroom_action
+        combined_input = f"{user_instruction} {prompt} {transcribed_visual_math}".strip()
+        auto_intent = _detect_educational_intent(combined_input)
+        intent_to_action = {
+            "theory": "Explain Concept",
+            "proof": "Prove Theorem",
+            "algorithm": "Explain Algorithm",
+            "problem": "Solve Question",
+        }
+        classroom_action = intent_to_action.get(auto_intent, "Explain Concept")
+        print(f"[{job.job_id}] _obtain_educational_latex: intent={auto_intent!r}, action={classroom_action!r}")
+
         latex_job = LatexJob(
             job_id=f"gen_{job.job_id}",
             raw_transcription=assembled_raw,
             template_type="Standard Document",
             mode="study",
-            classroom_action="Explain Concept"
+            classroom_action=classroom_action
         )
         
         res_job = structure_agent.run(latex_job)
@@ -211,7 +223,7 @@ class LatexVideoPipeline:
 
         # 4. Resilient pedagogical fallback if LLM is unconfigured or returned an apology/refusal
         context_str = f"{assembled_raw} {transcribed_visual_math} {' '.join(selection_text_items)}"
-        return self._build_deterministic_fallback(prompt or user_instruction, context_str)
+        return self._build_deterministic_fallback(prompt or user_instruction, context_str, auto_intent)
 
     @staticmethod
     def _extract_text_from_item(item: any, target_list: list[str]) -> None:
@@ -289,7 +301,7 @@ class LatexVideoPipeline:
         safe_str = safe_str.replace(";", ":")
         return safe_str[:50]
 
-    def _build_deterministic_fallback(self, prompt: str, context: str = "") -> str:
+    def _build_deterministic_fallback(self, prompt: str, context: str = "", intent: str = "theory") -> str:
         """Provides a high-quality pedagogical LaTeX lesson for offline or refusal fallback."""
         combined = f"{prompt} {context}".lower()
 
@@ -489,16 +501,38 @@ k &= \log_2 N
 \]
 """
 
-        # 8. General Whiteboard / STEM Concept
+        # 8. General Whiteboard / STEM Concept — produce theory-style content
         raw_title = prompt.strip() if prompt else ""
         if not raw_title or "explain the selected" in raw_title.lower():
             raw_title = "Whiteboard Concept Analysis"
         safe_title = self._sanitize_latex_title(raw_title)
 
-        return f"""\\section*{{{safe_title}}}
+        if intent in ("theory", "algorithm"):
+            return f"""\\section*{{{safe_title}}}
 
-\\subsection*{{Core Principle}}
-This lesson analyzes the mathematical principles, properties, and relationships governing {safe_title}.
+\\subsection*{{What Is It?}}
+This lesson provides a conceptual overview of \\textbf{{{safe_title}}}, explaining its foundational principles, governing relationships, and key applications.
+
+\\subsection*{{Formal Formulation}}
+The fundamental relationship governing this concept is expressed as:
+\\[
+\\mathcal{{L}}(\\mathbf{{x}}) = f(\\mathbf{{x}}, \\nabla \\mathbf{{x}}, t)
+\\]
+where each term represents a measurable quantity in the domain of study.
+
+\\subsection*{{Key Properties and Significance}}
+\\begin{{itemize}}
+\\item \\textbf{{Generality}}: Applies across a wide class of related phenomena.
+\\item \\textbf{{Mathematical Structure}}: Grounded in rigorous first principles.
+\\item \\textbf{{Practical Relevance}}: Directly motivates real-world engineering and scientific applications.
+\\end{{itemize}}
+
+\\subsection*{{Summary}}
+Understanding \\textbf{{{safe_title}}} is essential for mastering this area. Further exploration of boundary conditions and special cases will deepen this foundation.
+"""
+        else:
+            # Problem-solving fallback
+            return f"""\\section*{{{safe_title}}}
 
 \\subsection*{{Mathematical Formulation}}
 Consider the fundamental governing relation:

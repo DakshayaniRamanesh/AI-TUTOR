@@ -15,14 +15,15 @@ Design principles
 * Rule-based, fast, and completely deterministic (no external LLM latency).
 """
 
-from __future__ import annotations
-
+import json
+import os
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 
+import backend.config as config
 from .document_model import DocumentElement, ElementType, ImportanceLevel
-from .animation_planner import AnimationTimeline, SlideScene
+from .animation_planner import AnimationTimeline, SlideScene, TimelineState
 
 
 # ---------------------------------------------------------------------------
@@ -31,11 +32,12 @@ from .animation_planner import AnimationTimeline, SlideScene
 
 @dataclass
 class NarrationSegment:
-    """Narration for a single SlideScene (one audio file)."""
+    """Narration for a single SlideScene or TimelineState frame."""
     scene_index: int
-    text: str                           # Full narration text for this scene
+    text: str                           # Full narration text for this segment
     audio_path: Optional[str] = None    # Set after TTS generation
     duration_seconds: float = 0.0       # Set after TTS generation
+    frame_index: int = 0                # 1-indexed progressive frame number (0 if scene-level)
 
 
 @dataclass
@@ -46,6 +48,12 @@ class NarrationPlan:
     def get_segment(self, scene_index: int) -> Optional[NarrationSegment]:
         for seg in self.segments:
             if seg.scene_index == scene_index:
+                return seg
+        return None
+
+    def get_segment_by_frame(self, frame_index: int) -> Optional[NarrationSegment]:
+        for seg in self.segments:
+            if seg.frame_index == frame_index:
                 return seg
         return None
 
@@ -173,13 +181,329 @@ class _LatexToSpeech:
 
 
 # ---------------------------------------------------------------------------
+# Frame Descriptors Extractor
+# ---------------------------------------------------------------------------
+
+def extract_frame_descriptors(timeline: AnimationTimeline) -> List[Dict[str, Any]]:
+    """
+    Extracts structured pedagogical metadata for every progressive frame (TimelineState).
+    Returns a list of dicts:
+      [
+        {
+          "frame": 1,
+          "scene_index": 0,
+          "scene_title": "Newton's Second Law",
+          "element_type": "title",
+          "content": "Newton's Second Law of Motion",
+          "context": "Slide: Newton's Second Law",
+        },
+        ...
+      ]
+    """
+    descriptors: List[Dict[str, Any]] = []
+    scenes_by_index = {sc.scene_index: sc for sc in timeline.scenes}
+
+    for idx, state in enumerate(timeline.states):
+        frame_num = idx + 1
+        scene = scenes_by_index.get(state.scene_index)
+        scene_title = scene.title if scene else f"Slide {state.scene_index + 1}"
+
+        elem = state.new_element
+        if elem:
+            elem_type = elem.type.value if hasattr(elem.type, "value") else str(elem.type)
+            raw = (elem.raw_content or "").strip()
+            clean = (elem.clean_text or "").strip()
+
+            if elem.type in (ElementType.EQUATION_DISPLAY, ElementType.EQUATION_STEP, ElementType.BOXED_RESULT):
+                math_spoken = _LatexToSpeech.translate(raw)
+                content = f"{raw} (Spoken guidance: {math_spoken})" if math_spoken else raw
+            else:
+                content = clean or raw
+        else:
+            elem_type = "scene_overview"
+            content = f"Slide introduction: {scene_title}"
+
+        # Context summary of what has already been shown on this slide
+        prior_elements = []
+        for prev_elem in state.visible_elements:
+            if elem and prev_elem.element_id == elem.element_id:
+                continue
+            prev_summary = prev_elem.clean_text or prev_elem.raw_content
+            if prev_summary:
+                prior_elements.append(prev_summary.strip()[:60])
+
+        context_str = f"Slide: {scene_title}"
+        if prior_elements:
+            context_str += f" | Prior on slide: {'; '.join(prior_elements[-2:])}"
+
+        descriptors.append({
+            "frame": frame_num,
+            "scene_index": state.scene_index,
+            "scene_title": scene_title,
+            "element_type": elem_type,
+            "content": content,
+            "context": context_str,
+        })
+
+    return descriptors
+
+
+# ---------------------------------------------------------------------------
+# LLM Narration Planner
+# ---------------------------------------------------------------------------
+
+class LLMNarrationPlanner:
+    """
+    Generates intelligent, frame-by-frame teacher narration using Groq or Gemini.
+    Transforms raw visual frame content (Frame n: content x) into intuitive,
+    pedagogical voiceover scripts without reading LaTeX syntax.
+    """
+
+    def __init__(self):
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
+        self.google_api_key = os.getenv("GOOGLE_API_KEY")
+
+    def build_prompt(self, descriptors: List[Dict[str, Any]], lesson_title: str = "") -> str:
+        """Constructs a structured pedagogical prompt with all frame information."""
+        frames_text = []
+        for d in descriptors:
+            num = d["frame"]
+            scene = d.get("scene_title", "")
+            etype = d.get("element_type", "element")
+            content = d.get("content", "")
+            if num == 1 or etype in ("title", "section"):
+                note = " [INTRODUCTORY HEADING - MUST BE STRICTLY 5 TO 10 WORDS / 2-3 SECONDS SO CONTENT REVEALS RAPIDLY]"
+            else:
+                note = ""
+            frames_text.append(f"Frame {num} [Slide: {scene} | {etype}]{note}: {content}")
+
+        frames_str = "\n".join(frames_text)
+        max_words = getattr(config, "NARRATION_MAX_WORDS_PER_FRAME", 25)
+
+        # Detect intent from the lesson title and frame content to set narrator style
+        combined_hint = f"{lesson_title} {frames_str}".lower()
+        # Algorithm / process
+        if any(kw in combined_hint for kw in ["algorithm", "sort", "bfs", "dfs", "dynamic programming",
+                                               "photosynthesis", "krebs", "process", "procedure", "how does"]):
+            intent = "algorithm"
+        # Formal proof
+        elif any(kw in combined_hint for kw in ["prove", "proof", "lemma", "theorem", "corollary",
+                                                  "by induction", "q.e.d", "irrational"]):
+            intent = "proof"
+        # Problem solving
+        elif any(kw in combined_hint for kw in ["solve", "solution", "find the", "calculate", "boxed",
+                                                  "step-by-step solution", "final answer"]):
+            intent = "problem"
+        else:
+            # Default: theory / conceptual explanation
+            intent = "theory"
+
+        # Mode-specific narration guidance
+        if intent == "theory":
+            mode_instructions = (
+                "CONTENT TYPE: CONCEPTUAL EXPLANATION / THEORY\n"
+                "- Your goal is to EXPLAIN and BUILD INTUITION. Speak like an enthusiastic professor illuminating a concept.\n"
+                "- For definition frames: Explain what it IS and WHY it matters in vivid, relatable terms. Use analogies.\n"
+                "- For formula/equation frames: Translate each symbol into plain language, then say what the equation tells us physically or mathematically.\n"
+                "- For property/application frames: Tell a brief story about a real-world context where this applies.\n"
+                "- NEVER sound like you're just listing facts. Make the student feel the insight."
+            )
+        elif intent == "proof":
+            mode_instructions = (
+                "CONTENT TYPE: MATHEMATICAL PROOF\n"
+                "- Your goal is to guide the student through rigorous logical reasoning.\n"
+                "- For theorem frames: State the claim in plain English before the formal statement.\n"
+                "- For derivation frames: Explain the logical REASON for each step, not just the algebraic manipulation.\n"
+                "- Use language like: 'This step works because...', 'Notice that...', 'The key insight here is...'.\n"
+                "- For conclusion frames: Summarize what has been established and why it's significant."
+            )
+        elif intent == "algorithm":
+            mode_instructions = (
+                "CONTENT TYPE: ALGORITHM / PROCESS / PROCEDURE\n"
+                "- Your goal is to walk the student through a step-by-step procedure with clarity.\n"
+                "- For overview frames: Explain the GOAL of the algorithm and the central trick or insight.\n"
+                "- For step frames: Describe what is happening in plain English—not just restating the text.\n"
+                "- For complexity/property frames: Connect the complexity result to the algorithm's behavior.\n"
+                "- Use active language: 'Now we compare...', 'At each step, we halve the search space...'"
+            )
+        else:  # problem
+            mode_instructions = (
+                "CONTENT TYPE: PROBLEM SOLVING / WORKED EXAMPLE\n"
+                "- Your goal is to coach the student through a solution step by step.\n"
+                "- For problem setup frames: Briefly orient the student: what are we given, what do we want?\n"
+                "- For derivation frames: Explain WHAT algebraic/calculus operation is being done and WHY.\n"
+                "- For final answer frames: Celebrate the result, state it clearly, and optionally sanity-check it.\n"
+                "- Use coaching language: 'Let's isolate x by...', 'Substituting back, we find...'"
+            )
+
+        return f"""You are an active, warm, and expressive STEM educator and video narrator.
+We are producing an animated whiteboard/slide educational video.
+Below is the chronological frame-by-frame breakdown of the visual lesson (from Frame 1 to Frame {len(descriptors)}).
+In each frame, a new equation, derivation step, definition, or visual element appears on screen.
+
+LESSON TOPIC: {lesson_title or 'Educational Lesson'}
+
+{mode_instructions}
+
+FRAME SEQUENCE:
+{frames_str}
+
+YOUR TASK:
+Write an active, expressive, warm, and professional teacher narration script for EACH frame (Frame 1 through Frame {len(descriptors)}).
+
+CRITICAL PACING & PEDAGOGICAL INSTRUCTIONS:
+1. RAPID 2-3 SECOND DELIVERY FOR HEADINGS & PROBLEM STATEMENTS (FRAME 1):
+   - For Frame 1 (Title, Section, or Problem Introduction): Keep the narration EXTREMELY BRIEF and punchy (strictly 5 to 10 words, ~2 to 3 seconds of speech, e.g. "Let's explore Newton's Second Law." or "Today, we prove this classic result.").
+   - CRITICAL REQUIREMENT: Never give a long monologue or pause on an introductory heading! The viewer MUST see the actual working content appear within 2 to 3 seconds!
+2. WARM, ACTIVE, AND PROFESSIONAL TONE:
+   - Speak with lively, enthusiastic energy—warm, natural, and expressive (neither robotic nor overly hyped).
+   - For working equation steps, explain the mathematical step or intuition in 1 clear, active sentence (about 10 to {max_words} words, ~3 to 5 seconds).
+   - Use active phrasing (e.g. "Subtracting two from both sides isolates the squared term.").
+3. NEVER READ VERBATIM OR UTTER LATEX:
+   - Never simply read formulas or text verbatim off the screen.
+   - Never say LaTeX syntax, backslashes, "frac", "sqrt", "begin", "end", "section", or braces.
+   - Describe all math fluently in natural spoken English.
+4. NUMBERING & COMPLETENESS:
+   - Provide an entry for EVERY frame from 1 to {len(descriptors)} matching the frame numbers exactly. Do not skip any frame.
+
+OUTPUT FORMAT:
+Respond ONLY with a JSON object in this exact schema (no markdown fences, no other text):
+{{
+  "frames": [
+    {{"frame": 1, "narration": "..."}},
+    {{"frame": 2, "narration": "..."}}
+  ]
+}}
+"""
+
+
+    def generate_narration_scripts(
+        self,
+        descriptors: List[Dict[str, Any]],
+        lesson_title: str = "",
+    ) -> Dict[int, str]:
+        """
+        Calls LLM to generate frame-by-frame narration.
+        Returns a mapping of {frame_number: narration_text}.
+        """
+        if not descriptors:
+            return {}
+
+        prompt = self.build_prompt(descriptors, lesson_title=lesson_title)
+        response_text = ""
+
+        # 1. Primary: Groq for fast structured output
+        if self.groq_api_key:
+            response_text = self._call_groq(prompt)
+
+        # 2. Secondary: Google Gemini fallback
+        if not response_text and self.google_api_key:
+            response_text = self._call_gemini(prompt)
+
+        if not response_text:
+            return {}
+
+        return self.parse_narration_json(response_text)
+
+    def _call_groq(self, prompt: str) -> str:
+        try:
+            from groq import Groq
+            client = Groq(api_key=self.groq_api_key)
+            pref_model = getattr(config, "NARRATION_MODEL_GROQ", "qwen/qwen3.8-27b")
+            models_to_try = [pref_model]
+            for alt in ["qwen/qwen3.8-27b", "openai/gpt-oss-120b"]:
+                if alt not in models_to_try:
+                    models_to_try.append(alt)
+
+            for model in models_to_try:
+                try:
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are an expert STEM educator and expressive video narrator. Output only valid JSON matching the requested schema.",
+                            },
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.6,
+                        timeout=30.0,
+                    )
+                    content = response.choices[0].message.content or ""
+                    if content:
+                        print(f"[LLMNarration] Groq generation succeeded with {model}")
+                        return content
+                except Exception as m_err:
+                    print(f"[LLMNarration] Groq attempt with {model} failed: {m_err}")
+                    continue
+        except Exception as exc:
+            print(f"[LLMNarration] Groq call error: {exc}")
+        return ""
+
+    def _call_gemini(self, prompt: str) -> str:
+        import warnings
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=FutureWarning)
+                import google.generativeai as genai
+            genai.configure(api_key=self.google_api_key)
+            pref_model = getattr(config, "NARRATION_MODEL_GEMINI", "gemini-2.5-flash")
+            for m in [pref_model, "gemini-2.5-flash", "gemini-1.5-flash", "gemini-3.5-flash-lite"]:
+                try:
+                    model = genai.GenerativeModel(m)
+                    res = model.generate_content(prompt)
+                    if res and res.text:
+                        print(f"[LLMNarration] Gemini generation succeeded with {m}")
+                        return res.text
+                except Exception:
+                    continue
+        except Exception as exc:
+            print(f"[LLMNarration] Gemini call error: {exc}")
+        return ""
+
+    def parse_narration_json(self, raw_text: str) -> Dict[int, str]:
+        """Parses LLM JSON response and maps frame numbers to narration strings."""
+        if not raw_text or not raw_text.strip():
+            return {}
+
+        cleaned = re.sub(r"^```(?:json)?", "", raw_text.strip(), flags=re.MULTILINE)
+        cleaned = re.sub(r"```$", "", cleaned.strip(), flags=re.MULTILINE).strip()
+
+        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if not match:
+            return {}
+
+        try:
+            data = json.loads(match.group(0))
+            frames = data.get("frames", [])
+            result: Dict[int, str] = {}
+            for item in frames:
+                if isinstance(item, dict) and "frame" in item and "narration" in item:
+                    try:
+                        f_num = int(item["frame"])
+                        text = str(item["narration"]).strip()
+                        if text:
+                            text = re.sub(r"\s+([.,;:!?])", r"\1", text)
+                            text = re.sub(r"\.{2,}", ".", text)
+                            result[f_num] = text
+                    except (ValueError, TypeError):
+                        continue
+            return result
+        except Exception as err:
+            print(f"[LLMNarration] JSON parse error: {err}")
+            return {}
+
+
+# ---------------------------------------------------------------------------
 # Narration Planner
 # ---------------------------------------------------------------------------
 
 class NarrationPlanner:
     """
     Builds an educational NarrationPlan from an AnimationTimeline.
-    Generates rich, teacher-quality spoken narration for each slide scene.
+    Supports both:
+    1. Intelligent frame-by-frame LLM teacher narration (default for video jobs)
+    2. Slide-scene based heuristic narration (legacy / fallback)
     """
 
     _SKIP_TYPES = frozenset({
@@ -187,17 +511,81 @@ class NarrationPlanner:
         ElementType.FIGURE,
     })
 
-    def plan(self, timeline: AnimationTimeline) -> NarrationPlan:
-        """Produce one NarrationSegment per SlideScene with pedagogical narration."""
-        narration_plan = NarrationPlan()
+    def __init__(self):
+        self.llm_planner = LLMNarrationPlanner()
 
+    def plan(
+        self,
+        timeline: AnimationTimeline,
+        by_frame: Optional[bool] = None,
+        lesson_title: str = "",
+    ) -> NarrationPlan:
+        """
+        Produce a NarrationPlan from the timeline.
+        If by_frame is None, dynamically plans by frame when timeline states exist
+        and have elements, or by scene if states have no new_elements.
+        """
+        if by_frame is None:
+            by_frame = any(st.new_element is not None for st in timeline.states)
+
+        if by_frame and timeline.states:
+            return self.plan_frames(timeline, lesson_title=lesson_title)
+        return self.plan_scenes(timeline)
+
+    def plan_frames(
+        self,
+        timeline: AnimationTimeline,
+        lesson_title: str = "",
+    ) -> NarrationPlan:
+        """
+        Frame-by-frame educational teacher narration:
+        1. Extract descriptors for Frame 1 to N
+        2. Ask LLM for pedagogical commentary
+        3. Parse JSON scripts matching frame numbers
+        4. Fall back to heuristic rule-based commentary for missing frames
+        """
+        descriptors = extract_frame_descriptors(timeline)
+        if not descriptors:
+            return NarrationPlan()
+
+        llm_scripts = self.llm_planner.generate_narration_scripts(
+            descriptors, lesson_title=lesson_title
+        )
+
+        plan = NarrationPlan()
+        for idx, state in enumerate(timeline.states):
+            frame_num = idx + 1
+            narration_text = llm_scripts.get(frame_num, "").strip()
+
+            if not narration_text:
+                # Fallback to heuristic narration for this frame
+                if state.new_element:
+                    narration_text = self._narrate_element(
+                        state.new_element, step_index=idx + 1
+                    )
+                if not narration_text:
+                    scene_title = timeline.scenes[state.scene_index].title if state.scene_index < len(timeline.scenes) else ""
+                    narration_text = f"Here we focus on {scene_title}." if scene_title else "Let's explore this step."
+
+            plan.segments.append(
+                NarrationSegment(
+                    scene_index=state.scene_index,
+                    text=narration_text,
+                    frame_index=frame_num,
+                )
+            )
+
+        return plan
+
+    def plan_scenes(self, timeline: AnimationTimeline) -> NarrationPlan:
+        """Produce one NarrationSegment per SlideScene with pedagogical narration (legacy)."""
+        narration_plan = NarrationPlan()
         for scene in timeline.scenes:
             text = self._narrate_scene(scene)
             if text.strip():
                 narration_plan.segments.append(
-                    NarrationSegment(scene_index=scene.scene_index, text=text)
+                    NarrationSegment(scene_index=scene.scene_index, text=text, frame_index=0)
                 )
-
         return narration_plan
 
     def _narrate_scene(self, scene: SlideScene) -> str:
@@ -238,13 +626,13 @@ class NarrationPlanner:
 
         if t == ElementType.TITLE:
             title = self._clean(elem.clean_text)
-            return f"Welcome to this lesson on {title}. Today, we will explore this concept step by step."
+            return f"Welcome to our lesson on {title}."
 
         if t == ElementType.SECTION:
             title = self._clean(elem.clean_text)
             if not title or title.lower() in ("introduction", "overview"):
-                return "Let's begin by looking at the core ideas."
-            return f"In this section, we focus on {title}."
+                return "Let's begin."
+            return f"In this section, we explore {title}."
 
         if t == ElementType.SUBSECTION:
             title = self._clean(elem.clean_text)
@@ -256,7 +644,12 @@ class NarrationPlanner:
 
         if t == ElementType.PARAGRAPH:
             text = self._clean(elem.clean_text or elem.raw_content)
+            if step_index == 1:
+                return "Let's solve this problem step by step."
             if len(text) > 6:
+                words = text.split()
+                if len(words) > 15:
+                    text = " ".join(words[:15]) + "."
                 if not text.endswith((".", "!", "?")):
                     text += "."
                 return text

@@ -109,3 +109,78 @@ def test_complexity_scoring(parser):
     complex_elem = doc2.all_elements[0]
     
     assert complex_elem.complexity_score > simple_elem.complexity_score
+
+
+def test_parse_cases_and_matrix_environments(parser):
+    tex = r"""
+\section{System of Equations}
+Solve the system:
+\begin{cases}
+y^2 + x = 5 \\
+x + y = 4
+\end{cases}
+Matrix representation:
+\begin{pmatrix}
+1 & 2 \\
+3 & 4
+\end{pmatrix}
+"""
+    doc = parser.parse(tex)
+    eq_elements = [e for e in doc.all_elements if e.type == ElementType.EQUATION_DISPLAY]
+    assert len(eq_elements) == 2
+    
+    # Cases environment
+    cases_elem = eq_elements[0]
+    assert r"\begin{cases}" in cases_elem.raw_content
+    assert "begin" not in cases_elem.clean_text.lower()
+    
+    # Matrix environment
+    matrix_elem = eq_elements[1]
+    assert r"\begin{pmatrix}" in matrix_elem.raw_content
+    assert "pmatrix" not in matrix_elem.clean_text.lower()
+
+
+def test_cases_to_latex_snippet_wrapped(parser):
+    tex = r"""
+\begin{cases}
+y^2 + x = 5 \\
+x + y = 4
+\end{cases}
+"""
+    doc = parser.parse(tex)
+    cases_elem = doc.all_elements[0]
+    snippet = cases_elem.to_latex_snippet()
+    assert snippet.startswith(r"\[")
+    assert snippet.endswith(r"\]" + "\n")
+
+
+def test_wrap_bare_math_environments_sanitizer():
+    from backend.latex_video.frame_renderer import LatexFrameRenderer
+    
+    # Bare cases in text mode
+    bare_tex = r"""
+Some text
+\begin{cases}
+a = 1 \\
+b = 2
+\end{cases}
+More text
+"""
+    sanitized = LatexFrameRenderer._wrap_bare_math_environments(bare_tex)
+    assert r"\[" in sanitized
+    assert r"\]" in sanitized
+    assert r"\[" + "\n" + r"\begin{cases}" in sanitized
+
+    # Already inside \[ ... \] should NOT be double wrapped
+    already_wrapped = r"""
+\[
+\begin{cases}
+a = 1 \\
+b = 2
+\end{cases}
+\]
+"""
+    sanitized2 = LatexFrameRenderer._wrap_bare_math_environments(already_wrapped)
+    assert sanitized2.count(r"\[") == 1
+    assert sanitized2.count(r"\]") == 1
+

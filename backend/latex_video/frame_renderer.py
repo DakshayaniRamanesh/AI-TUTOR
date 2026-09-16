@@ -222,7 +222,13 @@ class LatexFrameRenderer:
                 content = elem.raw_content.strip()
                 # Strip unescaped $ that would break display math mode
                 content = re.sub(r"(?<!\\)\$", "", content)
-                if not content.startswith("\\[") and not content.startswith("\\begin"):
+                standalone_envs = {
+                    "equation", "equation*", "align", "align*", "gather", "gather*",
+                    "multline", "multline*", "flalign", "flalign*", "alignat", "alignat*"
+                }
+                m_begin = re.match(r"^\\begin\{([a-zA-Z0-9\*]+)\}", content)
+                is_standalone = bool(m_begin and m_begin.group(1) in standalone_envs)
+                if not content.startswith("\\[") and not is_standalone:
                     output_lines.append(f"\\[\n{content}\n\\]\n")
                 else:
                     output_lines.append(f"{content}\n")
@@ -278,6 +284,9 @@ class LatexFrameRenderer:
             # ── FIX: bare ^ and _ inside \text{...} are illegal in XeTeX text mode.
             # Wrap them as inline math: y^{2} → y$^{2}$, x_{0} → x$_{0}$
             p = self._fix_superscripts_in_text(p)
+
+            # ── FIX: bare math-mode-only environments (cases, matrix, etc.) must be wrapped in \[ ... \]
+            p = self._wrap_bare_math_environments(p)
 
             # Clean empty itemize or enumerate blocks
             p = re.sub(r"\\begin\{itemize\}\s*\\end\{itemize\}", "", p)
@@ -413,6 +422,61 @@ class LatexFrameRenderer:
         # Match \text{ ... } — handle nested braces up to depth 3
         return re.sub(r"\\text\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", _fix_text_block, latex)
 
+    @staticmethod
+    def _wrap_bare_math_environments(latex: str) -> str:
+        """
+        Ensures math-mode-only environments (cases, matrix, pmatrix, etc.) that appear
+        in raw text mode are safely enclosed in \\[ ... \\] display math delimiters.
+        Without this, Tectonic fails with: "Missing $ inserted".
+        """
+        math_only_envs = (
+            r"cases|dcases|rcases|drcases|"
+            r"matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|"
+            r"aligned|gathered|split|alignedat|array"
+        )
+        standalone_math_envs = {
+            "equation", "equation*", "align", "align*", "gather", "gather*",
+            "multline", "multline*", "flalign", "flalign*", "alignat", "alignat*"
+        }
+        pattern = re.compile(
+            rf"(\\begin\{{({math_only_envs})\}}.*?\\end\{{\2\}})",
+            re.DOTALL
+        )
+
+        def _replace_match(m: re.Match) -> str:
+            full_match = m.group(1)
+            start = m.start()
+            prefix = latex[:start]
+
+            # Check if inside \[ ... \]
+            open_brackets = len(re.findall(r"(?<!\\)\\\[", prefix))
+            close_brackets = len(re.findall(r"(?<!\\)\\\]", prefix))
+            if open_brackets > close_brackets:
+                return full_match
+
+            # Check if inside $$ ... $$
+            double_dollars = len(re.findall(r"\$\$", prefix))
+            if double_dollars % 2 != 0:
+                return full_match
+
+            # Check if inside $ ... $
+            single_dollars = len(re.findall(r"(?<!\\)\$", prefix))
+            if single_dollars % 2 != 0:
+                return full_match
+
+            # Check if inside standalone math environment
+            for env in standalone_math_envs:
+                esc_env = re.escape(env)
+                open_count = len(re.findall(rf"\\begin\{{{esc_env}\}}", prefix))
+                close_count = len(re.findall(rf"\\end\{{{esc_env}\}}", prefix))
+                if open_count > close_count:
+                    return full_match
+
+            # Bare in text mode! Wrap it in \[ ... \]
+            return f"\\[\n{full_match}\n\\]"
+
+        return pattern.sub(_replace_match, latex)
+
 
 
     def _compile_presentation_pdf(self, latex_code: str) -> Optional[str]:
@@ -538,6 +602,9 @@ class LatexFrameRenderer:
 
         # Strip font size commands that require extarticle
         body = body.replace(r'\Huge', r'\LARGE').replace(r'\huge', r'\Large')
+
+        # Wrap any bare math-mode-only environments (cases, matrix, etc.)
+        body = self._wrap_bare_math_environments(body)
 
         return body.strip()
 

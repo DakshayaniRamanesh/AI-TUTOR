@@ -47,6 +47,8 @@ from backend.latex_video.narration_planner import (
     NarrationPlan,
     NarrationSegment,
     _LatexToSpeech,
+    LLMNarrationPlanner,
+    extract_frame_descriptors,
 )
 from backend.latex_video.tts_service import (
     AudioSegment,
@@ -475,6 +477,8 @@ class TestTTSFailureGraceful:
                                return_value=[MagicMock()]), \
                  patch.object(pipeline._base.assembler, "assemble",
                                return_value=str(silent_mp4)), \
+                 patch.object(pipeline._narration_planner.llm_planner, "generate_narration_scripts",
+                               return_value={}), \
                  patch.object(pipeline._tts or MagicMock(), "generate_batch",
                                return_value=[None, None]):
 
@@ -501,3 +505,141 @@ class TestTTSFailureGraceful:
             config.VOICE_ENABLED = original_enabled
             config.VIDEOS_DIR = original_videos
             config.AUDIO_DIR = original_audio
+
+
+# ---------------------------------------------------------------------------
+# 8. Frame Descriptors & LLM Teacher Narration
+# ---------------------------------------------------------------------------
+
+class TestFrameDescriptorsExtraction:
+
+    def test_extract_frame_descriptors_chronological(self):
+        timeline = _make_simple_timeline()
+        for idx, st in enumerate(timeline.states):
+            st.new_element = _make_element(f"elem_{idx}", ElementType.EQUATION_DISPLAY, rf"\[ y = {idx}x \]")
+
+        descriptors = extract_frame_descriptors(timeline)
+        assert len(descriptors) == len(timeline.states)
+        for idx, desc in enumerate(descriptors):
+            assert desc["frame"] == idx + 1
+            assert desc["scene_index"] == timeline.states[idx].scene_index
+            assert "y =" in desc["content"]
+
+    def test_empty_timeline_returns_empty_descriptors(self):
+        tl = AnimationTimeline(scenes=[], states=[])
+        assert extract_frame_descriptors(tl) == []
+
+
+class TestLLMNarrationPlanner:
+
+    def test_build_prompt_contains_frame_numbering(self):
+        planner = LLMNarrationPlanner()
+        descriptors = [
+            {"frame": 1, "scene_title": "Mechanics", "element_type": "title", "content": "Newton's 2nd Law"},
+            {"frame": 2, "scene_title": "Mechanics", "element_type": "equation_display", "content": "F = m * a"},
+        ]
+        prompt = planner.build_prompt(descriptors, lesson_title="Newtonian Physics")
+        assert "Frame 1" in prompt
+        assert "Frame 2" in prompt
+        assert "Newtonian Physics" in prompt
+        assert "RAPID 2-3 SECOND DELIVERY FOR HEADINGS" in prompt
+        assert "WARM, ACTIVE, AND PROFESSIONAL TONE" in prompt
+
+    def test_parse_narration_json_clean(self):
+        import json
+        planner = LLMNarrationPlanner()
+        raw = json.dumps({
+            "frames": [
+                {"frame": 1, "narration": "Welcome to our physics lesson."},
+                {"frame": 2, "narration": "Here we see that force directly accelerates mass."},
+            ]
+        })
+        parsed = planner.parse_narration_json(raw)
+        assert parsed[1] == "Welcome to our physics lesson."
+        assert "force directly accelerates mass" in parsed[2]
+
+    def test_parse_narration_json_with_markdown_fences(self):
+        planner = LLMNarrationPlanner()
+        raw = """```json
+{
+  "frames": [
+    {"frame": 1, "narration": "Welcome to calculus."},
+    {"frame": 2, "narration": "The derivative measures slope."}
+  ]
+}
+```"""
+        parsed = planner.parse_narration_json(raw)
+        assert len(parsed) == 2
+        assert parsed[1] == "Welcome to calculus."
+        assert parsed[2] == "The derivative measures slope."
+
+    def test_plan_frames_with_mocked_llm(self):
+        timeline = _make_simple_timeline()
+        for idx, st in enumerate(timeline.states):
+            st.new_element = _make_element(f"e_{idx}", ElementType.EQUATION_DISPLAY, r"\[ E = mc^2 \]")
+
+        planner = NarrationPlanner()
+        mock_scripts = {
+            1: "Energy equals mass times the speed of light squared.",
+            2: "This demonstrates the equivalence of mass and energy.",
+            3: "Even tiny amounts of matter contain immense energy.",
+            4: "This principle powers stellar fusion in stars.",
+        }
+
+        with patch.object(planner.llm_planner, "generate_narration_scripts", return_value=mock_scripts):
+            plan = planner.plan_frames(timeline, lesson_title="Special Relativity")
+
+        assert len(plan.segments) == 4
+        for seg in plan.segments:
+            assert seg.frame_index in mock_scripts
+            assert seg.text == mock_scripts[seg.frame_index]
+
+    def test_plan_frames_fallback_when_llm_fails(self):
+        timeline = _make_simple_timeline()
+        for idx, st in enumerate(timeline.states):
+            st.new_element = _make_element(f"e_{idx}", ElementType.TITLE, "Calculus Lesson", clean="Calculus Lesson")
+
+        planner = NarrationPlanner()
+        # Simulate LLM failure (empty response)
+        with patch.object(planner.llm_planner, "generate_narration_scripts", return_value={}):
+            plan = planner.plan_frames(timeline, lesson_title="Calculus")
+
+        assert len(plan.segments) == 4
+        for seg in plan.segments:
+            assert seg.text != ""
+            assert seg.frame_index > 0
+
+
+class TestFrameLevelDurationPatching:
+
+    def test_frame_level_hold_duration_expands(self):
+        from backend.latex_video.voice_pipeline import VoiceEnabledPipeline
+        pipeline = VoiceEnabledPipeline()
+
+        states = [
+            TimelineState(
+                state_index=0, scene_index=0, visible_elements=[], new_element=None,
+                start_time=0.0, transition_duration=0.5, hold_duration=2.0,
+                transition_type=TransitionType.FADE_IN,
+            ),
+            TimelineState(
+                state_index=1, scene_index=0, visible_elements=[], new_element=None,
+                start_time=2.5, transition_duration=0.5, hold_duration=2.0,
+                transition_type=TransitionType.FADE_IN,
+            ),
+        ]
+        timeline = AnimationTimeline(scenes=[SlideScene(scene_index=0, title="Test")], states=states)
+
+        audio_segments = [
+            AudioSegment(scene_index=0, path="/tmp/f1.mp3", duration_seconds=4.5, text="Frame 1 explanation", frame_index=1),
+            AudioSegment(scene_index=0, path="/tmp/f2.mp3", duration_seconds=3.0, text="Frame 2 explanation", frame_index=2),
+        ]
+
+        pipeline._patch_timeline_durations(timeline, audio_segments)
+
+        # Frame 1 (Intro heading): Capped at 3.0s so content appears within 2 to 3 seconds!
+        assert timeline.states[0].hold_duration == pytest.approx(3.0)
+        # Frame 2 (Content step): Expands to audio duration + 0.6s buffer = 3.6s
+        assert timeline.states[1].hold_duration == pytest.approx(3.6)
+        # State 1 start_time begins right after State 0 completes
+        assert timeline.states[1].start_time == pytest.approx(0.5 + 3.0)

@@ -7,6 +7,7 @@ and progressive revealing without dealing with raw string markup.
 """
 
 from __future__ import annotations
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Dict, Any
@@ -72,7 +73,13 @@ class DocumentElement:
         elif self.type == ElementType.PARAGRAPH:
             return f"{content}\n\\par\\vspace{{0.8em}}\n"
         elif self.type == ElementType.EQUATION_DISPLAY:
-            if not content.startswith("\\[") and not content.startswith("\\begin"):
+            standalone_envs = {
+                "equation", "equation*", "align", "align*", "gather", "gather*",
+                "multline", "multline*", "flalign", "flalign*", "alignat", "alignat*"
+            }
+            m_begin = re.match(r"^\\begin\{([a-zA-Z0-9\*]+)\}", content)
+            is_standalone = bool(m_begin and m_begin.group(1) in standalone_envs)
+            if not content.startswith("\\[") and not is_standalone:
                 return f"\\[\n{content}\n\\]\n"
             return f"{content}\n"
         elif self.type == ElementType.EQUATION_STEP:

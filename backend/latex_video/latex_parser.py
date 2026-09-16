@@ -183,8 +183,9 @@ class LatexSemanticParser:
         in_math_env = False
         math_envs = {
             'align', 'align*', 'aligned', 'tabular', 'array', 'matrix',
-            'pmatrix', 'bmatrix', 'vmatrix', 'equation', 'equation*',
-            'gather', 'gather*', 'multline', 'multline*'
+            'pmatrix', 'bmatrix', 'Bmatrix', 'vmatrix', 'Vmatrix', 'smallmatrix',
+            'cases', 'dcases', 'rcases', 'drcases',
+            'equation', 'equation*', 'gather', 'gather*', 'multline', 'multline*'
         }
         math_begin_pattern = re.compile(r'\\begin\{(' + '|'.join(re.escape(e) for e in math_envs) + r')\}')
         math_end_pattern = re.compile(r'\\end\{(' + '|'.join(re.escape(e) for e in math_envs) + r')\}')
@@ -352,7 +353,8 @@ class LatexSemanticParser:
             r"(\$\$.*?\$\$)|"
             r"(\\begin\{itemize\}.*?\\end\{itemize\})|"
             r"(\\begin\{enumerate\}.*?\\end\{enumerate\})|"
-            r"(\\begin\{tabular\}.*?\\end\{tabular\})",
+            r"(\\begin\{tabular\}.*?\\end\{tabular\})|"
+            r"(\\begin\{(cases|dcases|rcases|drcases|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix)\}.*?\\end\{\12\})",
             re.DOTALL
         )
 
@@ -405,6 +407,9 @@ class LatexSemanticParser:
             elif m.group(10):
                 # Tabular
                 tokens.append(("tabular", matched_str))
+            elif m.group(11):
+                # Cases or matrix environment at block level
+                tokens.append(("equation", matched_str.strip()))
 
             pos = end
 
@@ -533,5 +538,8 @@ class LatexSemanticParser:
         """Clean display math for text readability."""
         clean = text.replace("&=", "=").replace("&", "")
         clean = re.sub(r"\\boxed\{([^}]+)\}", r"\1", clean)
+        clean = re.sub(r"\\(?:begin|end)\{[a-zA-Z0-9\*]+\}", "", clean)
+        clean = re.sub(r"\\\\(?:\s*\[[^\]]*\])?", ", ", clean)
         clean = re.sub(r"\\(mathbf|text|mathrm)\{([^}]+)\}", r"\2", clean)
+        clean = re.sub(r"\s+", " ", clean)
         return clean.strip()

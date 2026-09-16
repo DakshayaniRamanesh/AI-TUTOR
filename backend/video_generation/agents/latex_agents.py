@@ -14,45 +14,170 @@ try:
 except ImportError:
     Groq = None
 
-STRUCTURE_PROMPT_TEMPLATE = """You are an expert STEM mathematician and LaTeX typesetter. I will provide transcribed math and text fragments extracted via OCR from handwritten notes, along with the requested document template type.
-
-Your task is to structure this into a clean, semantically correct, high-quality LaTeX document body.
-
-CRITICAL RULES:
-1. **Math Environments & Equation Alignment**: 
-   - Use `$ ... $` for short inline math embedded within text sentences.
-   - Use `\\begin{{equation}} ... \\end{{equation}}` for standalone single-line formulas (centered automatically).
-   - Use `\\begin{{align*}} ... \\end{{align*}}` ONLY for multi-line algebraic derivations aligned at the `=` sign using `&=`.
-   - **ALIGNMENT RULES (STRICT)**:
-     * NEVER put explanatory sentences or labels inside `\\begin{{align*}}` before `&` (e.g. NEVER write `\\text{{Given:}} &`). Explanatory text MUST be regular text paragraphs outside the equation block!
-     * In `align*`, each line must be pure math, e.g.:
-       `x^2 - 2x + 1 &= 0 \\\\`
-       `(x - 1)^2 &= 0 \\\\`
-       `x &= 1`
-     * NEVER put `&` inside variable names (e.g. NEVER `x& = 1`).
-     * NEVER write `\\&` inside math equations. The symbol `&` is strictly an alignment separator in `align*`.
-2. **Mathematical Problem Solving**:
-   - If the content contains a problem, equation to solve, integral, derivative, proof, or question, PROVIDE A COMPLETE STEP-BY-STEP MATHEMATICAL SOLUTION.
-   - Show all necessary algebraic/calculus intermediate steps.
-   - Always enclose the final answer inside `\\boxed{{...}}`.
-   - **STRICT ANTI-PLACEHOLDER RULE**:
-     * NEVER output apologies, excuses, or placeholders like "[The problem statement was not provided in the transcription]" or "[Insert description here]".
-     * If the input contains a concept, formula, theorem, or diagram rather than an explicit homework problem, state the concept as the topic, derive its core mathematical formulation step-by-step, and present a clear worked example demonstrating it!
-3. **Template-Specific Formatting**:
-   - **Lecture Slides (Beamer)**: Wrap logical slides in `\\begin{{frame}}{{Slide Title}} ... \\end{{frame}}`.
-   - **Standard Documents**: Use `\\section*{{}}` and `\\subsection*{{}}` for clear organization. Use `\\begin{{itemize}}` or `\\begin{{enumerate}}` for lists.
-4. **Output Constraints**: 
-   - Do NOT output `\\documentclass`, `\\usepackage`, or `\\begin{{document}}`. 
-   - Output ONLY the internal body content (the raw LaTeX). 
-   - This output will be directly injected into a `{{{{CONTENT_BODY}}}}` slot in a pre-existing template.
-   - Do NOT wrap your output in markdown code blocks like ```latex ... ```. Output raw text.
-5. **NO MARKDOWN**: NEVER use `#` or `##` for headers. NEVER use `**` for bold (use `\\textbf{{...}}`). This must be pure LaTeX code.
-
-Template Type: {template_type}
-
-Raw transcription:
-{raw_text}
+# ── Shared LaTeX formatting rules (injected into every prompt) ────────────────
+_LATEX_RULES = """
+UNIVERSAL LATEX RULES (ALWAYS APPLY):
+1. Math Environments:
+   - Use `$ ... $` for inline math within sentences.
+   - Use `\\[ ... \\]` for standalone single-line display formulas.
+   - Use `\\begin{align*} ... \\end{align*}` ONLY for multi-line derivations aligned at `&=`.
+   - In align*, every line must be pure math. NEVER put text labels before `&`.
+   - NEVER use `&` inside variable names. NEVER write `\\&` inside equations.
+2. Structure:
+   - Use `\\section*{...}` and `\\subsection*{...}` for headings.
+   - Use `\\begin{itemize} ... \\end{itemize}` for bullet lists.
+   - Use `\\begin{enumerate} ... \\end{enumerate}` for numbered lists.
+3. Output constraints:
+   - Do NOT output `\\documentclass`, `\\usepackage`, or `\\begin{document}`.
+   - Output ONLY the raw LaTeX body.
+   - Do NOT wrap output in markdown code fences.
+   - NEVER use `#`, `##`, `**` — this must be pure LaTeX.
+   - Use `\\textbf{...}` for bold, `\\emph{...}` for italics.
 """
+
+# ── Dynamic pedagogical prompt templates ──────────────────────────────────────
+_THEORY_PROMPT = """
+You are an expert educator and LaTeX typesetter.
+
+Create a rich, deep conceptual EXPLANATION of the following topic:
+{input_text}
+
+WRITING INSTRUCTIONS:
+- This is NOT a homework problem. Do NOT invent a toy problem and solve it.
+- Do NOT use sections named "Problem Statement", "Step-by-Step Solution", or "Final Answer".
+- Write genuinely educational content that helps a student deeply understand this concept.
+- Use TOPIC-SPECIFIC section headings that reflect the actual subject matter (e.g. \\section*{{The Principle of Momentum}}, \\section*{{Physical Intuition}}).
+
+REQUIRED STRUCTURE (adapt section names to the topic):
+1. \\section*{{<Descriptive Conceptual Title>}}: A clear, intuitive statement of what this concept IS and WHY it matters. Motivate it with a real-world scenario or analogy.
+2. \\section*{{<Governing Laws / Formal Formulation>}}: State the formal mathematical definition, law, or governing equation. Explain what each symbol means.
+3. \\section*{{<Mechanism / How It Works>}}: Explain the physical, mathematical, or logical mechanism. Walk through the key ideas, consequences, and limits of validity.
+4. \\section*{{<Key Properties and Applications>}}: 3-5 important properties, consequences, or real-world applications as bullet points.
+
+{rules}
+"""
+
+_PROBLEM_PROMPT = """
+You are an expert STEM mathematician and LaTeX typesetter.
+
+Solve the following problem or exercise completely:
+{input_text}
+
+WRITING INSTRUCTIONS:
+- PROVIDE A COMPLETE, EXHAUSTIVE STEP-BY-STEP SOLUTION. Never skip steps.
+- Always enclose the verified final answer in \\boxed{{...}}.
+- Section headings should be descriptive and topic-specific (e.g. \\section*{{Setting Up the Equation}}, NOT just \\section*{{Step 1}}).
+
+REQUIRED STRUCTURE:
+1. \\section*{{Problem Setup}}: Clearly state the problem, identify what is given and what is to be found.
+2. \\section*{{Strategy and Key Principles}}: Identify the mathematical method or theorem that applies and briefly explain why.
+3. \\section*{{Detailed Solution}}: Complete derivation using \\begin{{align*}} ... \\end{{align*}} with every algebraic step shown.
+4. \\section*{{Final Answer}}: Enclose the result in \\boxed{{...}}.
+5. \\section*{{Key Insights}}: 2-3 concise bullet points on important observations, common mistakes to avoid, or generalizations.
+
+{rules}
+"""
+
+_PROOF_PROMPT = """
+You are an expert mathematician and LaTeX typesetter.
+
+Present a rigorous, complete MATHEMATICAL PROOF for:
+{input_text}
+
+WRITING INSTRUCTIONS:
+- This is a formal proof. Present it with mathematical rigor.
+- Do NOT reduce this to a homework problem with a numeric answer.
+- Section headings should reflect the actual theorem and proof structure.
+
+REQUIRED STRUCTURE:
+1. \\section*{{<Theorem Name>}}: State the theorem, lemma, or identity precisely in mathematical language.
+2. \\section*{{Setup and Definitions}}: Define all variables, structures, and any auxiliary constructions needed.
+3. \\section*{{Proof}}: Rigorous step-by-step logical deduction. Use \\begin{{align*}} for equational derivations.
+4. \\section*{{Conclusion}}: State what has been proven and its mathematical significance (e.g. \\emph{{Q.E.D.}}).
+5. \\section*{{Corollaries and Significance}} (optional): Direct consequences or applications of the theorem.
+
+{rules}
+"""
+
+_ALGORITHM_PROMPT = """
+You are an expert computer scientist / scientist and LaTeX typesetter.
+
+Explain and walk through the following ALGORITHM, PROCESS, or PROCEDURE:
+{input_text}
+
+WRITING INSTRUCTIONS:
+- This is NOT a math problem to solve for a numeric answer.
+- Explain how the algorithm WORKS, its purpose, invariants, and trade-offs.
+- Section headings should describe actual phases or properties of this algorithm.
+
+REQUIRED STRUCTURE:
+1. \\section*{{Purpose and High-Level Idea}}: Explain in plain terms what this algorithm does and the central insight behind it.
+2. \\section*{{Core Mechanics and Invariants}}: Describe the key data structures, loop invariant, or logical conditions that make it work.
+3. \\section*{{Step-by-Step Walkthrough}}: Walk through the algorithm on a clear, concrete small example using `\\begin{{enumerate}}` for each step.
+4. \\section*{{Complexity and Trade-offs}}: State time/space complexity (use $O(...)$ notation) and when to use vs. avoid this approach.
+
+{rules}
+"""
+
+
+def _detect_educational_intent(text: str) -> str:
+    """
+    Classify the educational intent of the input text.
+    Returns one of: 'theory', 'problem', 'proof', 'algorithm'
+    """
+    low = (text or "").lower()
+
+    # Algorithm / process signals (check before theory, shares some keywords)
+    algo_signals = [
+        "algorithm", "sort", "search", "binary search", "merge sort", "quick sort",
+        "hash", "graph traversal", "bfs", "dfs", "dynamic programming", "memoization",
+        "recursion", "iteration", "step by step", "procedure", "process", "cycle",
+        "photosynthesis", "krebs cycle", "cellular respiration", "dna replication",
+        "pcr", "fermentation", "how does", "how do"
+    ]
+    if sum(1 for s in algo_signals if s in low) >= 2 or any(
+        s in low for s in ["algorithm", "photosynthesis", "krebs cycle", "sort algorithm", "dna replication"]
+    ):
+        return "algorithm"
+
+    # Proof signals
+    proof_signals = [
+        "prove", "proof", "lemma", "corollary", "show that", "demonstrate that",
+        "q.e.d", "qed", "by induction", "proof by contradiction", "by contradiction"
+    ]
+    if any(s in low for s in proof_signals):
+        return "proof"
+
+    # Problem/exercise signals (explicit solve request or numeric equation)
+    problem_signals = [
+        "solve", "find the", "calculate", "compute", "evaluate", "simplify", "differentiate",
+        "integrate", "determine the value", "what is the value of", "=0", "= 0",
+        "word problem", "if x", "given that", "for what value"
+    ]
+    import re as _re
+    # Only treat '?' as a problem signal when it appears in a math context (e.g. find x = ?)
+    # NOT for plain conversational questions like "What is X?"
+    has_equation_to_solve = bool(_re.search(r'\\?=\s*0|solve|find\s+\w+\s*=', low))
+    if any(s in low for s in problem_signals) or has_equation_to_solve:
+        return "problem"
+
+    # Theory / conceptual explanation (default for named concepts, laws, phenomena)
+    theory_signals = [
+        "explain", "what is", "describe", "concept", "theory", "law", "principle", "theorem",
+        "definition", "overview", "introduction", "understanding", "meaning of",
+        "newton", "einstein", "maxwell", "schrödinger", "heisenberg", "planck",
+        "gravity", "electromagnetism", "thermodynamics", "quantum", "relativity",
+        "entropy", "momentum", "conservation", "bayes", "fourier", "euler"
+    ]
+    if any(s in low for s in theory_signals):
+        return "theory"
+
+    # Default: if there is already structured LaTeX or pure math, treat as problem
+    if r"\begin" in text or r"\[" in text or r"\frac" in text:
+        return "problem"
+
+    # Final default: theory (safer than inventing a problem)
+    return "theory"
 
 
 class LatexTranscribeAgent:
@@ -168,37 +293,37 @@ class LatexStructureAgent:
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Structuring & Solving Math"
         job.progress_percentage = 35
-        print(f"[{job.job_id}] Structuring document & solving math with Groq (default)...")
 
-        prompt = STRUCTURE_PROMPT_TEMPLATE.format(
-            template_type=job.template_type,
-            raw_text=job.raw_transcription or ""
-        )
+        raw_text = (job.raw_transcription or "").strip()
+        action = (getattr(job, "classroom_action", "") or "").strip()
 
-        mode = (getattr(job, "mode", "study") or "study").lower()
-        action = getattr(job, "classroom_action", "Solve Question") or "Solve Question"
-
-        if mode == "study":
-            prompt += (
-                "\n\n**MODE: STUDY MODE (COMPREHENSIVE PEDAGOGICAL DEEP DIVE)**\n"
-                "Format this document as an in-depth, structured study guide designed for a student mastering this concept:\n"
-                "1. \\section*{Problem Statement}: Transcribe and state the problem or equation clearly.\n"
-                "2. \\section*{Key Principles and Formulas}: Explain the core mathematical theorems, formulas, or methods required, including brief intuitive reasoning.\n"
-                "3. \\section*{Detailed Step-by-Step Solution}: Provide the complete, exhaustive mathematical solution. Show every single intermediate algebraic and calculus step explicitly using \\begin{align*} ... \\end{align*} aligned at &=. NEVER omit intermediate steps.\n"
-                "4. \\section*{Final Answer}: Enclose the verified final answer prominently in \\boxed{...}.\n"
-                "5. \\section*{Study Notes and Key Takeaways}: 2-3 bullet points highlighting common student pitfalls, memory tricks, or sanity checks.\n"
-                "You MUST compute and solve the answer completely."
-            )
+        # ── Detect educational intent ─────────────────────────────────────────
+        # classroom_action may override: e.g. "Explain Concept" forces theory intent
+        if action.lower() in ("explain concept", "explain theory", "conceptual overview", "theory"):
+            intent = "theory"
+        elif action.lower() in ("prove theorem", "formal proof", "proof"):
+            intent = "proof"
+        elif action.lower() in ("explain algorithm", "algorithm", "process", "procedure"):
+            intent = "algorithm"
+        elif action.lower() in ("solve question", "solve problem", "homework", "exercise"):
+            intent = "problem"
         else:
-            # Classroom Mode
-            prompt += (
-                f"\n\n**MODE: CLASSROOM MODE (FORMAL, BOARD-READY PRESENTATION - Action: {action})**\n"
-                "Format this document as a formal, elegant classroom lecture board solution or instructor handout:\n"
-                "1. \\section*{Problem Statement}: Formulate the problem statement or theorem cleanly and concisely.\n"
-                "2. \\section*{Formal Derivation}: Present a rigorous, publication-grade mathematical derivation with clean transitions. Use \\begin{align*} ... \\end{align*} aligned strictly at &=. Do NOT include conversational filler, casual explanations, or study tips.\n"
-                "3. \\section*{Result}: State the formal conclusion or final answer enclosed in \\boxed{...}.\n"
-                "The typesetting must be minimal, formal, and authoritative."
-            )
+            intent = _detect_educational_intent(raw_text)
+
+        print(f"[{job.job_id}] Educational intent detected: {intent!r} (action={action!r})")
+
+        # ── Select the matching pedagogical prompt ────────────────────────────
+        template_map = {
+            "theory": _THEORY_PROMPT,
+            "proof": _PROOF_PROMPT,
+            "algorithm": _ALGORITHM_PROMPT,
+            "problem": _PROBLEM_PROMPT,
+        }
+        selected_template = template_map.get(intent, _PROBLEM_PROMPT)
+        prompt = selected_template.format(
+            input_text=raw_text or "(no input provided)",
+            rules=_LATEX_RULES
+        )
 
         # If retrying after a build error, pass the error to the LLM to fix
         if job.has_build_error and job.build_error_trace:

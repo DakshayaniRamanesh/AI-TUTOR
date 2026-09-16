@@ -50,8 +50,19 @@ os.makedirs(PDFS_DIR, exist_ok=True)
 VOICE_ENABLED = os.getenv("VOICE_ENABLED", "false").strip().lower() == "true"
 # TTS provider identifier — extensible for future providers.
 VOICE_PROVIDER = os.getenv("VOICE_PROVIDER", "edge_tts")
-# Edge TTS neural voice name. See: https://tts.trainingdata.pro/
-VOICE_LANG = os.getenv("VOICE_LANG", "en-US-AriaNeural")
+# Edge TTS neural voice name. Warm, expressive British English professional teacher voice:
+# en-GB-RyanNeural  — male,   warm & professional (default)
+# en-GB-SoniaNeural — female, clear & expressive
+# en-GB-LibbyNeural — female, friendly & natural
+VOICE_LANG = os.getenv("VOICE_LANG", "en-GB-RyanNeural")
+# Voice speed and pitch modulation (+4% provides active, energetic delivery)
+VOICE_RATE = os.getenv("VOICE_RATE", "+4%")
+VOICE_PITCH = os.getenv("VOICE_PITCH", "+0Hz")
 # Directory where per-segment MP3 audio files are stored.
 AUDIO_DIR = os.path.join(WORKSPACE_DIR, "audio")
 os.makedirs(AUDIO_DIR, exist_ok=True)
+
+# LLM models for pedagogical teacher narration
+NARRATION_MODEL_GROQ = os.getenv("NARRATION_MODEL_GROQ", "qwen/qwen3.8-27b")
+NARRATION_MODEL_GEMINI = os.getenv("NARRATION_MODEL_GEMINI", "gemini-2.5-flash")
+NARRATION_MAX_WORDS_PER_FRAME = int(os.getenv("NARRATION_MAX_WORDS_PER_FRAME", "25"))
