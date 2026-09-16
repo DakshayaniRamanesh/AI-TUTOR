@@ -28,8 +28,14 @@ class LatexSemanticParser:
     def parse(self, latex_content: str, fallback_title: str = "Lesson") -> LessonDocument:
         """Parse raw LaTeX string into a structured LessonDocument."""
         self._elem_counter = 0
+        raw_title = self._extract_title(latex_content)
         cleaned = self._clean_source(latex_content)
-        title = self._extract_title(cleaned) or fallback_title
+        title = raw_title or self._extract_title(cleaned)
+        if not title or title.lower() in ("introduction", "overview", "lesson", "notes"):
+            if fallback_title and fallback_title.lower() != "lesson":
+                title = fallback_title
+            elif not title:
+                title = "Lesson"
 
         doc = LessonDocument(title=title, raw_source=latex_content)
         

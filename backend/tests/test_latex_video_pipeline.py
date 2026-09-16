@@ -66,11 +66,14 @@ def test_educational_topic_resolution(latex_pipeline):
 
 def test_video_renderer_configuration_routing():
     """Verifies that config.VIDEO_RENDERER properly selects the active backend."""
-    # 1. Default (latex)
+    from backend.latex_video.voice_pipeline import VoiceEnabledPipeline
+
+    # 1. Default (latex) — now routes through VoiceEnabledPipeline (drop-in wrapper)
     config.VIDEO_RENDERER = "latex"
     pipeline_latex = VideoGenerationPipeline()
     assert pipeline_latex.active_backend == "latex"
     assert pipeline_latex._latex_pipeline is not None
+    assert isinstance(pipeline_latex._latex_pipeline, VoiceEnabledPipeline)
     assert pipeline_latex._manim_pipeline is None
 
     # 2. Legacy fallback (manim)

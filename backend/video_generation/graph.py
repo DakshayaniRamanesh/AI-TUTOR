@@ -302,8 +302,11 @@ class VideoGenerationPipeline:
             self._manim_pipeline = ManimVideoPipeline(rag_store)
             self._latex_pipeline = None
         else:
-            from backend.latex_video.pipeline import LatexVideoPipeline
-            self._latex_pipeline = LatexVideoPipeline()
+            # VoiceEnabledPipeline is a drop-in replacement for LatexVideoPipeline.
+            # When VOICE_ENABLED=false (the default) it delegates directly to
+            # LatexVideoPipeline with zero overhead.
+            from backend.latex_video.voice_pipeline import VoiceEnabledPipeline
+            self._latex_pipeline = VoiceEnabledPipeline()
             self._manim_pipeline = None
 
     def run_pipeline(self, job: VideoJob) -> VideoJob:

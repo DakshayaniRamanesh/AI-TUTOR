@@ -43,3 +43,15 @@ PDFS_DIR = os.path.join(WORKSPACE_DIR, "pdfs")
 
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 os.makedirs(PDFS_DIR, exist_ok=True)
+
+# --- VOICE NARRATION (optional plugin) ---
+# Set VOICE_ENABLED=true in .env to enable Edge TTS narration.
+# When false (default), the existing silent video pipeline is used unchanged.
+VOICE_ENABLED = os.getenv("VOICE_ENABLED", "false").strip().lower() == "true"
+# TTS provider identifier — extensible for future providers.
+VOICE_PROVIDER = os.getenv("VOICE_PROVIDER", "edge_tts")
+# Edge TTS neural voice name. See: https://tts.trainingdata.pro/
+VOICE_LANG = os.getenv("VOICE_LANG", "en-US-AriaNeural")
+# Directory where per-segment MP3 audio files are stored.
+AUDIO_DIR = os.path.join(WORKSPACE_DIR, "audio")
+os.makedirs(AUDIO_DIR, exist_ok=True)

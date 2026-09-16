@@ -253,7 +253,6 @@ class LatexFrameRenderer:
         flush_enumerate()
 
         return "\n".join(output_lines)
-
     def _sanitize_body_for_compile(self, body: str) -> str:
         """
         Sanitizes and repairs the multi-page slide document body before compilation.
@@ -268,12 +267,17 @@ class LatexFrameRenderer:
             if not p:
                 continue
 
-            # Normalize \( and \) to $
+            # Normalize \( and \) inline math delimiters to $
+            # Note: \bigl( is not the same as \( so this is safe.
             p = p.replace(r"\(", "$").replace(r"\)", "$")
 
             # Remove unsupported external package environments
             p = re.sub(r"\\begin\{tcolorbox\}[^\n]*\n.*?\\end\{tcolorbox\}", "", p, flags=re.DOTALL)
             p = re.sub(r"\\begin\{(tikzpicture|minted|listings)\b.*?\\end\{\1\*?\}", "", p, flags=re.DOTALL)
+
+            # ── FIX: bare ^ and _ inside \text{...} are illegal in XeTeX text mode.
+            # Wrap them as inline math: y^{2} → y$^{2}$, x_{0} → x$_{0}$
+            p = self._fix_superscripts_in_text(p)
 
             # Clean empty itemize or enumerate blocks
             p = re.sub(r"\\begin\{itemize\}\s*\\end\{itemize\}", "", p)
@@ -317,17 +321,34 @@ class LatexFrameRenderer:
                     in_list = False
                 elif s.startswith(r"\item") and not in_list:
                     line = f"\\begin{{itemize}}\n{line}\n\\end{{itemize}}"
+
+                # Ensure individual \item lines don't leave unclosed inline math mode
+                if s.startswith(r"\item"):
+                    num_dollars = len(re.findall(r"(?<!\\)\$", line))
+                    if num_dollars % 2 != 0:
+                        line = line + "$"
+
                 fixed_lines.append(line)
             p = "\n".join(fixed_lines)
 
-            # Strip unescaped dollar signs inside display math blocks and environments
-            def _strip_dollars_repl(m):
-                content = m.group(1)
-                cleaned = re.sub(r"(?<!\\)\$", "", content)
-                return m.group(0).replace(content, cleaned)
+            # Ensure list blocks don't leave math mode unclosed before \end{itemize} or \end{enumerate}
+            def _balance_list_dollars(m):
+                content = m.group(0)
+                dollars = len(re.findall(r"(?<!\\)\$", content))
+                if dollars % 2 != 0:
+                    content = re.sub(r"(\\end\{(?:itemize|enumerate)\})", r"$\1", content, count=1)
+                return content
 
-            p = re.sub(r"\\\[(.*?)\\\]", _strip_dollars_repl, p, flags=re.DOTALL)
-            p = re.sub(r"\\begin\{(align\*?|equation\*?|gather\*?|multline\*?)\}(.*?)\\end\{\1\}", _strip_dollars_repl, p, flags=re.DOTALL)
+            p = re.sub(r"\\begin\{(?:itemize|enumerate)\}.*?\\end\{(?:itemize|enumerate)\}", _balance_list_dollars, p, flags=re.DOTALL)
+
+            # Strip unescaped dollar signs ONLY inside display math \[...\] blocks.
+            # Use non-greedy match but stop at the nearest \] to avoid cross-block capture.
+            def _strip_dollars_in_display(m):
+                inner = m.group(1)
+                cleaned = re.sub(r"(?<!\\)\$", "", inner)
+                return "\\[" + cleaned + "\\]"
+
+            p = re.sub(r"\\\[(.*?)\\\]", _strip_dollars_in_display, p, flags=re.DOTALL)
 
             # Clean any empty itemize left over
             p = re.sub(r"\\begin\{itemize\}\s*\\end\{itemize\}", "", p)
@@ -336,6 +357,63 @@ class LatexFrameRenderer:
             sanitized_pages.append(p)
 
         return "\n\n\\newpage\n\n".join(sanitized_pages)
+
+    @staticmethod
+    def _fix_superscripts_in_text(latex: str) -> str:
+        """
+        Fix bare ^ and _ inside \\text{...} commands which are illegal in
+        XeTeX text mode.  Converts e.g. \\text{y^{2}} → \\text{y$^{2}$}.
+
+        This handles the common LLM pattern of writing math notation inside
+        \\text{} annotation comments in align* environments without wrapping
+        the superscript/subscript in inline math delimiters.
+        """
+        def _fix_text_block(m: re.Match) -> str:
+            content = m.group(1)
+            # Wrap bare ^ and _ (that aren't already inside $...$) with $ $
+            # Step 1: find positions already inside inline math and protect them
+            protected = []
+            result = []
+            i = 0
+            in_math = False
+            while i < len(content):
+                if content[i] == '$' and (i == 0 or content[i-1] != '\\'):
+                    in_math = not in_math
+                    result.append(content[i])
+                elif not in_math and content[i] in ('^', '_'):
+                    # Capture the argument: either {grouped} or single char
+                    j = i + 1
+                    if j < len(content) and content[j] == '{':
+                        # Find closing }
+                        depth = 0
+                        k = j
+                        while k < len(content):
+                            if content[k] == '{':
+                                depth += 1
+                            elif content[k] == '}':
+                                depth -= 1
+                                if depth == 0:
+                                    break
+                            k += 1
+                        arg = content[j:k+1]
+                        result.append(f"${content[i]}{arg}$")
+                        i = k + 1
+                        continue
+                    elif j < len(content):
+                        result.append(f"${content[i]}{content[j]}$")
+                        i = j + 1
+                        continue
+                    else:
+                        result.append(content[i])
+                else:
+                    result.append(content[i])
+                i += 1
+            return r"\text{" + "".join(result) + "}"
+
+        # Match \text{ ... } — handle nested braces up to depth 3
+        return re.sub(r"\\text\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", _fix_text_block, latex)
+
+
 
     def _compile_presentation_pdf(self, latex_code: str) -> Optional[str]:
         """Runs local tectonic.exe to compile LaTeX presentation into PDF.
