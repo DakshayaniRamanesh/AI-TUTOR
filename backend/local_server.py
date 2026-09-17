@@ -380,6 +380,9 @@ async def compile_pdf(payload: dict):
     tex_path = os.path.join(temp_dir, "document.tex")
     pdf_path = os.path.join(temp_dir, "document.pdf")
 
+    from backend.video_generation.agents.latex_agents import repair_latex_document
+    latex_code = repair_latex_document(latex_code)
+
     with open(tex_path, "w", encoding="utf-8") as f:
         f.write(latex_code)
 

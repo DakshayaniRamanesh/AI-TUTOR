@@ -180,6 +180,97 @@ def _detect_educational_intent(text: str) -> str:
     return "theory"
 
 
+detect_educational_intent = _detect_educational_intent
+
+
+def balance_latex_environments(code: str) -> str:
+    """
+    Ensures all \\begin{env} have a matching \\end{env}.
+    Any unclosed environments are automatically closed before \\end{document}
+    (or at the end of the text if \\end{document} is absent).
+    """
+    if not code:
+        return code
+
+    clean_lines = []
+    for line in code.splitlines():
+        if line.strip().startswith('%'):
+            clean_lines.append('')
+        else:
+            clean_lines.append(line)
+    clean_text = '\n'.join(clean_lines)
+
+    env_pattern = re.compile(r'\\(begin|end)\{([a-zA-Z0-9*]+)\}')
+    stack = []
+    for m in env_pattern.finditer(clean_text):
+        cmd, name = m.group(1), m.group(2)
+        if name == 'document':
+            continue
+        if cmd == 'begin':
+            stack.append(name)
+        elif cmd == 'end':
+            if stack and stack[-1] == name:
+                stack.pop()
+            elif name in stack:
+                while stack and stack[-1] != name:
+                    stack.pop()
+                if stack:
+                    stack.pop()
+
+    if stack:
+        closing_tags = '\n'.join(f'\\end{{{env}}}' for env in reversed(stack))
+        if r'\end{document}' in code:
+            parts = code.rsplit(r'\end{document}', 1)
+            code = parts[0].rstrip() + '\n' + closing_tags + '\n\n\\end{document}' + parts[1]
+        else:
+            code = code.rstrip() + '\n' + closing_tags + '\n'
+
+    return code
+
+
+def repair_latex_document(code: str) -> str:
+    """
+    Sanitizes and repairs common LLM LaTeX output errors:
+    - Replaces markdown bold/italics (**text**, __text__) with \\textbf{text}
+    - Ensures display math \\[ has matching \\]
+    - Balances unclosed environments (itemize, enumerate, align*, etc.)
+    - Wraps document in valid article preamble if \\documentclass is missing
+    """
+    if not code:
+        return code
+
+    # 1. Convert markdown bold/italics to LaTeX
+    code = re.sub(r'\*\*(.+?)\*\*', r'\\textbf{\1}', code)
+    code = re.sub(r'__(.+?)__', r'\\textbf{\1}', code)
+
+    # 2. Wrap fragment if no documentclass
+    if r'\documentclass' not in code:
+        code = (
+            "\\documentclass[12pt]{article}\n"
+            "\\usepackage[margin=1in]{geometry}\n"
+            "\\usepackage{amsmath, amssymb, amsthm, xcolor, enumitem}\n"
+            "\\begin{document}\n\n"
+            f"{code}\n\n"
+            "\\end{document}\n"
+        )
+
+    # 3. Balance display math \[ ... \] if odd number of \[ and \]
+    # Use negative lookbehind so line breaks with optional spacing like \\[4pt] are not treated as display math \[
+    open_display = len(re.findall(r'(?<!\\)\\\[', code))
+    close_display = len(re.findall(r'(?<!\\)\\\]', code))
+    if open_display > close_display:
+        diff = open_display - close_display
+        if r'\end{document}' in code:
+            parts = code.rsplit(r'\end{document}', 1)
+            code = parts[0].rstrip() + '\n' + ('\\]\n' * diff) + '\\end{document}' + parts[1]
+        else:
+            code = code.rstrip() + '\n' + ('\\]\n' * diff)
+
+    # 4. Balance all environments
+    code = balance_latex_environments(code)
+    return code
+
+
 class LatexTranscribeAgent:
     """Uses Groq Vision (primary) or Google Gemini Vision (fallback) to extract raw LaTeX and math from handwriting."""
     
@@ -345,7 +436,7 @@ class LatexStructureAgent:
                                 {"role": "user", "content": prompt}
                             ],
                             temperature=0.2,
-                            max_tokens=1500,
+                            max_tokens=4000,
                             timeout=25.0
                         )
                         if response.choices and response.choices[0].message.content:
@@ -491,6 +582,13 @@ class LatexStructureAgent:
             sanitized.append(line)
         content = '\n'.join(sanitized)
 
+        # Convert markdown bold/italics
+        content = re.sub(r'\*\*(.+?)\*\*', r'\\textbf{\1}', content)
+        content = re.sub(r'__(.+?)__', r'\\textbf{\1}', content)
+
+        # Balance unclosed LaTeX environments in the body
+        content = balance_latex_environments(content)
+
         job.structured_latex = content.strip()
         return job
 
@@ -572,7 +670,7 @@ class TemplateApplyAgent:
                     f"{job.structured_latex or ''}\n\n"
                     "\\end{document}\n"
                 )
-            job.final_tex_code = final_tex
+            job.final_tex_code = repair_latex_document(final_tex)
             job.step = "LaTeX Generated"
             job.status = JobStatus.DONE
             job.progress_percentage = 60
@@ -603,6 +701,7 @@ class TectonicCompileAgent:
         tex_path = os.path.join(temp_dir, "document.tex")
         pdf_path = os.path.join(temp_dir, "document.pdf")
 
+        job.final_tex_code = repair_latex_document(job.final_tex_code)
         with open(tex_path, "w", encoding="utf-8") as f:
             f.write(job.final_tex_code)
 

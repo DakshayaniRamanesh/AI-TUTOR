@@ -691,7 +691,7 @@ class MainWindow(QMainWindow):
         btn_ref.setIconSize(QSize(18, 18))
         btn_ref.setToolTip("Reference Database")
         btn_ref.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_ref.clicked.connect(self._toggle_reference_panel)
+        btn_ref.clicked.connect(self._open_constants_library)
         layout.addWidget(btn_ref, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Highlight the first button (Home) as active
@@ -877,6 +877,16 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
+        # Non-Popup Speedometer Live Status Widget
+        self.speedometer_widget = SpeedometerProgressWidget(tb)
+        layout.addWidget(self.speedometer_widget)
+
+        # In-App View PDF Button (Appears on top right panel after PDF is exported)
+        self.btn_view_pdf = self._make_toolbar_btn('ri.file-pdf-line', "View PDF", tb, None, "View Compiled PDF In-App")
+        self.btn_view_pdf.clicked.connect(self._open_in_app_pdf_viewer)
+        self.btn_view_pdf.setVisible(False)
+        layout.addWidget(self.btn_view_pdf)
+
         # ── Save Button + Status Indicator ───────────────────────────────────
         c = ThemeManager.instance().get_colors()
         self.lbl_save_status = QLabel("", tb)
@@ -890,16 +900,7 @@ class MainWindow(QMainWindow):
 
         self.btn_save = self._make_toolbar_btn('ri.save-line', "Save", tb, None, "Save Notebook (Ctrl+S)")
         self.btn_save.setStyleSheet(primary_button_qss(c))
-        # Non-Popup Speedometer Live Status Widget
-        self.speedometer_widget = SpeedometerProgressWidget(tb)
-        layout.addWidget(self.speedometer_widget)
-
-        # In-App View PDF Button (Appears on top right panel after PDF is exported)
-        self.btn_view_pdf = self._make_toolbar_btn('ri.file-pdf-line', "View PDF", tb, None, "View Compiled PDF In-App")
-        self.btn_view_pdf.clicked.connect(self._open_in_app_pdf_viewer)
-        self.btn_view_pdf.setVisible(False)
-        layout.addWidget(self.btn_view_pdf)
-
+        self.btn_save.clicked.connect(self._on_toolbar_save)
         layout.addWidget(self.btn_save)
 
         layout.addWidget(self._make_toolbar_separator(tb))
@@ -1567,10 +1568,13 @@ class MainWindow(QMainWindow):
         self._refresh_folder_tree()
         self.folder_tree.select_folder(folder_id or "")
 
-    def _on_toolbar_save(self):
+    def _on_toolbar_save(self, *args):
         """Manual Save: immediately serializes the live scene and writes to disk.
-        No dialog — saves with the current notebook name. Shows brief status feedback.
+        No dialog if already named — saves with the current notebook name. Shows brief status feedback.
         """
+        if hasattr(self, 'title_edit') and self.title_edit.text().strip():
+            self.current_board.title = self.title_edit.text().strip()
+
         if not self._current_notebook_id:
             # No notebook open yet: prompt for name and create one
             current_name = self.current_board.title or "Untitled Notebook"
@@ -1607,6 +1611,8 @@ class MainWindow(QMainWindow):
             return
         try:
             self._set_save_status("Saving...")
+            if hasattr(self, 'title_edit') and self.title_edit.text().strip():
+                self.current_board.title = self.title_edit.text().strip()
             name = self.current_board.title or "Untitled Notebook"
             items_data = self.scene.to_dict_list()
             NotebookStorage.save_notebook(self._current_notebook_id, name, items_data)
@@ -1843,7 +1849,7 @@ class MainWindow(QMainWindow):
             self.pomodoro_timer.show()
             self.pomodoro_timer.raise_()
 
-    def _toggle_reference_panel(self):
+    def _open_constants_library(self):
         """Switches main stack to the full-page Constants Library view."""
         if hasattr(self, 'constants_library_view'):
             self.main_stack.setCurrentWidget(self.constants_library_view)
@@ -2057,6 +2063,8 @@ class MainWindow(QMainWindow):
                 return
 
         self.pdf_viewer_widget.load_latex_pdf(save_path)
+        if hasattr(self, 'latex_editor_widget') and self.latex_editor_widget:
+            self.latex_editor_widget.load_pdf(save_path)
         self._show_or_update_tab(self.pdf_viewer_widget, f"PDF: {filename}")
 
     def _on_latex_failed(self, job_id, error_msg):

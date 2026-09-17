@@ -58,10 +58,49 @@ def request_latex_generation(image_b64: str, template_type: str, mode: str = "st
     return job_id, True
 
 
+def repair_latex_document(code: str) -> str:
+    """Sanitizes and repairs common LaTeX syntax issues (unclosed environments, markdown bold)."""
+    try:
+        from backend.video_generation.agents.latex_agents import repair_latex_document as _repair
+        return _repair(code)
+    except Exception:
+        import re
+        if not code:
+            return code
+        code = re.sub(r'\*\*(.+?)\*\*', r'\\textbf{\1}', code)
+        code = re.sub(r'__(.+?)__', r'\\textbf{\1}', code)
+        env_pattern = re.compile(r'\\(begin|end)\{([a-zA-Z0-9*]+)\}')
+        stack = []
+        clean_lines = [l if not l.strip().startswith('%') else '' for l in code.splitlines()]
+        for m in env_pattern.finditer('\n'.join(clean_lines)):
+            cmd, name = m.group(1), m.group(2)
+            if name == 'document':
+                continue
+            if cmd == 'begin':
+                stack.append(name)
+            elif cmd == 'end':
+                if stack and stack[-1] == name:
+                    stack.pop()
+                elif name in stack:
+                    while stack and stack[-1] != name:
+                        stack.pop()
+                    if stack:
+                        stack.pop()
+        if stack:
+            closing = '\n'.join(f'\\end{{{e}}}' for e in reversed(stack))
+            if r'\end{document}' in code:
+                parts = code.rsplit(r'\end{document}', 1)
+                code = parts[0].rstrip() + '\n' + closing + '\n\n\\end{document}' + parts[1]
+            else:
+                code = code.rstrip() + '\n' + closing + '\n'
+        return code
+
+
 def compile_custom_latex_pdf(latex_code: str, target_path: str) -> tuple[bool, str]:
     """
     Submits raw LaTeX code to compiler (via HTTP or in-process Tectonic binary), and saves result to target_path.
     """
+    latex_code = repair_latex_document(latex_code)
     # 1. Try local server endpoint
     try:
         resp = requests.post(
@@ -183,7 +222,7 @@ class LatexPollWorker(QThread):
                     return
 
             stage_name = "Transcribing & Structuring" if attempts < 10 else "Processing LaTeX"
-            self.status_updated.emit(self.job_id, f"{stage_name} ({attempts*2}s)...", min(95, attempts * 3))
+            self.status_updated.emit(self.job_id, f"📝 {stage_name} ({attempts*2}s)...", min(95, attempts * 3))
 
         # Fallback to direct local if polling timed out
         if self._running:

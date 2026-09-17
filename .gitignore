@@ -53,6 +53,9 @@ opengl_test/
 smoke_media/
 partial_movie_files/
 backend/workspace/videos/
+backend/workspace/artifacts/
+backend/workspace/audio/
+backend/workspace/pdfs/
 *.mp4
 *.avi
 *.mov

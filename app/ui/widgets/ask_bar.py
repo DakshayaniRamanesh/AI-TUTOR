@@ -113,52 +113,6 @@ class AskBar(QWidget):
         # Initialise mic to idle visual state
         self._set_mic_state(_STATE_IDLE)
 
-        # ── DIAGNOSTIC PRINTS (Immediate & Post-Layout) ────────────────────────
-        print("\n" + "="*50)
-        print("[AskBar DIAGNOSTIC - Immediate _init_ui]")
-        print(f"AskBar main_layout count: {main_layout.count()}")
-        print(f"btn_mic object: {self.btn_mic}")
-        print(f"btn_mic isVisible (pre-show): {self.btn_mic.isVisible()}")
-        print(f"btn_mic geometry: x={self.btn_mic.x()}, y={self.btn_mic.y()}, w={self.btn_mic.width()}, h={self.btn_mic.height()}")
-        print(f"btn_mic active stylesheet:\n{self.btn_mic.styleSheet()}")
-        print("="*50 + "\n")
-
-        # Delayed inspection after main window completes layout and renders
-        QTimer.singleShot(1500, self._print_runtime_diagnostics)
-
-    def _print_runtime_diagnostics(self):
-        print("\n" + "#"*60)
-        print("[AskBar DIAGNOSTIC - Post-Layout / Runtime Check]")
-        print(f"AskBar visible: {self.isVisible()}, size: {self.width()}x{self.height()}, pos: ({self.x()}, {self.y()})")
-        print(f"AskBar parent: {self.parent()}")
-        
-        container = self.findChild(QWidget, "AskBarContainer")
-        if container:
-            cl = container.layout()
-            print(f"AskBarContainer visible: {container.isVisible()}, size: {container.width()}x{container.height()}")
-            print(f"AskBarContainer layout items count: {cl.count() if cl else 'No layout'}")
-            if cl:
-                for i in range(cl.count()):
-                    item = cl.itemAt(i)
-                    w = item.widget()
-                    if w:
-                        print(f"  Item [{i}] Class={w.__class__.__name__}, ObjectName='{w.objectName()}', "
-                              f"Visible={w.isVisible()}, Geometry=({w.x()}, {w.y()}, {w.width()}x{w.height()})")
-                    else:
-                        print(f"  Item [{i}] Non-widget item: {item}")
-        else:
-            print("AskBarContainer NOT found!")
-
-        print(f"\nbtn_mic Details:")
-        print(f"  btn_mic isVisible(): {self.btn_mic.isVisible()}")
-        print(f"  btn_mic isHidden(): {self.btn_mic.isHidden()}")
-        print(f"  btn_mic isEnabled(): {self.btn_mic.isEnabled()}")
-        print(f"  btn_mic geometry(): x={self.btn_mic.x()}, y={self.btn_mic.y()}, w={self.btn_mic.width()}, h={self.btn_mic.height()}")
-        print(f"  btn_mic icon isNull: {self.btn_mic.icon().isNull()}")
-        print(f"  btn_mic iconSize: {self.btn_mic.iconSize().width()}x{self.btn_mic.iconSize().height()}")
-        print(f"  btn_mic active stylesheet:\n{self.btn_mic.styleSheet()}")
-        print("#"*60 + "\n")
-
     # ─────────────────────────────────────────────────────────────────────────
     # Mic state machine
     # ─────────────────────────────────────────────────────────────────────────

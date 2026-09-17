@@ -28,7 +28,8 @@ class GitError(Exception):
 class GitNotesManager:
     def __init__(self, repo_dir: Optional[str] = None):
         if not repo_dir:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            from pathlib import Path
+            base_dir = str(Path(__file__).resolve().parents[3])
             repo_dir = os.path.join(base_dir, "storage_data", "git_notes_repo")
         
         self.repo_dir = repo_dir

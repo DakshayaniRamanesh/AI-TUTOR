@@ -17,7 +17,6 @@ Bug & UX Fixes:
 """
 
 import sys
-print(f"[MODULE LOAD] shape_properties_panel.py loaded from: {__file__}", flush=True)
 
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QComboBox,

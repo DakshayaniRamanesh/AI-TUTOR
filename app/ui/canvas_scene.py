@@ -204,12 +204,40 @@ class CanvasScene(QGraphicsScene):
             if item == self._active_shape_item:
                 self.deactivate_active_shape()
             self.removeItem(item)
-        if items_to_remove:
-            self.scene_changed.emit()
+    def removeItem(self, item):
+        try:
+            if hasattr(self, '_recent_ink_strokes') and item in self._recent_ink_strokes:
+                self._recent_ink_strokes.remove(item)
+        except Exception:
+            pass
+        super().removeItem(item)
 
     def clear_all(self):
         self.deactivate_active_shape()
+        if hasattr(self, '_recent_ink_strokes'):
+            self._recent_ink_strokes.clear()
         self.clear()
+
+    def _is_valid_item(self, item) -> bool:
+        """Safely check if a QGraphicsItem is alive in Qt C++ and belongs to this scene."""
+        if item is None:
+            return False
+        try:
+            from PyQt6.sip import isdeleted
+            if isdeleted(item):
+                return False
+        except Exception:
+            pass
+        try:
+            return item.scene() == self
+        except (RuntimeError, ReferenceError):
+            return False
+
+    def _clean_recent_ink_strokes(self) -> list:
+        """Filter out deleted or detached ink strokes from _recent_ink_strokes."""
+        alive = [s for s in getattr(self, '_recent_ink_strokes', []) if self._is_valid_item(s)]
+        self._recent_ink_strokes = alive
+        return alive
 
     def activate_shape(self, shape_item):
         """Activates an item, attaching interactive resize handles and properties panel."""
@@ -350,29 +378,41 @@ class CanvasScene(QGraphicsScene):
             if dims:
                 item.set_dimensions_px(dims)
 
-        elif itype == "InkStroke":
+        elif itype in ["InkStroke", "ink", "ink_stroke", "stroke"]:
             # NOTE: to_dict() saves key "elements" — NOT "path_elements".
             path = QPainterPath()
             elements = data.get("elements") or data.get("path_elements", [])
-            i = 0
-            while i < len(elements):
-                el = elements[i]
-                el_type = el.get("type", -1)
-                if el_type == 0:   # MoveTo
-                    path.moveTo(el["x"], el["y"])
-                    i += 1
-                elif el_type == 1: # LineTo
-                    path.lineTo(el["x"], el["y"])
-                    i += 1
-                elif el_type == 2: # CurveTo (control point 1 — next two are ctrl2 + end)
-                    if i + 2 < len(elements):
-                        el2, el3 = elements[i + 1], elements[i + 2]
-                        path.cubicTo(el["x"], el["y"], el2["x"], el2["y"], el3["x"], el3["y"])
-                        i += 3
+            if elements:
+                i = 0
+                while i < len(elements):
+                    el = elements[i]
+                    el_type = el.get("type", -1)
+                    if el_type == 0:   # MoveTo
+                        path.moveTo(el["x"], el["y"])
+                        i += 1
+                    elif el_type == 1: # LineTo
+                        path.lineTo(el["x"], el["y"])
+                        i += 1
+                    elif el_type == 2: # CurveTo (control point 1 — next two are ctrl2 + end)
+                        if i + 2 < len(elements):
+                            el2, el3 = elements[i + 1], elements[i + 2]
+                            path.cubicTo(el["x"], el["y"], el2["x"], el2["y"], el3["x"], el3["y"])
+                            i += 3
+                        else:
+                            i += 1  # Incomplete curve — skip
                     else:
-                        i += 1  # Incomplete curve — skip
-                else:
-                    i += 1  # CurveToData or unknown — already consumed by type 2
+                        i += 1  # CurveToData or unknown — already consumed by type 2
+            elif "points" in data:
+                pts = data["points"]
+                if pts:
+                    first = pts[0]
+                    fx = first.get("x", first[0]) if isinstance(first, (dict, list, tuple)) else 0
+                    fy = first.get("y", first[1]) if isinstance(first, (dict, list, tuple)) else 0
+                    path.moveTo(float(fx), float(fy))
+                    for pt in pts[1:]:
+                        px = pt.get("x", pt[0]) if isinstance(pt, (dict, list, tuple)) else 0
+                        py = pt.get("y", pt[1]) if isinstance(pt, (dict, list, tuple)) else 0
+                        path.lineTo(float(px), float(py))
             item = InkStroke(
                 path=path,
                 tool_mode=data.get("tool_mode", "pen"),
@@ -820,7 +860,7 @@ class CanvasScene(QGraphicsScene):
 
         from ..backend.ocr.handwriting_ocr import recognize_handwriting
 
-        valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
+        valid_strokes = self._clean_recent_ink_strokes()
         if not valid_strokes:
             self._recent_ink_strokes.clear()
             return
@@ -892,7 +932,7 @@ class CanvasScene(QGraphicsScene):
         This method spawns a background QThread to do the OCR work and emits
         auto_ai_requested only from the thread-finished callback on the main thread.
         """
-        valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
+        valid_strokes = self._clean_recent_ink_strokes()
         if not valid_strokes:
             return
 
@@ -949,23 +989,26 @@ class CanvasScene(QGraphicsScene):
         If a prompt is already known it is used directly; otherwise Groq Vision OCR
         runs in a background QThread so the canvas never freezes.
         """
-        valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
+        valid_strokes = self._clean_recent_ink_strokes()
         if not valid_strokes:
             # Fallback 1: check if user has strokes selected with lasso or selection tool
             from PyQt6.QtWidgets import QGraphicsPathItem
-            selected = [it for it in self.selectedItems() if isinstance(it, QGraphicsPathItem) and it.scene() == self]
+            selected = [it for it in self.selectedItems() if isinstance(it, QGraphicsPathItem) and self._is_valid_item(it)]
             if selected:
                 valid_strokes = selected
             else:
                 # Fallback 2: check if any recent ink path items exist on the scene
-                all_paths = [it for it in self.items() if isinstance(it, QGraphicsPathItem) and it.scene() == self]
+                all_paths = [it for it in self.items() if isinstance(it, QGraphicsPathItem) and self._is_valid_item(it)]
                 if all_paths:
                     valid_strokes = all_paths[-15:]
 
         if valid_strokes:
-            min_y = min(s.sceneBoundingRect().y() for s in valid_strokes)
-            max_x = max(s.sceneBoundingRect().right() for s in valid_strokes)
-            target_pos = QPointF(max_x + 35, min_y)
+            try:
+                min_y = min(s.sceneBoundingRect().y() for s in valid_strokes)
+                max_x = max(s.sceneBoundingRect().right() for s in valid_strokes)
+                target_pos = QPointF(max_x + 35, min_y)
+            except (RuntimeError, ReferenceError):
+                target_pos = QPointF(200, 200)
         else:
             target_pos = QPointF(200, 200)
 

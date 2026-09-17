@@ -535,3 +535,34 @@ class TestUnknownTypeFallback:
         """Dict with no 'type' key is handled gracefully."""
         result = scene.create_item_from_dict({"x": 10, "y": 20})
         assert result is None
+
+
+# ===========================================================================
+# E. Toolbar Save button click integration
+# ===========================================================================
+
+class TestToolbarSaveButton:
+    def test_save_button_triggers_save(self, qt_app, tmp_path, monkeypatch):
+        """Clicking btn_save on MainWindow triggers _on_toolbar_save and writes to storage."""
+        from app.ui.main_window import MainWindow
+        from app.storage.notebook_storage import NotebookStorage
+        from PyQt6.QtWidgets import QInputDialog
+
+        tmp_boards = tmp_path / "boards"
+        tmp_boards.mkdir()
+        tmp_index = tmp_path / "notebooks_index.json"
+        monkeypatch.setattr("app.storage.notebook_storage.BOARDS_DIR", str(tmp_boards))
+        monkeypatch.setattr("app.storage.notebook_storage.INDEX_FILE", str(tmp_index))
+
+        win = MainWindow()
+        monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("Test Notebook Via Click", True))
+
+        # Click the actual toolbar save button
+        win.btn_save.click()
+
+        assert win._current_notebook_id is not None
+        assert "Saved" in win.lbl_save_status.text()
+        index = NotebookStorage.get_index()
+        assert len(index) == 1
+        assert index[0]["name"] == "Test Notebook Via Click"
+        win.close()
