@@ -241,11 +241,11 @@ class VideoPlayerWidget(QWidget):
         if self.video_path and self.video_path.startswith("http"):
             filename = self.video_path.split("/")[-1]
         elif self.video_path and self.video_path.startswith("data:"):
-            filename = f"manim_video_{int(time.time())}.mp4"
+            filename = f"ai_tutor_video_{int(time.time())}.mp4"
         elif self.video_path:
             filename = os.path.basename(self.video_path)
         else:
-            filename = "manim_video.mp4"
+            filename = "ai_tutor_video.mp4"
             
         local_path = os.path.join(DOWNLOADS_DIR, filename)
         
@@ -267,7 +267,7 @@ class VideoPlayerWidget(QWidget):
             self.btn_download.setText("⚠ Failed")
 
 class VideoFloatItem(QGraphicsProxyWidget, BaseGraphicsItemMixin):
-    def __init__(self, job_id: str = "", title: str = "Manim Video", video_url_or_path: str = "", parent=None):
+    def __init__(self, job_id: str = "", title: str = "AI Tutor Video", video_url_or_path: str = "", parent=None):
         super().__init__(parent)
         self.setup_base_properties()
         self.setZValue(15) # Floating on top

@@ -65,6 +65,13 @@ _STEP_LABELS: dict[str, str] = {
     "renderer_agent": "Rendering video...",
     "uploader_agent": "Finalizing video...",
     "notes_generator": "Generating study notes...",
+    # LaTeX Video Pipeline steps
+    "latex_structuring": "Understanding your material...",
+    "latex_parsing": "Structuring educational explanation...",
+    "animation_planning": "Designing visual presentation & timing...",
+    "frame_rendering": "Rendering high-resolution lesson frames...",
+    "video_encoding": "Finalizing video...",
+    "completed": "Video Complete!",
 }
 
 # ── User-facing error code map ─────────────────────────────────────────────────
@@ -77,6 +84,8 @@ _ERROR_LABELS: dict[str, str] = {
     "No animation code": "No animation was produced. Please try again.",
     "Manim render failed": "The animation could not be rendered. Kestrel is retrying.",
     "Rendering failed unexpectedly": "An unexpected rendering error occurred. Please try again.",
+    "LaTeX compilation failed": "The lesson could not be rendered. Kestrel is correcting the generated content.",
+    "FFmpeg video encoding failed": "The video could not be finalized. Please try again.",
 }
 
 
@@ -104,31 +113,77 @@ def run_job_background(job: VideoJob):
 @app.post("/generate", response_model=VideoGenerationResponse)
 async def generate(
     background_tasks: BackgroundTasks,
-    request: VideoGenerationRequest = Body(...)
+    request: Request
 ):
     job_id = f"job_{uuid.uuid4().hex[:8]}"
-    
-    # Optional logic for decoding document text back to a local PDF for the pipeline
-    pdf_path = request.pdf_path
-    if request.document_text and not pdf_path:
+    content_type = request.headers.get("content-type", "").lower()
+
+    user_prompt = ""
+    pdf_path = ""
+    document_text = ""
+    page_range = None
+    emphasis_note = None
+    output_type = "video"
+    subject_id = None
+    board_selection_raw = None
+
+    if "application/json" in content_type:
+        body = await request.json()
+        user_prompt = body.get("user_prompt") or body.get("prompt") or ""
+        pdf_path = body.get("pdf_path") or ""
+        document_text = body.get("document_text") or ""
+        page_range = body.get("page_range")
+        emphasis_note = body.get("emphasis_note")
+        output_type = body.get("output_type", "video")
+        subject_id = body.get("subject_id")
+        board_selection_raw = body.get("board_selection") or body.get("selection_json")
+    else:
+        # Handle multipart/form-data or application/x-www-form-urlencoded
+        form = await request.form()
+        user_prompt = str(form.get("user_prompt") or form.get("prompt") or "")
+        pdf_path = str(form.get("pdf_path") or "")
+        document_text = str(form.get("document_text") or "")
+        page_range = form.get("page_range")
+        emphasis_note = form.get("emphasis_note")
+        output_type = str(form.get("output_type") or "video")
+        subject_id = form.get("subject_id")
+        board_selection_raw = form.get("board_selection") or form.get("selection_json")
+
+        if "pdf" in form:
+            pdf_file = form["pdf"]
+            if hasattr(pdf_file, "read"):
+                temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                content = await pdf_file.read()
+                temp_pdf.write(content)
+                temp_pdf.close()
+                pdf_path = temp_pdf.name
+
+    if isinstance(board_selection_raw, str) and board_selection_raw.strip():
+        try:
+            import json
+            board_selection_raw = json.loads(board_selection_raw)
+        except Exception:
+            pass
+
+    if document_text and not pdf_path:
         temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        temp_pdf.write(base64.b64decode(request.document_text))
+        temp_pdf.write(base64.b64decode(document_text))
         temp_pdf.close()
         pdf_path = temp_pdf.name
 
     board_selection = None
-    if request.board_selection:
-        board_selection = BoardSelection.from_dict(request.board_selection)
+    if board_selection_raw:
+        board_selection = BoardSelection.from_dict(board_selection_raw)
 
     job = VideoJob(
         job_id=job_id,
         pdf_path=pdf_path,
-        user_prompt=request.user_prompt,
+        user_prompt=user_prompt,
         document_text="",
-        page_range=request.page_range,
-        emphasis_note=request.emphasis_note,
-        output_type=request.output_type,
-        subject_id=request.subject_id,
+        page_range=page_range,
+        emphasis_note=emphasis_note,
+        output_type=output_type,
+        subject_id=subject_id,
         board_selection=board_selection,
     )
     jobs_store[job_id] = job
@@ -324,6 +379,9 @@ async def compile_pdf(payload: dict):
     temp_dir = tempfile.mkdtemp()
     tex_path = os.path.join(temp_dir, "document.tex")
     pdf_path = os.path.join(temp_dir, "document.pdf")
+
+    from backend.video_generation.agents.latex_agents import repair_latex_document
+    latex_code = repair_latex_document(latex_code)
 
     with open(tex_path, "w", encoding="utf-8") as f:
         f.write(latex_code)

@@ -56,6 +56,7 @@ class GhostChalkItem(QGraphicsObject):
         self._anim.setEndValue(1.0)
         self._anim.setEasingCurve(QEasingCurve.Type.InOutSine)
         self._anim.finished.connect(self._on_draw_finished)
+        self.start_animation()
 
     # ── Qt Property: progress ─────────────────────────────────────────────────
 

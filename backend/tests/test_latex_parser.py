@@ -1,0 +1,186 @@
+"""
+Unit tests for the LaTeX Semantic Parser.
+Verifies identification of sections, subsections, equations, derivations (align*),
+lists (itemize, enumerate), tables, and boxed highlights into the LessonDocument IR.
+"""
+
+import pytest
+from backend.latex_video.latex_parser import LatexSemanticParser
+from backend.latex_video.document_model import ElementType, ImportanceLevel
+
+
+@pytest.fixture
+def parser():
+    return LatexSemanticParser()
+
+
+def test_parse_sections_and_subsections(parser):
+    tex = r"""
+\section{Newton's Second Law}
+
+\subsection{The Core Idea}
+A net force acting on an object causes an acceleration proportional to the force.
+
+\subsection{Mathematical Statement}
+\[
+\mathbf{F} = m\mathbf{a}
+\]
+"""
+    doc = parser.parse(tex, fallback_title="Physics Lesson")
+    assert len(doc.sections) >= 1
+    
+    types = [e.type for e in doc.all_elements]
+    assert ElementType.SECTION in types
+    assert ElementType.SUBSECTION in types
+    assert ElementType.PARAGRAPH in types
+    assert ElementType.EQUATION_DISPLAY in types
+
+
+def test_parse_align_derivation_steps(parser):
+    tex = r"""
+\section*{Step-by-Step Calculus Derivation}
+Consider the limit definition:
+\begin{align*}
+f'(x) &= \lim_{h \to 0} \frac{f(x+h) - f(x)}{h} \\
+&= \lim_{h \to 0} \frac{(x+h)^2 - x^2}{h} \\
+&= \lim_{h \to 0} (2x + h) \\
+&= 2x
+\end{align*}
+"""
+    doc = parser.parse(tex)
+    step_elements = [e for e in doc.all_elements if e.type == ElementType.EQUATION_STEP]
+    
+    # 4 distinct derivation steps
+    assert len(step_elements) == 4
+    for step in step_elements:
+        assert step.align_env is True
+        assert "&=" in step.raw_content or "&" in step.raw_content
+
+
+def test_parse_lists(parser):
+    tex = r"""
+\section*{Properties of Binary Search}
+Key characteristics:
+\begin{itemize}
+\item Efficient logarithmic search time $\mathcal{O}(\log N)$.
+\item Requires the array to be pre-sorted.
+\item Can be implemented iteratively or recursively.
+\end{itemize}
+
+Numbered steps:
+\begin{enumerate}
+\item Find midpoint.
+\item Compare target with mid.
+\item Halve the search space.
+\end{enumerate}
+"""
+    doc = parser.parse(tex)
+    bullets = [e for e in doc.all_elements if e.type == ElementType.BULLET_ITEM]
+    numbered = [e for e in doc.all_elements if e.type == ElementType.NUMBERED_ITEM]
+    
+    assert len(bullets) == 3
+    assert len(numbered) == 3
+    assert "logarithmic" in bullets[0].clean_text.lower()
+    assert "midpoint" in numbered[0].clean_text.lower()
+
+
+def test_parse_boxed_result(parser):
+    tex = r"""
+\section*{Final Answer}
+The resulting derivative is:
+\[
+\boxed{\frac{d}{dx} x^2 = 2x}
+\]
+"""
+    doc = parser.parse(tex)
+    boxed = [e for e in doc.all_elements if e.type == ElementType.BOXED_RESULT or e.is_boxed]
+    assert len(boxed) >= 1
+    assert boxed[0].importance == ImportanceLevel.HIGH
+
+
+def test_complexity_scoring(parser):
+    simple_tex = r"Simple text statement."
+    complex_tex = r"\[ \int_{-\infty}^{\infty} \frac{\sqrt{x^2 + \alpha}}{\sum_{k=1}^n \beta_k} dx \]"
+    
+    doc1 = parser.parse(simple_tex)
+    doc2 = parser.parse(complex_tex)
+    
+    simple_elem = doc1.all_elements[0]
+    complex_elem = doc2.all_elements[0]
+    
+    assert complex_elem.complexity_score > simple_elem.complexity_score
+
+
+def test_parse_cases_and_matrix_environments(parser):
+    tex = r"""
+\section{System of Equations}
+Solve the system:
+\begin{cases}
+y^2 + x = 5 \\
+x + y = 4
+\end{cases}
+Matrix representation:
+\begin{pmatrix}
+1 & 2 \\
+3 & 4
+\end{pmatrix}
+"""
+    doc = parser.parse(tex)
+    eq_elements = [e for e in doc.all_elements if e.type == ElementType.EQUATION_DISPLAY]
+    assert len(eq_elements) == 2
+    
+    # Cases environment
+    cases_elem = eq_elements[0]
+    assert r"\begin{cases}" in cases_elem.raw_content
+    assert "begin" not in cases_elem.clean_text.lower()
+    
+    # Matrix environment
+    matrix_elem = eq_elements[1]
+    assert r"\begin{pmatrix}" in matrix_elem.raw_content
+    assert "pmatrix" not in matrix_elem.clean_text.lower()
+
+
+def test_cases_to_latex_snippet_wrapped(parser):
+    tex = r"""
+\begin{cases}
+y^2 + x = 5 \\
+x + y = 4
+\end{cases}
+"""
+    doc = parser.parse(tex)
+    cases_elem = doc.all_elements[0]
+    snippet = cases_elem.to_latex_snippet()
+    assert snippet.startswith(r"\[")
+    assert snippet.endswith(r"\]" + "\n")
+
+
+def test_wrap_bare_math_environments_sanitizer():
+    from backend.latex_video.frame_renderer import LatexFrameRenderer
+    
+    # Bare cases in text mode
+    bare_tex = r"""
+Some text
+\begin{cases}
+a = 1 \\
+b = 2
+\end{cases}
+More text
+"""
+    sanitized = LatexFrameRenderer._wrap_bare_math_environments(bare_tex)
+    assert r"\[" in sanitized
+    assert r"\]" in sanitized
+    assert r"\[" + "\n" + r"\begin{cases}" in sanitized
+
+    # Already inside \[ ... \] should NOT be double wrapped
+    already_wrapped = r"""
+\[
+\begin{cases}
+a = 1 \\
+b = 2
+\end{cases}
+\]
+"""
+    sanitized2 = LatexFrameRenderer._wrap_bare_math_environments(already_wrapped)
+    assert sanitized2.count(r"\[") == 1
+    assert sanitized2.count(r"\]") == 1
+

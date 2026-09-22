@@ -6,7 +6,7 @@ Frameless macOS Window Design with Traffic Light Controls, Sidebar (~260px), Top
 import os
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QListWidget,
-    QListWidgetItem, QPushButton, QLineEdit, QLabel, QFrame,
+    QListWidgetItem, QPushButton, QLineEdit, QTextEdit, QPlainTextEdit, QLabel, QFrame,
     QSplitter, QStackedWidget, QFileDialog, QInputDialog, QMessageBox,
     QGraphicsDropShadowEffect, QMenu, QComboBox, QTabWidget, QTabBar, QApplication
 )
@@ -969,7 +969,7 @@ class MainWindow(QMainWindow):
         # Developer 1: Allow Spacebar to trigger "Check My Work" when canvas is focused
         if event.key() == Qt.Key.Key_Space:
             focus_w = QApplication.focusWidget()
-            if not isinstance(focus_w, (QLineEdit, QTextEdit)):
+            if not isinstance(focus_w, (QLineEdit, QTextEdit, QPlainTextEdit)):
                 self._on_check_my_work()
                 event.accept()
                 return
@@ -983,28 +983,68 @@ class MainWindow(QMainWindow):
         3. Speaks tutor feedback via local VoiceSpeaker.
         4. Displays SocraticHintBubble with citation & 3-level progressive hints.
         """
+        scene = getattr(self, 'scene', None)
+        view = getattr(self, 'view', None)
+        if not scene:
+            return
+
+        # Ensure the canvas view is active and visible if user was on another screen
+        if hasattr(self, 'main_stack') and hasattr(self, '_canvas_wrapper'):
+            self.main_stack.setCurrentWidget(self._canvas_wrapper)
+            self._set_sidebar_active_button("canvas")
+
         target_rect = None
-        if hasattr(self, 'canvas_scene') and self.canvas_scene:
-            items = [item for item in self.canvas_scene.items() if hasattr(item, 'sceneBoundingRect') and item.zValue() < 900]
+        # 1. First priority: Check if student has selected items
+        selected = scene.selectedItems()
+        if selected:
+            target_rect = selected[0].sceneBoundingRect()
+            for it in selected[1:]:
+                target_rect = target_rect.united(it.sceneBoundingRect())
+
+        # 2. Second priority: Find user's handwritten ink strokes or smart shapes
+        if not target_rect:
+            from .items.ink_stroke import InkStroke
+            from .items.smart_shape_item import SmartShapeItem
+            ink_items = [i for i in scene.items() if isinstance(i, (InkStroke, SmartShapeItem))]
+            if ink_items:
+                target_rect = ink_items[0].sceneBoundingRect()
+                for it in ink_items[1:min(4, len(ink_items))]:
+                    if target_rect.intersects(it.sceneBoundingRect().adjusted(-80, -80, 80, 80)):
+                        target_rect = target_rect.united(it.sceneBoundingRect())
+
+        # 3. Third priority: Other text or card items on canvas
+        if not target_rect:
+            items = [item for item in scene.items() if hasattr(item, 'sceneBoundingRect') and item.zValue() < 900]
             if items:
                 target_rect = items[0].sceneBoundingRect()
-            if not target_rect or target_rect.width() < 10 or target_rect.height() < 10:
-                target_rect = QRectF(200, 150, 140, 60)
 
-            pointer_pos = QPointF(target_rect.right() + 20, target_rect.center().y())
+        # 4. Fallback if canvas is blank: place a sample student math problem to demonstrate
+        if not target_rect or target_rect.width() < 10 or target_rect.height() < 10:
+            center_pos = view.mapToScene(view.viewport().rect().center()) if view else QPointF(200, 150)
+            sample_item = scene.addText("Step 1:  3x - (2x - 5) = 14\nStep 2:  3x - 2x - 5 = 14\nStep 3:  x - 5 = 14")
+            sample_item.setDefaultTextColor(QColor("#0f172a"))
+            sample_item.setFont(QFont("Consolas", 14))
+            sample_item.setPos(center_pos.x() - 120, center_pos.y() - 40)
+            target_rect = QRectF(center_pos.x() - 110, center_pos.y() - 10, 190, 35)
 
-            self.canvas_scene.show_tutor_feedback(
-                target_rect=target_rect,
-                pointer_pos=pointer_pos,
-                spoken_message="Take a look at your second step. The signs do not match the previous line.",
-                citation="Calculus: Early Transcendentals, §3.4, p.142",
-                hints=[
-                    "Check the signs when applying the distributive property.",
-                    "Recall: -(a - b) = -a + b or factor out (-1).",
-                    "In line 2, -(2x - 5) should become -2x + 5, not -2x - 5."
-                ],
-                mode="error"
-            )
+        # Smoothly pan/center viewport if needed so the student sees the action
+        if view:
+            view.ensureVisible(target_rect.adjusted(-120, -120, 120, 120))
+
+        pointer_pos = QPointF(target_rect.right() + 20, target_rect.center().y())
+
+        scene.show_tutor_feedback(
+            target_rect=target_rect,
+            pointer_pos=pointer_pos,
+            spoken_message="Take a look at your second step. The signs do not match the previous line.",
+            citation="Calculus: Early Transcendentals, §3.4, p.142",
+            hints=[
+                "Check the signs when applying the distributive property.",
+                "Recall: -(a - b) = -a + b or factor out (-1).",
+                "In line 2, -(2x - 5) should become -2x + 5, not -2x - 5."
+            ],
+            mode="error"
+        )
 
     def _create_hud_overlay(self) -> QWidget:
         c = ThemeManager.instance().get_colors()
@@ -1226,6 +1266,8 @@ class MainWindow(QMainWindow):
             self._convert_to_latex()
         elif action == "video":
             self._generate_video_from_canvas()
+        elif action == "check_work":
+            self._on_check_my_work()
         elif action == "more":
             self._show_overflow_menu()
             
@@ -1900,7 +1942,7 @@ class MainWindow(QMainWindow):
             self.speedometer_widget.start_task("Generating Video...")
             
         from .items.video_float_item import VideoPlayerWidget
-        player_widget = VideoPlayerWidget(job_id=job_id, title=f"Manim: {selected_text[:18]}...", parent=self.canvas_tabs)
+        player_widget = VideoPlayerWidget(job_id=job_id, title=f"Video: {selected_text[:18]}...", parent=self.canvas_tabs)
         if hasattr(player_widget, 'worker') and hasattr(self, 'speedometer_widget'):
             player_widget.worker.status_updated.connect(lambda job_id, stage, prog: self.speedometer_widget.update_progress(stage, prog))
             
@@ -1931,7 +1973,7 @@ class MainWindow(QMainWindow):
             subject_id=current_subject or ""
         )
         
-        title = "Markdown: Study Notes" if out_type == "notes" else "Manim: Video Lesson"
+        title = "Markdown: Study Notes" if out_type == "notes" else "Video Lesson"
         
         if hasattr(self, 'speedometer_widget'):
             self.speedometer_widget.start_task(f"Generating {out_type}...")
@@ -2023,6 +2065,14 @@ class MainWindow(QMainWindow):
             raw_pos = self.view.last_mouse_scene_pos
         else:
             raw_pos = self.view.mapToScene(self.view.viewport().rect().center())
+
+        # 0. Check for "Check My Work" / Socratic Tutor Feedback Request
+        q_lower = q.lower()
+        if any(k in q_lower for k in ["check my work", "check work", "check math", "check step", "check my step", "verify work", "verify step", "is this right", "is this correct", "look at my work", "check answer"]):
+            self._on_check_my_work()
+            if hasattr(self, "magic_orb"):
+                self.magic_orb.set_state("idle")
+            return
 
         # 1. Check for Instant Built-In Interactive Widget Preset (Clock, Flappy Bird, Snake, Calculator, etc.)
         from .items.interactive_widgets.dynamic_builder import (
@@ -2574,7 +2624,7 @@ class MainWindow(QMainWindow):
             self.speedometer_widget.start_task("Generating Video...")
 
         from .items.video_float_item import VideoPlayerWidget
-        title = f"Manim: {prompt_text[:20]}..."
+        title = f"Video: {prompt_text[:20]}..."
         player_widget = VideoPlayerWidget(job_id=job_id, title=title, parent=self.canvas_tabs)
         if hasattr(player_widget, 'worker') and hasattr(self, 'speedometer_widget'):
             player_widget.worker.status_updated.connect(

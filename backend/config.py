@@ -9,6 +9,11 @@ BACKEND_HOST = os.getenv("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
 BACKEND_URL = os.getenv("BACKEND_URL", f"http://{BACKEND_HOST}:{BACKEND_PORT}")
 
+# --- VIDEO BACKEND CONFIGURATION ---
+# "latex" (active default): reliable, high-resolution LaTeX animated frame pipeline
+# "manim": legacy experimental Manim Python code generation pipeline
+VIDEO_RENDERER = os.getenv("VIDEO_RENDERER", "latex").strip().lower()
+
 # --- MODAL CLOUD CONFIGURATION ---
 MODAL_WORKSPACE = os.getenv("MODAL_WORKSPACE", "your-workspace-name")
 MODAL_APP_NAME = os.getenv("MODAL_APP_NAME", "manim-video-pipeline")
@@ -38,3 +43,26 @@ PDFS_DIR = os.path.join(WORKSPACE_DIR, "pdfs")
 
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 os.makedirs(PDFS_DIR, exist_ok=True)
+
+# --- VOICE NARRATION (optional plugin) ---
+# Set VOICE_ENABLED=true in .env to enable Edge TTS narration.
+# When false (default), the existing silent video pipeline is used unchanged.
+VOICE_ENABLED = os.getenv("VOICE_ENABLED", "false").strip().lower() == "true"
+# TTS provider identifier — extensible for future providers.
+VOICE_PROVIDER = os.getenv("VOICE_PROVIDER", "edge_tts")
+# Edge TTS neural voice name. Warm, expressive British English professional teacher voice:
+# en-GB-RyanNeural  — male,   warm & professional (default)
+# en-GB-SoniaNeural — female, clear & expressive
+# en-GB-LibbyNeural — female, friendly & natural
+VOICE_LANG = os.getenv("VOICE_LANG", "en-GB-RyanNeural")
+# Voice speed and pitch modulation (+4% provides active, energetic delivery)
+VOICE_RATE = os.getenv("VOICE_RATE", "+4%")
+VOICE_PITCH = os.getenv("VOICE_PITCH", "+0Hz")
+# Directory where per-segment MP3 audio files are stored.
+AUDIO_DIR = os.path.join(WORKSPACE_DIR, "audio")
+os.makedirs(AUDIO_DIR, exist_ok=True)
+
+# LLM models for pedagogical teacher narration
+NARRATION_MODEL_GROQ = os.getenv("NARRATION_MODEL_GROQ", "qwen/qwen3.8-27b")
+NARRATION_MODEL_GEMINI = os.getenv("NARRATION_MODEL_GEMINI", "gemini-2.5-flash")
+NARRATION_MAX_WORDS_PER_FRAME = int(os.getenv("NARRATION_MAX_WORDS_PER_FRAME", "25"))

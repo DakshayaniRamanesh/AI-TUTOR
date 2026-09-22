@@ -175,15 +175,15 @@ class ManimVideoPollWorker(QThread):
                     video_url = data.get("video_url")
                     video_local_path = data.get("video_local_path")
                     progress = data.get("progress_percentage", min(95, attempts * 5))
-                    stage = data.get("step", "Rendering Manim 2D Animation")
-                    self.status_updated.emit(self.job_id, f"Manim: {stage}", int(progress))
+                    stage = data.get("friendly_step") or data.get("step", "Rendering Lesson Video")
+                    self.status_updated.emit(self.job_id, stage, int(progress))
                     if status in ["completed", "done", "success"]:
                         final_url = video_local_path if (video_local_path and os.path.exists(video_local_path)) else video_url
                         if final_url:
                             self.video_ready.emit(self.job_id, final_url)
                             return
                     elif status == "error":
-                        self.video_failed.emit(self.job_id, data.get("error_message", "Manim pipeline error"))
+                        self.video_failed.emit(self.job_id, data.get("friendly_error") or data.get("error_message", "Video generation failed"))
                         return
                     continue
             except Exception:
@@ -206,7 +206,7 @@ class ManimVideoPollWorker(QThread):
             if root_dir not in sys.path:
                 sys.path.insert(0, root_dir)
 
-            self.status_updated.emit(self.job_id, "Planning animation story & visual structure...", 20)
+            self.status_updated.emit(self.job_id, "Understanding your material...", 20)
 
             from backend.video_generation.models import VideoJob, JobStatus
             from backend.video_generation.graph import VideoGenerationPipeline
@@ -224,10 +224,10 @@ class ManimVideoPollWorker(QThread):
                 board_selection=job_info.get("selection_payload") or {}
             )
 
-            self.status_updated.emit(self.job_id, "Generating Manim 2D animation code...", 50)
+            self.status_updated.emit(self.job_id, "Structuring explanation & presentation...", 45)
 
             pipeline = VideoGenerationPipeline()
-            self.status_updated.emit(self.job_id, "Rendering MP4 video with Manim...", 80)
+            self.status_updated.emit(self.job_id, "Rendering animated lesson video...", 75)
 
             final_job = pipeline.run_pipeline(job)
 

@@ -840,11 +840,17 @@ class CanvasScene(QGraphicsScene):
         return False
 
     def mousePressEvent(self, event):
-        # Developer 1: Cancel tutor speech immediately when student interacts with canvas
-        VoiceSpeaker.instance().stop()
-
         pos = event.scenePos()
         clicked_items = self.items(pos)
+
+        # Allow clicks to pass directly through to proxy widgets (like SocraticHintBubble)
+        for item in clicked_items:
+            if isinstance(item, QGraphicsProxyWidget) or (item.parentItem() and isinstance(item.parentItem(), QGraphicsProxyWidget)):
+                super().mousePressEvent(event)
+                return
+
+        # Developer 1: Cancel tutor speech immediately when student interacts with canvas
+        VoiceSpeaker.instance().stop()
 
         # Identify clicked shape or active shape controls
         shape_clicked = None
@@ -1362,12 +1368,13 @@ class CanvasScene(QGraphicsScene):
         if self._ghost_chalk_item is None or self._ghost_chalk_item.scene() != self:
             self._ghost_chalk_item = GhostChalkItem(target_rect, mode=chalk_mode)
             self.addItem(self._ghost_chalk_item)
+            self._ghost_chalk_item.start_animation()
         else:
             self._ghost_chalk_item.show()
             self._ghost_chalk_item.set_target_rect(target_rect, mode=chalk_mode)
 
         # 4. Socratic Hint Bubble
-        if self._socratic_hint_bubble is None:
+        if self._socratic_hint_bubble is None or self._socratic_hint_proxy is None or self._socratic_hint_proxy.scene() != self:
             self._socratic_hint_bubble = SocraticHintBubble()
             self._socratic_hint_proxy = self.addWidget(self._socratic_hint_bubble)
             self._socratic_hint_proxy.setZValue(1001)
@@ -1383,6 +1390,7 @@ class CanvasScene(QGraphicsScene):
         bubble_y = pointer_pos.y() - 40.0
         self._socratic_hint_proxy.setPos(bubble_x, bubble_y)
         self._socratic_hint_proxy.show()
+        self._socratic_hint_bubble.show()
 
         # 5. Non-blocking voice playback
         if spoken_message:

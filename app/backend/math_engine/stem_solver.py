@@ -7,6 +7,8 @@ from typing import Optional, Dict, Any, List, Tuple
 from dotenv import load_dotenv
 import sympy as sp
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 load_dotenv()
@@ -146,6 +148,11 @@ def generate_function_plot(expression_str: str, title: str = "Function Graph") -
 
         if np.isscalar(y_vals):
             y_vals = np.full_like(x_vals, y_vals)
+        elif hasattr(y_vals, "shape") and y_vals.shape != x_vals.shape:
+            if getattr(y_vals, "size", 0) == 1:
+                y_vals = np.full_like(x_vals, float(y_vals))
+            else:
+                y_vals = np.asarray(y_vals).flatten()[:len(x_vals)]
 
         fig, ax = plt.subplots(figsize=(6, 3.5), facecolor='#fcfbf7')
         ax.set_facecolor('#fcfbf7')
@@ -159,6 +166,11 @@ def generate_function_plot(expression_str: str, title: str = "Function Graph") -
             dy_vals = diff_func(x_vals)
             if np.isscalar(dy_vals):
                 dy_vals = np.full_like(x_vals, dy_vals)
+            elif hasattr(dy_vals, "shape") and dy_vals.shape != x_vals.shape:
+                if getattr(dy_vals, "size", 0) == 1:
+                    dy_vals = np.full_like(x_vals, float(dy_vals))
+                else:
+                    dy_vals = np.asarray(dy_vals).flatten()[:len(x_vals)]
             pretty_diff = to_pretty_math(diff_expr)
             ax.plot(x_vals, dy_vals, label=f"f'(x) = {pretty_diff}", color='#ff2d55', linewidth=1.8, linestyle='--')
         except Exception:

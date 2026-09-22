@@ -116,6 +116,11 @@ class FloatingToolbar(QWidget):
         self.btn_video.clicked.connect(lambda: self.action_triggered.emit("video"))
         layout.addWidget(self.btn_video)
 
+        # ── 7. Check My Work Trigger (Developer 1) ──
+        self.btn_check_work = self._make_btn('ri.checkbox-circle-line', "Check My Work (Spacebar)", checkable=False)
+        self.btn_check_work.clicked.connect(lambda: self.action_triggered.emit("check_work"))
+        layout.addWidget(self.btn_check_work)
+
         self._tool_buttons = {
             "select":      self.btn_select,
             "pan":         self.btn_pan,
