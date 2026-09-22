@@ -57,8 +57,6 @@ from .widgets.latex_editor_widget import LatexEditorWidget
 from .widgets.speedometer_progress_widget import SpeedometerProgressWidget
 from .widgets.feather_ai_button import FeatherAIButton
 MagicOrbWidget = FeatherAIButton
-from .dialogs.collab_dialog import CollabDialog
-from ..collaboration.collab_session_manager import CollabSessionManager, CollabRole
 
 from ..backend.math_engine.stem_solver import solve_stem_question
 from ..backend.workspace.pdf_rag_manager import PdfRAGManager
@@ -366,7 +364,7 @@ class MainWindow(QMainWindow):
         self.view = CanvasView(self.scene, self)
         self.view.zoom_changed.connect(self._on_zoom_changed)
         
-        self.canvas_tabs.addTab(self.view, "✍️ Notebook Canvas")
+        self.canvas_tabs.addTab(self.view, "Notebook Canvas")
         # Ensure the canvas tab doesn't show a close button
         self.canvas_tabs.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
 
@@ -505,7 +503,7 @@ class MainWindow(QMainWindow):
                 success = self.pdf_viewer_widget.load_pdf(file_path)
                 if success:
                     fname = os.path.basename(file_path)
-                    self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {fname}")
+                    self._show_or_update_tab(self.pdf_viewer_widget, f"PDF: {fname}")
                 else:
                     QMessageBox.warning(self, "PDF Error", f"Could not load PDF:\n{file_path}")
             except Exception as e2:
@@ -840,10 +838,6 @@ class MainWindow(QMainWindow):
         btn_latex.clicked.connect(self._convert_to_latex)
         layout.addWidget(btn_latex)
 
-        btn_video = self._make_toolbar_btn('fa5s.video', " Video", tb, '#10b981', "Generate Video Lesson")
-        btn_video.clicked.connect(self._generate_video_from_canvas)
-        layout.addWidget(btn_video)
-
         layout.addWidget(self._make_toolbar_separator(tb))
 
         # Study/Classroom Mode
@@ -1033,7 +1027,7 @@ class MainWindow(QMainWindow):
         self.ask_bar.pdf_requested.connect(self._open_pdf_dialog)
         pl.addWidget(self.ask_bar, stretch=1)
 
-        # ── Feather AI Trigger HUD ──
+        # ── PenEcho Magic Orb HUD ──
         sep2 = QFrame(pill)
         sep2.setFrameShape(QFrame.Shape.VLine)
         sep2.setFixedHeight(18)
@@ -1042,12 +1036,11 @@ class MainWindow(QMainWindow):
         pl.addWidget(sep2)
         pl.addSpacing(4)
 
-        self.feather_button = FeatherAIButton(pill)
-        self.feather_button.trigger_ai_requested.connect(self._on_magic_orb_triggered)
-        self.feather_button.auto_ai_toggled.connect(self._on_auto_ai_toggled)
-        self.feather_button.delay_changed.connect(self._on_auto_ai_delay_changed)
-        self.magic_orb = self.feather_button
-        pl.addWidget(self.feather_button)
+        self.magic_orb = MagicOrbWidget(pill)
+        self.magic_orb.trigger_ai_requested.connect(self._on_magic_orb_triggered)
+        self.magic_orb.auto_ai_toggled.connect(self._on_auto_ai_toggled)
+        self.magic_orb.delay_changed.connect(self._on_auto_ai_delay_changed)
+        pl.addWidget(self.magic_orb)
 
         outer.addWidget(pill)
         return hud
@@ -1061,7 +1054,7 @@ class MainWindow(QMainWindow):
             return
 
         from .penecho_integration.ai_canvas_bridge import AICanvasWorker, create_draft_from_payload
-        self.magic_orb.set_state("thinking", "Feathering…")
+        self.magic_orb.set_state("thinking", "Analyzing...")
 
         # Collision-free positioning
         clean_pos = self._find_non_overlapping_pos(target_pos, width=400.0, height=200.0)
@@ -1178,8 +1171,6 @@ class MainWindow(QMainWindow):
             self._add_table()
         elif action == "latex":
             self._convert_to_latex()
-        elif action == "video":
-            self._generate_video_from_canvas()
         elif action == "more":
             self._show_overflow_menu()
             
@@ -1212,23 +1203,23 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
 
         # ── PenEcho Extended Canvas Actions ──
-        act_anim = QAction("🎬 Insert Animated Scene (PenEcho)", self)
+        act_anim = QAction("Insert Animated Scene (PenEcho)", self)
         act_anim.triggered.connect(self._add_penecho_animation)
         menu.addAction(act_anim)
 
-        act_mixed = QAction("📐 Insert LaTeX / Markdown Card (PenEcho)", self)
+        act_mixed = QAction("Insert LaTeX / Markdown Card (PenEcho)", self)
         act_mixed.triggered.connect(self._add_penecho_mixed_text)
         menu.addAction(act_mixed)
 
-        act_curve = QAction("🌀 Insert Mathematical Curve (PenEcho)", self)
+        act_curve = QAction("Insert Mathematical Curve (PenEcho)", self)
         act_curve.triggered.connect(self._add_penecho_summon_curve)
         menu.addAction(act_curve)
 
-        act_draw = QAction("🎨 Insert Multi-Primitive Drawing Demo (PenEcho)", self)
+        act_draw = QAction("Insert Multi-Primitive Drawing Demo (PenEcho)", self)
         act_draw.triggered.connect(self._add_penecho_drawing_demo)
         menu.addAction(act_draw)
 
-        act_export_png = QAction("🖼️ Export Cropped Canvas PNG", self)
+        act_export_png = QAction("Export Cropped Canvas PNG", self)
         act_export_png.triggered.connect(self._export_canvas_image)
         menu.addAction(act_export_png)
 
@@ -1387,7 +1378,7 @@ class MainWindow(QMainWindow):
 
             if success_view:
                 fname = os.path.basename(file_path)
-                self._show_or_update_tab(self.pdf_viewer_widget, f"📄 {fname}")
+                self._show_or_update_tab(self.pdf_viewer_widget, f"PDF: {fname}")
                 self.ask_bar.set_pdf_mode(True, filename=fname)
 
                 if success_rag:
@@ -1431,8 +1422,8 @@ class MainWindow(QMainWindow):
 
         passage_preview = selected_text[:120].replace('\n', ' ')
         full_text = (
-            f"📖 Highlighted Passage [Page {page_num}]:\n\"{passage_preview}...\"\n\n"
-            f"💡 Answer & Solution:\n{ai_response}"
+            f"Highlighted Passage [Page {page_num}]:\n\"{passage_preview}...\"\n\n"
+            f"Answer & Solution:\n{ai_response}"
         )
 
         center_pos = self.view.mapToScene(self.view.viewport().rect().center())
@@ -1691,7 +1682,7 @@ class MainWindow(QMainWindow):
             NotebookStorage.save_notebook(self._current_notebook_id, name, items_data)
             if hasattr(self, 'notebooks_panel'):
                 self.notebooks_panel.refresh()
-            self._set_save_status("Saved ✓", clear_after_ms=2000)
+            self._set_save_status("Saved", clear_after_ms=2000)
         except Exception as err:
             traceback.print_exc()
             self._set_save_status("Save failed!")
@@ -1849,17 +1840,10 @@ class MainWindow(QMainWindow):
 
     def _on_generate_video_requested(self, selected_text: str):
         job_id = request_video_generation(selected_text)
-        
-        if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.start_task("Generating Video...")
-            
-        from .items.video_float_item import VideoPlayerWidget
-        player_widget = VideoPlayerWidget(job_id=job_id, title=f"Manim: {selected_text[:18]}...", parent=self.canvas_tabs)
-        if hasattr(player_widget, 'worker') and hasattr(self, 'speedometer_widget'):
-            player_widget.worker.status_updated.connect(lambda job_id, stage, prog: self.speedometer_widget.update_progress(stage, prog))
-            
-        idx = self.canvas_tabs.addTab(player_widget, f"🎬 Video: {selected_text[:10]}...")
-        self.canvas_tabs.setCurrentIndex(idx)
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        v_item = VideoFloatItem(job_id=job_id, title=f"Video: {selected_text[:18]}...", video_url_or_path="")
+        v_item.setPos(center_pos.x() + 300, center_pos.y())
+        self.scene.addItem(v_item)
 
     def _on_ink_written_detected(self, text: str, pos):
         clean_t = text.strip()
@@ -1885,20 +1869,14 @@ class MainWindow(QMainWindow):
             subject_id=current_subject or ""
         )
         
-        title = "Markdown: Study Notes" if out_type == "notes" else "Manim: Video Lesson"
+        title = "Markdown: Study Notes" if out_type == "notes" else "Video Lesson"
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        v_item = VideoFloatItem(job_id=job_id, title=title, video_url_or_path="")
+        v_item.setPos(center_pos.x() + 300, center_pos.y())
+        self.scene.addItem(v_item)
         
-        if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.start_task(f"Generating {out_type}...")
-            
-        from .items.video_float_item import VideoPlayerWidget
-        player_widget = VideoPlayerWidget(job_id=job_id, title=title, parent=self.canvas_tabs)
-        if hasattr(player_widget, 'worker'):
-            player_widget.worker.status_updated.connect(self._on_latex_video_progress)
-            
         self.pdf_viewer_widget.video_generation_started()
-        
-        idx = self.canvas_tabs.addTab(player_widget, "🎬 Video Lesson" if out_type != "notes" else "📝 Study Notes")
-        self.canvas_tabs.setCurrentIndex(idx)
+        v_item.player_widget.worker.status_updated.connect(self._on_latex_video_progress)
 
 
     def _on_latex_video_progress(self, job_id, stage, progress):
@@ -2150,27 +2128,24 @@ class MainWindow(QMainWindow):
         current_mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
         action = self.classroom_action_combo.currentText()
 
-        # Stop any existing worker before starting a new one to prevent QThread destroyed warning
-        if hasattr(self, 'latex_worker') and self.latex_worker and self.latex_worker.isRunning():
-            self.latex_worker.stop()
-            self.latex_worker.wait(200)
-
         try:
             job_id, is_local_direct = request_latex_generation(image_b64, template_type, current_mode, action)
         except Exception as e:
-            job_id, is_local_direct = f"latex_local", True
+            QMessageBox.warning(self, "API Connection Error",
+                f"Could not connect to the backend server.\n"
+                f"Please ensure you are running the backend local server.\n\nError: {e}")
+            return
 
         if hasattr(self, 'speedometer_widget'):
             self.speedometer_widget.start_task(f"Generating {template_type}...")
 
         self.latex_worker = LatexPollWorker(
-            job_id=job_id,
+            job_id,
             image_b64=image_b64,
             template_type=template_type,
             mode=current_mode,
             classroom_action=action,
             is_local_direct=is_local_direct,
-            parent=self
         )
         self.latex_worker.status_updated.connect(self._on_latex_status_updated)
         self.latex_worker.latex_ready.connect(self._on_latex_ready)
@@ -2179,6 +2154,14 @@ class MainWindow(QMainWindow):
         self.latex_worker.start()
 
         self.ask_bar.input_field.setPlaceholderText(f"Converting to {template_type}...")
+
+    def _on_stem_question_asked(self, question: str):
+        """Called when user types a question in the Ask Bar and submits."""
+        if not question or not question.strip():
+            return
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        active_mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
+        self._on_auto_ai_requested(question.strip(), center_pos, mode=active_mode)
 
     def _show_or_update_tab(self, widget: QWidget, tab_title: str):
         idx = self.canvas_tabs.indexOf(widget)
@@ -2189,358 +2172,32 @@ class MainWindow(QMainWindow):
         self.canvas_tabs.setCurrentWidget(widget)
 
     def _close_latex_editor_tab(self):
-        idx = self.canvas_tabs.indexOf(self.latex_editor_widget)
-        if idx != -1:
-            self.canvas_tabs.removeTab(idx)
-        self.canvas_tabs.setCurrentWidget(self.view)
+        if self.latex_editor_widget.confirm_close():
+            idx = self.canvas_tabs.indexOf(self.latex_editor_widget)
+            if idx != -1:
+                self.canvas_tabs.removeTab(idx)
+            self.canvas_tabs.setCurrentWidget(self.view)
 
     def _close_pdf_split_screen(self):
         idx = self.canvas_tabs.indexOf(self.pdf_viewer_widget)
         if idx != -1:
             self.canvas_tabs.removeTab(idx)
-        if hasattr(self, 'ask_bar'):
-            self.ask_bar.set_pdf_mode(False)
+        self.ask_bar.set_pdf_mode(False)
         self.canvas_tabs.setCurrentWidget(self.view)
 
     def _on_canvas_tab_closed(self, index: int):
         if index == 0:
-            return  # The primary canvas tab cannot be closed
-        w = self.canvas_tabs.widget(index)
-        if w == self.latex_editor_widget:
-            if self.latex_editor_widget.confirm_close():
-                self._close_latex_editor_tab()
-        elif w == self.pdf_viewer_widget:
+            return
+        widget = self.canvas_tabs.widget(index)
+        if widget == self.latex_editor_widget:
+            self._close_latex_editor_tab()
+        elif widget == self.pdf_viewer_widget:
             self._close_pdf_split_screen()
-        else:
-            self.canvas_tabs.removeTab(index)
 
-    def _on_latex_status_updated(self, job_id, stage, progress):
-        if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.update_progress(stage, progress)
-        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
-            self.progress_dialog.update_progress(stage, progress)
-
-    def _on_latex_ready(self, job_id, latex_code):
-        if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.finish_task("LaTeX Generated")
-        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
-            self.progress_dialog.finish_success()
-        if hasattr(self, 'ask_bar'):
-            self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-
-        notebook_title = (self.current_board.title if getattr(self, 'current_board', None) else "notebook") or "notebook"
-        self.latex_editor_widget.set_latex_code(latex_code, title=f"LaTeX: {notebook_title}")
-        self._show_or_update_tab(self.latex_editor_widget, "📄 notebook.pdf")
-
-    def _on_latex_pdf_ready(self, job_id, pdf_url, pdf_b64):
-        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
-            self.progress_dialog.finish_success()
-        if hasattr(self, 'ask_bar'):
-            self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-
-        filename = "notebook.pdf"
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        export_dir = os.path.join(base_dir, "storage_data", "latex_exports")
-        os.makedirs(export_dir, exist_ok=True)
-        save_path = os.path.join(export_dir, filename)
-
-        if pdf_b64:
-            with open(save_path, "wb") as f:
-                f.write(base64.b64decode(pdf_b64))
-            self.last_compiled_pdf_path = save_path
-        elif pdf_url:
-            try:
-                import requests
-                r = requests.get(pdf_url, timeout=10)
-                if r.status_code == 200:
-                    with open(save_path, "wb") as f:
-                        f.write(r.content)
-                    self.last_compiled_pdf_path = save_path
-            except Exception as e:
-                print(f"[LaTeX] Notice downloading PDF: {e}")
-
-        if os.path.exists(save_path):
-            self.last_compiled_pdf_path = save_path
-            self.latex_editor_widget.load_pdf(save_path)
-            self._show_or_update_tab(self.latex_editor_widget, "📄 notebook.pdf")
-
-    def _on_latex_failed(self, job_id, error_msg):
-        if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.fail_task(error_msg)
-        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
-            self.progress_dialog.finish_error(error_msg)
-        if hasattr(self, 'ask_bar'):
-            self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
-        QMessageBox.warning(self, "LaTeX Error", f"LaTeX generation could not complete:\n{error_msg}")
-
-    def _on_pdf_compiled(self, pdf_path):
+    def _on_pdf_compiled(self, pdf_path: str):
         self.last_compiled_pdf_path = pdf_path
         if hasattr(self, 'btn_view_pdf'):
             self.btn_view_pdf.setVisible(True)
-
-    def _on_pdf_reply_clicked(self, selected_text: str, page_num: int, surrounding_context: str):
-        if hasattr(self, 'ask_bar'):
-            self.ask_bar.set_selection_context(selected_text, page_num, surrounding_context)
-
-    def _on_latex_video_requested(self, latex_snippet: str):
-        prompt_text = f"Explain this mathematical formula or derivation:\n{latex_snippet}"
-        selection_payload = {
-            "board_id": getattr(self.current_board, "board_id", "canvas") if getattr(self, "current_board", None) else "canvas",
-            "selected_items": [],
-            "nearby_items": [],
-            "user_instruction": prompt_text,
-            "latex_snippet": latex_snippet,
-        }
-        self._start_video_generation(prompt_text, selection_payload)
-
-    def _generate_video_from_canvas(self):
-        """Show a dialog asking the user how to select the whiteboard content for video generation."""
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
-        from PyQt6.QtCore import Qt
-
-        # If user chose lasso mode previously, this second click finishes the selection
-        if getattr(self, '_pending_lasso_video', False):
-            self._pending_lasso_video = False
-            # Use the items captured by the last lasso draw (stored on the scene)
-            lasso_items = getattr(self.scene, '_last_lasso_items', None)
-            # Fallback: try Qt selectedItems() in case items were selected another way
-            if not lasso_items:
-                lasso_items = self.scene.selectedItems()
-            if not lasso_items:
-                QMessageBox.information(self, "No Selection",
-                    "No items were found in the lasso area.\n"
-                    "Please draw a lasso around some content and try again.")
-                return
-            selection_payload, prompt_text = self._serialize_items_to_selection(lasso_items)
-            # Capture raster of just the lasso region
-            try:
-                from PyQt6.QtCore import QRectF
-                rect = lasso_items[0].sceneBoundingRect()
-                for it in lasso_items[1:]:
-                    rect = rect.united(it.sceneBoundingRect())
-                rect = rect.adjusted(-16, -16, 16, 16)
-                size = rect.size().toSize()
-                pixmap = QPixmap(size)
-                pixmap.fill(Qt.GlobalColor.white)
-                painter = QPainter(pixmap)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                self.scene.render(painter, target=QRectF(pixmap.rect()), source=rect)
-                painter.end()
-                buf = QBuffer()
-                buf.open(QIODevice.OpenModeFlag.WriteOnly)
-                pixmap.save(buf, "PNG")
-                selection_payload["image_b64"] = "data:image/png;base64," + buf.data().toBase64().data().decode()
-            except Exception as e:
-                print(f"[VideoGen] Could not capture lasso raster: {e}")
-            self._start_video_generation(prompt_text, selection_payload)
-            return
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Generate Video Lesson")
-        dialog.setModal(True)
-        dialog.setFixedWidth(380)
-        dialog.setStyleSheet("""
-            QDialog {
-                background: #ffffff;
-                border-radius: 12px;
-            }
-            QLabel#title_label {
-                font-size: 15px;
-                font-weight: 700;
-                color: #0f172a;
-            }
-            QLabel#sub_label {
-                font-size: 12px;
-                color: #64748b;
-            }
-            QPushButton {
-                border-radius: 8px;
-                padding: 12px 16px;
-                font-size: 13px;
-                font-weight: 600;
-                text-align: left;
-            }
-            QPushButton#btn_board {
-                background: #f0fdf4;
-                border: 2px solid #86efac;
-                color: #166534;
-            }
-            QPushButton#btn_board:hover { background: #dcfce7; border-color: #4ade80; }
-            QPushButton#btn_lasso {
-                background: #eff6ff;
-                border: 2px solid #93c5fd;
-                color: #1d4ed8;
-            }
-            QPushButton#btn_lasso:hover { background: #dbeafe; border-color: #60a5fa; }
-            QPushButton#btn_cancel {
-                background: transparent;
-                border: 1px solid #e2e8f0;
-                color: #64748b;
-            }
-            QPushButton#btn_cancel:hover { background: #f8fafc; }
-        """)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 24, 24, 20)
-        layout.setSpacing(12)
-
-        title = QLabel("🎬 Generate Video Lesson", dialog)
-        title.setObjectName("title_label")
-        layout.addWidget(title)
-
-        sub = QLabel("How would you like to select content from the whiteboard?", dialog)
-        sub.setObjectName("sub_label")
-        sub.setWordWrap(True)
-        layout.addWidget(sub)
-
-        layout.addSpacing(4)
-
-        btn_board = QPushButton("🖥️  Entire Board\n         Use all content on the canvas", dialog)
-        btn_board.setObjectName("btn_board")
-        btn_board.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout.addWidget(btn_board)
-
-        btn_lasso = QPushButton("✂️  Lasso Select\n         Draw to select a region", dialog)
-        btn_lasso.setObjectName("btn_lasso")
-        btn_lasso.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout.addWidget(btn_lasso)
-
-        layout.addSpacing(4)
-
-        btn_cancel = QPushButton("Cancel", dialog)
-        btn_cancel.setObjectName("btn_cancel")
-        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout.addWidget(btn_cancel)
-
-        choice = {"value": None}
-
-        def pick_board():
-            choice["value"] = "board"
-            dialog.accept()
-
-        def pick_lasso():
-            choice["value"] = "lasso"
-            dialog.accept()
-
-        btn_board.clicked.connect(pick_board)
-        btn_lasso.clicked.connect(pick_lasso)
-        btn_cancel.clicked.connect(dialog.reject)
-
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        if choice["value"] == "board":
-            self._generate_video_from_entire_board()
-        elif choice["value"] == "lasso":
-            self._start_lasso_video_selection()
-
-    def _serialize_items_to_selection(self, items) -> dict:
-        """Serialize canvas items into a board_selection payload dict."""
-        selected_items = []
-        all_texts = []
-        for item in items:
-            item_data = {"item_id": str(id(item)), "type": type(item).__name__}
-            text = ""
-            if hasattr(item, "text") and isinstance(item.text, str):
-                text = item.text
-            elif hasattr(item, "_text") and isinstance(item._text, str):
-                text = item._text
-            elif hasattr(item, "to_markdown"):
-                try:
-                    text = item.to_markdown()
-                except Exception:
-                    pass
-            elif hasattr(item, "full_text") and isinstance(item.full_text, str):
-                text = item.full_text
-            if text:
-                item_data["text"] = text[:2000]
-                all_texts.append(text)
-            # Capture scene bounding box
-            try:
-                brect = item.sceneBoundingRect()
-                item_data["scene_bbox"] = {
-                    "x": brect.x(), "y": brect.y(),
-                    "width": brect.width(), "height": brect.height()
-                }
-            except Exception:
-                pass
-            selected_items.append(item_data)
-
-        prompt_text = " | ".join(all_texts)[:500] or "Explain the whiteboard content."
-        return {
-            "board_id": getattr(self.current_board, "board_id", "canvas") if getattr(self, "current_board", None) else "canvas",
-            "selected_items": selected_items,
-            "nearby_items": [],
-            "user_instruction": prompt_text,
-        }, prompt_text
-
-    def _generate_video_from_entire_board(self):
-        """Generate a video from the entire board's content."""
-        all_items = self.scene.items()
-        if not all_items:
-            QMessageBox.warning(self, "Empty Canvas", "There is nothing on the canvas to generate a video from.")
-            return
-
-        selection_payload, prompt_text = self._serialize_items_to_selection(all_items)
-
-        # Also capture a raster crop of the whole canvas for the vision model
-        try:
-            rect = self.scene.itemsBoundingRect().adjusted(-20, -20, 20, 20)
-            if not rect.isEmpty():
-                from PyQt6.QtCore import QRectF
-                size = rect.size().toSize()
-                if size.width() > 1920 or size.height() > 1080:
-                    scale = min(1920.0 / size.width(), 1080.0 / size.height())
-                    size = (rect.size() * scale).toSize()
-                pixmap = QPixmap(size)
-                pixmap.fill(Qt.GlobalColor.white)
-                painter = QPainter(pixmap)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                self.scene.render(painter, target=QRectF(pixmap.rect()), source=rect)
-                painter.end()
-                buf = QBuffer()
-                buf.open(QIODevice.OpenModeFlag.WriteOnly)
-                pixmap.save(buf, "PNG")
-                image_b64 = "data:image/png;base64," + buf.data().toBase64().data().decode()
-                selection_payload["image_b64"] = image_b64
-        except Exception as e:
-            print(f"[VideoGen] Could not capture canvas raster: {e}")
-
-        self._start_video_generation(prompt_text, selection_payload)
-
-    def _start_lasso_video_selection(self):
-        """Activate lasso selection mode on the canvas; when complete, video is generated."""
-        # Switch to lasso mode and connect a one-shot signal
-        self.floating_toolbar._set_tool("lasso")
-        QMessageBox.information(
-            self, "Lasso Select Mode",
-            "Draw a selection area around the content you want to include in the video.\n\n"
-            "After making your selection, click the '🎬 Video' button again to generate."
-        )
-        # Store flag so next video button click uses current selected items
-        self._pending_lasso_video = True
-
-    def _start_video_generation(self, prompt_text: str, selection_payload: dict):
-        """Kick off video generation with a selection payload and open a new tab."""
-        job_id = request_video_generation(prompt_text, selection_payload=selection_payload)
-
-        if hasattr(self, 'speedometer_widget'):
-            self.speedometer_widget.start_task("Generating Video...")
-
-        from .items.video_float_item import VideoPlayerWidget
-        title = f"Manim: {prompt_text[:20]}..."
-        player_widget = VideoPlayerWidget(job_id=job_id, title=title, parent=self.canvas_tabs)
-        if hasattr(player_widget, 'worker') and hasattr(self, 'speedometer_widget'):
-            player_widget.worker.status_updated.connect(
-                lambda jid, stage, prog: self.speedometer_widget.update_progress(stage, prog)
-            )
-
-        tab_label = f"🎬 Video: {prompt_text[:10]}..."
-        idx = self.canvas_tabs.addTab(player_widget, tab_label)
-        self.canvas_tabs.setCurrentIndex(idx)
-
-    def _toggle_theme(self):
-        ThemeManager.instance().toggle_theme()
 
     def _open_in_app_pdf_viewer(self):
         if not getattr(self, 'last_compiled_pdf_path', None) or not os.path.exists(self.last_compiled_pdf_path):
@@ -2550,5 +2207,56 @@ class MainWindow(QMainWindow):
 
         self.pdf_viewer_widget.load_pdf(self.last_compiled_pdf_path)
         fname = os.path.basename(self.last_compiled_pdf_path)
-        tab_title = f"📄 PDF: {fname[:16]}..." if len(fname) > 18 else f"📄 PDF: {fname}"
+        tab_title = f"PDF: {fname[:16]}..." if len(fname) > 18 else f"PDF: {fname}"
         self._show_or_update_tab(self.pdf_viewer_widget, tab_title)
+
+    def _on_latex_ready(self, job_id, latex_code):
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.finish_success("LaTeX Ready!")
+        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
+
+        notebook_title = self.current_board.title or "LaTeX_Document"
+        self.latex_editor_widget.set_latex_code(latex_code, title=f"LaTeX: {notebook_title}")
+        self._show_or_update_tab(self.latex_editor_widget, "Editable LaTeX")
+
+    def _on_latex_status_updated(self, job_id, stage, progress):
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.update_progress(stage, progress)
+        self.ask_bar.input_field.setPlaceholderText(f"{stage} ({progress}%)")
+        
+    def _on_latex_pdf_ready(self, job_id, pdf_url, pdf_b64):
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.finish_success()
+        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
+
+        notebook_title = self.current_board.title or "Untitled_Notebook"
+        mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
+        action = self.classroom_action_combo.currentText() if hasattr(self, 'classroom_action_combo') else "Action"
+        safe_title = "".join(c for c in notebook_title if c.isalnum() or c in " _-").strip()
+        filename = f"{safe_title}_{mode}_{action}.pdf".replace(" ", "_")
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        export_dir = os.path.join(base_dir, "storage_data", "latex_exports")
+        os.makedirs(export_dir, exist_ok=True)
+        save_path = os.path.join(export_dir, filename)
+
+        if pdf_b64:
+            with open(save_path, "wb") as f:
+                f.write(base64.b64decode(pdf_b64))
+        else:
+            try:
+                r = requests.get(pdf_url)
+                with open(save_path, "wb") as f:
+                    f.write(r.content)
+            except Exception as e:
+                QMessageBox.warning(self, "Download Error", f"Failed to download generated PDF:\n{e}")
+                return
+
+        self.pdf_viewer_widget.load_latex_pdf(save_path)
+        self._show_or_update_tab(self.pdf_viewer_widget, f"PDF: {filename}")
+
+    def _on_latex_failed(self, job_id, error_msg):
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.finish_error(error_msg)
+        self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
+        QMessageBox.warning(self, "LaTeX Error", f"LaTeX generation failed:\n{error_msg}")

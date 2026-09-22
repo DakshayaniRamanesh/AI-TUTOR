@@ -619,13 +619,13 @@ class SubjectDetailView(QWidget):
         if not subject:
             return
 
-        self.lbl_title.setText(f"📚 {subject.name}")
+        self.lbl_title.setText(subject.name.upper())
 
         # ── Notebooks ──
         self.nb_list.disconnect_check_state_updates()
         self.nb_list.clear()
         for nb in subject.notebooks:
-            self.nb_list.add_item(f"📓  {nb.name}", data=nb.id)
+            self.nb_list.add_item(nb.name, data=nb.id)
         self.nb_list.connect_check_state_updates()
 
         # ── Materials ──
@@ -633,7 +633,7 @@ class SubjectDetailView(QWidget):
         self.mat_list.clear()
         self._cached_materials = list(subject.materials)
         for i, mat in enumerate(self._cached_materials):
-            self.mat_list.add_item(f"📄  {mat.filename}", data=i)
+            self.mat_list.add_item(mat.filename, data=i)
         self.mat_list.connect_check_state_updates()
 
         # ── Videos ──
@@ -641,7 +641,7 @@ class SubjectDetailView(QWidget):
         self.vid_list.clear()
         self._cached_videos = list(subject.videos)
         for i, vid in enumerate(self._cached_videos):
-            self.vid_list.add_item(f"🎥  {vid.title}", data=i)
+            self.vid_list.add_item(vid.title, data=i)
         self.vid_list.connect_check_state_updates()
 
         # ── Knowledge Graph ──

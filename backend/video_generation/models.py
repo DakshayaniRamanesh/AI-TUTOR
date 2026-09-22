@@ -57,9 +57,11 @@ class BoardSelection:
     user_instruction: str = ""
 
     @classmethod
-    def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["BoardSelection"]:
+    def from_dict(cls, data: Optional[Any]) -> Optional["BoardSelection"]:
         if not data:
             return None
+        if isinstance(data, cls):
+            return data
         polygon = []
         for pt in data.get("lasso_polygon", []) or []:
             if isinstance(pt, (list, tuple)) and len(pt) >= 2:

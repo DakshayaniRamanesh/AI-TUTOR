@@ -1,125 +1,242 @@
 """
 Version History Panel - Kestrel-native Version History & Checkpoints View
-Performance Optimized & Clean Monotone Restyling:
-- Instant panel open: lazy loads tab content on demand with no synchronous Git hang
-- Fixed sidebar 'Modified · 3 Pages' item layout: explicit row height with clean non-overlapping title + subtext and right-aligned badge
-- Clean Snapshot History cards: single outer border, plain bold version title, clean description text (no nested outline boxes), timestamp and 'Restore Version' action
-- Incoming Changes tab: collaborator contributions with solid black 'ACCEPT' button (merges on backend) and 'Dismiss' button (rejects on backend)
-- What Changed tab: real Git diff view in JetBrains Mono font with clean monotone styling
-- Auto-saving status in neutral monotone styling
+Replaces raw Git-centric terminology with a human-friendly, object-aware interface:
+  - Version History (Git history)
+  - Save Version (commit)
+  - Review Changes (diff)
+  - Restore Version (safe, non-destructive restore)
+  - Create Copy (branch/fork)
+  - Developer Mode toggle for technical Git inspectability
 """
 
 import os
 import html
+import json
+import re
 from typing import Optional, List, Dict, Any
 
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem,
-    QTextBrowser, QPushButton, QLabel, QFrame, QStackedWidget,
-    QLineEdit, QScrollArea
+    QTextEdit, QTextBrowser, QPushButton, QComboBox, QLabel, QFrame, QStackedWidget,
+    QPlainTextEdit, QCheckBox, QInputDialog, QMessageBox, QGraphicsView, QGraphicsScene,
+    QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsTextItem, QGraphicsRectItem,
+    QListWidget, QListWidgetItem, QDialog, QScrollArea, QSizePolicy
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
+from PyQt6.QtGui import QFont, QColor, QBrush, QPen, QIcon
 import qtawesome as qta
 
-from ...backend.version_control.git_notes_manager import GitNotesManager
-from ...backend.version_control.collaboration_manager import CollaborationManager
+from ...backend.version_control.git_notes_manager import GitNotesManager, GitAdapter, GitError
 from ...backend.version_control.version_service import (
-    VersionService, VersionSnapshot
+    VersionService, VersionSnapshot, ObjectChange, ChangeAction, VersionDiff
 )
 from ..theme_manager import ThemeManager
-from ..kestrel_theme import MONO_FONT, primary_button_qss
-
-MONO_JETBRAINS = '"JetBrains Mono", "Space Mono", ui-monospace, "Consolas", monospace'
 
 
 class VersionHistoryPanel(QWidget):
-    version_restored = pyqtSignal(str)
+    """
+    Kestrel-native Version History Panel.
+    Provides timeline cards, object-level visual diffing, non-destructive restores,
+    and a Developer Mode for technical Git operations.
+    """
+
+    version_restored = pyqtSignal(str)  # Emitted when a version is restored
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.version_service = VersionService()
         self.git_mgr = self.version_service.adapter
-        self.collab_mgr = CollaborationManager(self.git_mgr)
         self.active_filename = "physics_quantum_notes.md"
         self.active_notebook_id: Optional[str] = None
-        self._tabs_loaded = set()
+        self.developer_mode = False
 
         self._init_ui()
-        ThemeManager.instance().theme_changed.connect(self._apply_theme)
-        self._apply_theme(ThemeManager.instance().current_theme)
-
-        # Populate sidebar and load initial tab smoothly
-        self._populate_sidebar_tree()
-        QTimer.singleShot(10, lambda: self.switch_view_mode(0))
+        try:
+            ThemeManager.instance().theme_changed.connect(self._apply_theme)
+            self._apply_theme(ThemeManager.instance().current_theme)
+        except Exception:
+            self._apply_theme("light")
+        self.refresh_all()
 
     def _init_ui(self):
+        self.setObjectName("VersionHistoryRoot")
         root_layout = QHBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # Splitter: Left Sidebar (260px) + Main Content Area
+        # Main Horizontal Splitter: Sidebar (280px) + Main Content Area
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setHandleWidth(1)
 
+        # 1. Left Documents & Navigation Sidebar
         self.sidebar_widget = self._create_sidebar()
         self.splitter.addWidget(self.sidebar_widget)
 
+        # 2. Right Workspace Container
         self.workspace_widget = self._create_workspace()
         self.splitter.addWidget(self.workspace_widget)
 
-        self.splitter.setSizes([260, 1000])
+        self.splitter.setSizes([280, 1000])
         root_layout.addWidget(self.splitter)
+
+        self._apply_theme()
+
+    def _apply_theme(self, theme_name: str = "light"):
+        is_dark = (theme_name == "dark") or (ThemeManager.instance().current_theme == "dark" if hasattr(ThemeManager, "instance") else False)
+        bg_root = "#121214" if is_dark else "#f2f2f7"
+        sidebar_bg = "#18181b" if is_dark else "#f9f9fb"
+        text_color = "#f4f4f5" if is_dark else "#1c1c1e"
+        subtext_color = "#a1a1aa" if is_dark else "#8e8e93"
+        btn_bg = "#27272a" if is_dark else "#ffffff"
+        btn_border = "#3f3f46" if is_dark else "#d1d1d6"
+        btn_hover = "#3f3f46" if is_dark else "#e5e5ea"
+        tree_bg = "#1e1e24" if is_dark else "#ffffff"
+        tree_border = "#2e2e38" if is_dark else "#e5e5ea"
+        nav_bg = "#18181b" if is_dark else "#ffffff"
+        nav_border = "#2e2e38" if is_dark else "#e5e5ea"
+
+        self.setStyleSheet(f"""
+            QWidget#VersionHistoryRoot {{
+                background-color: {bg_root};
+            }}
+            QWidget#VCSidebar {{
+                background-color: {sidebar_bg};
+                border-right: 1px solid {nav_border};
+            }}
+            QLabel {{
+                color: {text_color};
+            }}
+            QPushButton {{
+                background-color: {btn_bg};
+                border: 1px solid {btn_border};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                color: {text_color};
+            }}
+            QPushButton:hover {{
+                background-color: {btn_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {btn_border};
+            }}
+            QTreeWidget {{
+                background-color: {tree_bg};
+                border: 1px solid {tree_border};
+                border-radius: 8px;
+                font-size: 12px;
+                color: {text_color};
+            }}
+            QTreeWidget::item {{
+                padding: 6px;
+                border-radius: 4px;
+            }}
+            QTreeWidget::item:selected {{
+                background-color: #007aff;
+                color: white;
+            }}
+            QTextEdit, QPlainTextEdit, QTextBrowser {{
+                background-color: {tree_bg};
+                color: {text_color};
+                border: 1px solid {tree_border};
+                border-radius: 8px;
+            }}
+        """)
+        if hasattr(self, "nav_bar") and self.nav_bar:
+            self.nav_bar.setStyleSheet(f"background-color: {nav_bg}; border-bottom: 1px solid {nav_border};")
+        if hasattr(self, "status_bar") and self.status_bar:
+            self.status_bar.setStyleSheet(f"background-color: {nav_bg}; border-top: 1px solid {nav_border}; font-size: 11px; color: {subtext_color};")
+        if hasattr(self, "splitter") and self.splitter:
+            self.splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {nav_border}; }}")
+
+    # ── Sidebar ────────────────────────────────────────────────────────────────
 
     def _create_sidebar(self) -> QWidget:
         sb = QWidget(self)
-        sb.setFixedWidth(260)
+        sb.setFixedWidth(280)
         sb.setObjectName("VCSidebar")
         layout = QVBoxLayout(sb)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
 
-        # ── 1. Header Title ──
-        self.lbl_sec_hdr = QLabel("VERSION CONTROL", sb)
-        layout.addWidget(self.lbl_sec_hdr)
+        # Top Section: Save Version CTA
+        self.btn_save_version = QPushButton("Save Version", sb)
+        self.btn_save_version.setIcon(qta.icon("fa5s.check-circle", color="#ffffff"))
+        self.btn_save_version.setFixedHeight(34)
+        self.btn_save_version.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_save_version.setStyleSheet("""
+            QPushButton {
+                background-color: #007aff;
+                color: white;
+                font-weight: bold;
+                font-size: 13px;
+                border: none;
+                border-radius: 8px;
+                padding: 6px 14px;
+            }
+            QPushButton:hover {
+                background-color: #0056b3;
+            }
+        """)
+        self.btn_save_version.clicked.connect(self._on_save_version_clicked)
+        layout.addWidget(self.btn_save_version)
 
-        self.lbl_nb_title = QLabel("My Notebook", sb)
-        layout.addWidget(self.lbl_nb_title)
+        # Developer Mode Branch Controls (hidden by default)
+        self.dev_branch_box = QFrame(sb)
+        self.dev_branch_box.setStyleSheet("background-color: #e5e5ea; border-radius: 8px; padding: 4px;")
+        db_layout = QHBoxLayout(self.dev_branch_box)
+        db_layout.setContentsMargins(6, 4, 6, 4)
+        db_layout.setSpacing(6)
 
-        self.lbl_sync_status = QLabel("● Auto-saving · Synced", sb)
-        layout.addWidget(self.lbl_sync_status)
+        lbl_b_icon = QLabel(self.dev_branch_box)
+        lbl_b_icon.setPixmap(qta.icon("fa5s.code-branch", color="#28a745").pixmap(14, 14))
+        db_layout.addWidget(lbl_b_icon)
 
-        layout.addSpacing(6)
+        self.cb_branches = QComboBox(self.dev_branch_box)
+        self.cb_branches.currentIndexChanged.connect(self._on_branch_changed)
+        db_layout.addWidget(self.cb_branches, 1)
 
-        # ── 2. Save a Snapshot Box ──
-        self.lbl_save_hdr = QLabel("SAVE A SNAPSHOT", sb)
-        layout.addWidget(self.lbl_save_hdr)
+        btn_new_branch = QPushButton("+ Branch", self.dev_branch_box)
+        btn_new_branch.clicked.connect(self._on_new_branch_clicked)
+        db_layout.addWidget(btn_new_branch)
 
-        self.input_commit_msg = QLineEdit(sb)
-        self.input_commit_msg.setPlaceholderText("What did you add or change?")
-        self.input_commit_msg.setFixedHeight(34)
-        layout.addWidget(self.input_commit_msg)
+        layout.addWidget(self.dev_branch_box)
+        self.dev_branch_box.setVisible(False)
 
-        self.btn_save_snapshot = QPushButton("SAVE SNAPSHOT", sb)
-        self.btn_save_snapshot.setFixedHeight(34)
-        self.btn_save_snapshot.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_save_snapshot.clicked.connect(self._on_save_snapshot_clicked)
-        layout.addWidget(self.btn_save_snapshot)
+        # Developer Mode Staging Box (hidden by default)
+        self.dev_staging_box = QFrame(sb)
+        st_layout = QHBoxLayout(self.dev_staging_box)
+        st_layout.setContentsMargins(0, 0, 0, 0)
+        btn_stage_all = QPushButton("Stage All", self.dev_staging_box)
+        btn_stage_all.clicked.connect(self._on_stage_all)
+        btn_unstage_all = QPushButton("Unstage All", self.dev_staging_box)
+        btn_unstage_all.clicked.connect(self._on_unstage_all)
+        st_layout.addWidget(btn_stage_all)
+        st_layout.addWidget(btn_unstage_all)
+        layout.addWidget(self.dev_staging_box)
+        self.dev_staging_box.setVisible(False)
 
-        layout.addSpacing(10)
+        # Section Header: Documents & Boards
+        lbl_docs = QLabel("DOCUMENTS & BOARDS", sb)
+        lbl_docs.setStyleSheet("font-size: 11px; font-weight: bold; color: #8e8e93; letter-spacing: 0.5px;")
+        layout.addWidget(lbl_docs)
 
-        # ── 3. Modified Pages Tree ──
-        self.lbl_pages_hdr = QLabel("MODIFIED · 3 PAGES", sb)
-        layout.addWidget(self.lbl_pages_hdr)
+        # File / Board Tree
+        self.tree_vcs = QTreeWidget(sb)
+        self.tree_vcs.setHeaderHidden(True)
+        self.tree_vcs.itemClicked.connect(self._on_tree_item_clicked)
+        layout.addWidget(self.tree_vcs, 1)
 
-        self.tree_pages = QTreeWidget(sb)
-        self.tree_pages.setHeaderHidden(True)
-        self.tree_pages.setRootIsDecorated(False)
-        self.tree_pages.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.tree_pages.itemClicked.connect(self._on_tree_item_clicked)
-        layout.addWidget(self.tree_pages, 1)
+        # New Note Button
+        btn_new_note = QPushButton("New Note (.md)", sb)
+        btn_new_note.setIcon(qta.icon("fa5s.file-alt", color="#007aff"))
+        btn_new_note.clicked.connect(self._on_new_note_clicked)
+        layout.addWidget(btn_new_note)
 
         return sb
+
+    # ── Workspace ─────────────────────────────────────────────────────────────
 
     def _create_workspace(self) -> QWidget:
         ws = QWidget(self)
@@ -127,545 +244,707 @@ class VersionHistoryPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Top Tab Bar ──
-        nav_bar = QWidget(ws)
-        nav_bar.setFixedHeight(44)
-        nav_bar.setObjectName("VCTabBar")
-        nb_layout = QHBoxLayout(nav_bar)
-        nb_layout.setContentsMargins(20, 0, 20, 0)
-        nb_layout.setSpacing(12)
+        # Top Navigation & Header Bar
+        self.nav_bar = QWidget(ws)
+        self.nav_bar.setFixedHeight(46)
+        self.nav_bar.setStyleSheet("background-color: #ffffff; border-bottom: 1px solid #e5e5ea;")
+        nb_layout = QHBoxLayout(self.nav_bar)
+        nb_layout.setContentsMargins(14, 0, 14, 0)
+        nb_layout.setSpacing(8)
 
-        self.btn_tab_incoming = QPushButton("Incoming Changes", nav_bar)
-        self.btn_tab_diff = QPushButton("What Changed", nav_bar)
-        self.btn_tab_history = QPushButton("Snapshot History", nav_bar)
+        # Tab Segmented Buttons
+        self.btn_tab_history = QPushButton("Timeline", self.nav_bar)
+        self.btn_tab_history.setIcon(qta.icon("fa5s.history", color="#6e6e73"))
+        self.btn_tab_diff = QPushButton("Review Changes", self.nav_bar)
+        self.btn_tab_diff.setIcon(qta.icon("fa5s.exchange-alt", color="#6e6e73"))
+        self.btn_tab_editor = QPushButton("Notes Editor", self.nav_bar)
+        self.btn_tab_editor.setIcon(qta.icon("fa5s.edit", color="#6e6e73"))
+        self.btn_tab_graph = QPushButton("Branch Graph", self.nav_bar)
+        self.btn_tab_graph.setIcon(qta.icon("fa5s.project-diagram", color="#6e6e73"))
 
         self.tab_buttons = [
-            self.btn_tab_incoming,
+            self.btn_tab_history,
             self.btn_tab_diff,
-            self.btn_tab_history
+            self.btn_tab_editor,
+            self.btn_tab_graph
         ]
 
-        for idx, btn in enumerate(self.tab_buttons):
+        for i, btn in enumerate(self.tab_buttons):
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda checked, i=idx: self.switch_view_mode(i))
-            nb_layout.addWidget(btn)
-
-        nb_layout.addStretch()
-        layout.addWidget(nav_bar)
-
-        # ── Stacked View Pages ──
-        self.stack_views = QStackedWidget(ws)
-
-        # View 0: Incoming Changes
-        self.view_incoming = self._create_incoming_view()
-        self.stack_views.addWidget(self.view_incoming)
-
-        # View 1: What Changed (Diff View)
-        self.view_diff = self._create_diff_view()
-        self.stack_views.addWidget(self.view_diff)
-
-        # View 2: Snapshot History (Timeline Cards)
-        self.view_history = self._create_history_view()
-        self.stack_views.addWidget(self.view_history)
-
-        layout.addWidget(self.stack_views)
-        return ws
-
-    def _create_incoming_view(self) -> QWidget:
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(16)
-
-        header_box = QVBoxLayout()
-        header_box.setSpacing(4)
-
-        self.lbl_incoming_title = QLabel("Incoming Changes", container)
-        header_box.addWidget(self.lbl_incoming_title)
-
-        self.lbl_incoming_sub = QLabel("Contributions from your collaborators waiting for review.", container)
-        header_box.addWidget(self.lbl_incoming_sub)
-
-        layout.addLayout(header_box)
-
-        scroll = QScrollArea(container)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet("background: transparent;")
-
-        self.incoming_cards_widget = QWidget()
-        self.incoming_cards_widget.setStyleSheet("background: transparent;")
-        self.incoming_cards_layout = QVBoxLayout(self.incoming_cards_widget)
-        self.incoming_cards_layout.setContentsMargins(0, 8, 0, 0)
-        self.incoming_cards_layout.setSpacing(14)
-        self.incoming_cards_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        scroll.setWidget(self.incoming_cards_widget)
-        layout.addWidget(scroll)
-
-        return container
-
-    def _create_diff_view(self) -> QWidget:
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(12)
-
-        self.lbl_diff_title = QLabel("What Changed", container)
-        layout.addWidget(self.lbl_diff_title)
-
-        self.diff_browser = QTextBrowser(container)
-        self.diff_browser.setFrameShape(QFrame.Shape.NoFrame)
-        layout.addWidget(self.diff_browser)
-
-        return container
-
-    def _create_history_view(self) -> QWidget:
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(12)
-
-        self.lbl_history_title = QLabel("Snapshot History", container)
-        layout.addWidget(self.lbl_history_title)
-
-        scroll = QScrollArea(container)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet("background: transparent;")
-
-        self.history_cards_widget = QWidget()
-        self.history_cards_widget.setStyleSheet("background: transparent;")
-        self.history_cards_layout = QVBoxLayout(self.history_cards_widget)
-        self.history_cards_layout.setContentsMargins(0, 0, 0, 0)
-        self.history_cards_layout.setSpacing(12)
-        self.history_cards_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        scroll.setWidget(self.history_cards_widget)
-        layout.addWidget(scroll)
-
-        return container
-
-    def _apply_theme(self, theme_name: str = "light"):
-        c = ThemeManager.instance().get_colors()
-
-        self.setObjectName("VersionHistoryRoot")
-        self.setStyleSheet(f"""
-            QWidget#VersionHistoryRoot {{
-                background-color: {c['bg_app']};
-            }}
-            QWidget#VCSidebar {{
-                background-color: {c['bg_card']};
-                border-right: 1px solid {c['border_color']};
-            }}
-            QWidget#VCTabBar {{
-                background-color: {c['bg_card']};
-                border-bottom: 1px solid {c['border_color']};
-            }}
-            QSplitter::handle {{
-                background-color: {c['border_color']};
-            }}
-        """)
-
-        self.lbl_sec_hdr.setStyleSheet(f"font-family: {MONO_JETBRAINS}; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; color: {c['text_secondary']};")
-        self.lbl_nb_title.setStyleSheet(f"font-size: 16px; font-weight: 800; color: {c['text_primary']};")
-        self.lbl_sync_status.setStyleSheet(f"font-family: {MONO_JETBRAINS}; font-size: 11px; color: {c['text_secondary']}; font-weight: 600;")
-        self.lbl_save_hdr.setStyleSheet(f"font-family: {MONO_JETBRAINS}; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: {c['text_secondary']};")
-        self.lbl_pages_hdr.setStyleSheet(f"font-family: {MONO_JETBRAINS}; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: {c['text_secondary']};")
-
-        self.input_commit_msg.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {c['panel_card_bg']};
-                border: 1px solid {c['border_color']};
-                border-radius: 4px;
-                padding: 6px 10px;
-                font-family: {MONO_JETBRAINS};
-                font-size: 11px;
-                color: {c['text_primary']};
-            }}
-            QLineEdit:focus {{
-                border-color: {c['accent']};
-            }}
-        """)
-
-        self.btn_save_snapshot.setStyleSheet(primary_button_qss(c))
-
-        self.tree_pages.setStyleSheet(f"""
-            QTreeWidget {{
-                background-color: transparent;
-                border: none;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                font-size: 12px;
-                color: {c['text_primary']};
-            }}
-            QTreeWidget::item {{
-                padding: 0px;
-                border-radius: 4px;
-                margin-bottom: 3px;
-            }}
-            QTreeWidget::item:selected {{
-                background-color: {c['panel_card_bg']};
-            }}
-            QTreeWidget::item:hover:!selected {{
-                background-color: {c['panel_card_bg']};
-            }}
-        """)
-
-        for btn in self.tab_buttons:
-            btn.setStyleSheet(f"""
-                QPushButton {{
+            btn.setStyleSheet("""
+                QPushButton {
                     background: transparent;
-                    color: {c['text_secondary']};
+                    color: #6e6e73;
                     border: none;
-                    font-family: {MONO_JETBRAINS};
                     font-weight: 600;
-                    font-size: 11px;
-                    letter-spacing: 0.5px;
-                    padding: 8px 14px;
+                    font-size: 13px;
+                    padding: 6px 12px;
                     border-bottom: 2px solid transparent;
                     border-radius: 0px;
-                }}
-                QPushButton:checked {{
-                    color: {c['text_primary']};
-                    font-weight: 800;
-                    border-bottom: 2px solid {c['accent']};
-                }}
-                QPushButton:hover:!checked {{
-                    color: {c['text_primary']};
-                }}
+                }
+                QPushButton:checked {
+                    color: #007aff;
+                    border-bottom: 2px solid #007aff;
+                }
+                QPushButton:hover {
+                    color: #1c1c1e;
+                }
             """)
+            btn.clicked.connect(lambda checked, idx=i: self.switch_view_mode(idx))
 
-        self.lbl_incoming_title.setStyleSheet(f"font-size: 22px; font-weight: 800; color: {c['text_primary']};")
-        self.lbl_incoming_sub.setStyleSheet(f"font-family: {MONO_JETBRAINS}; font-size: 12px; color: {c['text_secondary']};")
-        self.lbl_diff_title.setStyleSheet(f"font-size: 22px; font-weight: 800; color: {c['text_primary']};")
-        self.lbl_history_title.setStyleSheet(f"font-size: 22px; font-weight: 800; color: {c['text_primary']};")
+        nb_layout.addWidget(self.btn_tab_history)
+        nb_layout.addWidget(self.btn_tab_diff)
+        nb_layout.addWidget(self.btn_tab_editor)
+        nb_layout.addWidget(self.btn_tab_graph)
+        self.btn_tab_graph.setVisible(False)  # Revealed only in Developer Mode
 
-        self.diff_browser.setStyleSheet(f"""
-            QTextBrowser {{
-                background-color: {c['bg_card']};
-                border: 1px solid {c['border_color']};
-                border-radius: 6px;
-                padding: 14px;
-                font-family: {MONO_JETBRAINS};
-                font-size: 12px;
-                color: {c['text_primary']};
-            }}
+        nb_layout.addStretch()
+
+        # Active File Label
+        self.lbl_active_note = QLabel(self.active_filename, self.nav_bar)
+        self.lbl_active_note.setStyleSheet("color: #1c1c1e; font-weight: 600; font-size: 13px;")
+        nb_layout.addWidget(self.lbl_active_note)
+
+        # Developer Mode Checkbox Toggle
+        self.chk_dev_mode = QCheckBox("Developer Mode", self.nav_bar)
+        self.chk_dev_mode.setToolTip("Show technical Git branches, commit hashes, and raw diffs")
+        self.chk_dev_mode.setStyleSheet("font-size: 11px; font-weight: 500; color: #8e8e93;")
+        self.chk_dev_mode.toggled.connect(self._on_dev_mode_toggled)
+        nb_layout.addWidget(self.chk_dev_mode)
+
+        layout.addWidget(self.nav_bar)
+
+        # Stacked Views Container
+        self.stack_views = QStackedWidget(ws)
+
+        # View 0: Human-readable Timeline (Primary)
+        self.view_history = self._create_timeline_view()
+        self.stack_views.addWidget(self.view_history)
+
+        # View 1: Review Changes (Object-Level & Line Diff)
+        self.view_diff = self._create_review_changes_view()
+        self.stack_views.addWidget(self.view_diff)
+
+        # View 2: Notes Editor & Live Preview
+        self.view_editor = self._create_editor_view()
+        self.stack_views.addWidget(self.view_editor)
+
+        # View 3: Git DAG Graph (Developer Mode)
+        self.view_graph = self._create_graph_view()
+        self.stack_views.addWidget(self.view_graph)
+
+        layout.addWidget(self.stack_views)
+
+        # Bottom Status Bar
+        self.status_bar = QWidget(ws)
+        self.status_bar.setFixedHeight(28)
+        self.status_bar.setStyleSheet("background-color: #ffffff; border-top: 1px solid #e5e5ea; font-size: 11px; color: #8e8e93;")
+        sb_layout = QHBoxLayout(self.status_bar)
+        sb_layout.setContentsMargins(14, 0, 14, 0)
+
+        self.lbl_status_vcs = QLabel("All changes protected in Version History", self.status_bar)
+        self.lbl_status_vcs.setStyleSheet("color: #28a745; font-weight: 500;")
+        sb_layout.addWidget(self.lbl_status_vcs)
+
+        sb_layout.addStretch()
+        self.lbl_status_meta = QLabel("", self.status_bar)
+        sb_layout.addWidget(self.lbl_status_meta)
+
+        layout.addWidget(self.status_bar)
+
+        # Set default tab: Timeline
+        self.switch_view_mode(0)
+
+        return ws
+
+    # ── View 0: Timeline View ─────────────────────────────────────────────────
+
+    def _create_timeline_view(self) -> QWidget:
+        container = QWidget()
+        container.setStyleSheet("background-color: #f2f2f7;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # Scrollable area for version cards
+        self.timeline_scroll = QScrollArea(container)
+        self.timeline_scroll.setWidgetResizable(True)
+        self.timeline_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.timeline_scroll.setStyleSheet("background: transparent;")
+
+        self.timeline_cards_widget = QWidget()
+        self.timeline_cards_widget.setStyleSheet("background: transparent;")
+        self.timeline_cards_layout = QVBoxLayout(self.timeline_cards_widget)
+        self.timeline_cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.timeline_cards_layout.setSpacing(10)
+        self.timeline_cards_layout.addStretch()
+
+        self.timeline_scroll.setWidget(self.timeline_cards_widget)
+        layout.addWidget(self.timeline_scroll)
+
+        return container
+
+    # ── View 1: Review Changes View ───────────────────────────────────────────
+
+    def _create_review_changes_view(self) -> QWidget:
+        container = QWidget()
+        container.setStyleSheet("background-color: #ffffff;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # Header for Changes
+        self.lbl_diff_header = QLabel("Review Changes", container)
+        self.lbl_diff_header.setStyleSheet("font-size: 15px; font-weight: bold; color: #1c1c1e;")
+        layout.addWidget(self.lbl_diff_header)
+
+        # Splitter: Object Cards Summary (Top/Left) + Line Diff View
+        self.diff_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.diff_splitter.setHandleWidth(1)
+        self.diff_splitter.setStyleSheet("QSplitter::handle { background-color: #e5e5ea; }")
+
+        # Object Changes Container
+        self.obj_changes_scroll = QScrollArea(container)
+        self.obj_changes_scroll.setWidgetResizable(True)
+        self.obj_changes_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.obj_changes_widget = QWidget()
+        self.obj_changes_layout = QVBoxLayout(self.obj_changes_widget)
+        self.obj_changes_layout.setContentsMargins(4, 4, 4, 4)
+        self.obj_changes_layout.setSpacing(8)
+        self.obj_changes_layout.addStretch()
+        self.obj_changes_scroll.setWidget(self.obj_changes_widget)
+        self.diff_splitter.addWidget(self.obj_changes_scroll)
+
+        # Text Line Diff Container
+        self.diff_text_browser = QTextBrowser(container)
+        self.diff_text_browser.setFont(QFont("Consolas", 10))
+        self.diff_text_browser.setStyleSheet("""
+            QTextBrowser {
+                background-color: #f8f9fa;
+                border: 1px solid #e5e5ea;
+                border-radius: 8px;
+                padding: 10px;
+                color: #1c1c1e;
+            }
         """)
+        self.diff_splitter.addWidget(self.diff_text_browser)
+
+        self.diff_splitter.setSizes([200, 400])
+        layout.addWidget(self.diff_splitter, 1)
+
+        return container
+
+    # ── View 2: Notes Editor View ─────────────────────────────────────────────
+
+    def _create_editor_view(self) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        editor_splitter = QSplitter(Qt.Orientation.Horizontal)
+        editor_splitter.setHandleWidth(1)
+
+        # Left Editor
+        left_box = QWidget()
+        lbl_layout = QVBoxLayout(left_box)
+        lbl_layout.setContentsMargins(0, 0, 0, 0)
+        lbl_editor_title = QLabel("Markdown Source", left_box)
+        lbl_editor_title.setStyleSheet("font-weight: 600; font-size: 12px; color: #6e6e73;")
+        lbl_layout.addWidget(lbl_editor_title)
+
+        self.txt_editor = QTextEdit(left_box)
+        self.txt_editor.setFont(QFont("Consolas", 11))
+        self.txt_editor.setStyleSheet("border: 1px solid #e5e5ea; border-radius: 8px; padding: 8px;")
+        self.txt_editor.textChanged.connect(self._on_editor_text_changed)
+        lbl_layout.addWidget(self.txt_editor)
+        editor_splitter.addWidget(left_box)
+
+        # Right Live Preview
+        right_box = QWidget()
+        rbl_layout = QVBoxLayout(right_box)
+        rbl_layout.setContentsMargins(0, 0, 0, 0)
+        lbl_preview_title = QLabel("Live Preview", right_box)
+        lbl_preview_title.setStyleSheet("font-weight: 600; font-size: 12px; color: #6e6e73;")
+        rbl_layout.addWidget(lbl_preview_title)
+
+        self.browser_preview = QTextBrowser(right_box)
+        self.browser_preview.setStyleSheet("border: 1px solid #e5e5ea; border-radius: 8px; padding: 12px; background: #ffffff;")
+        rbl_layout.addWidget(self.browser_preview)
+        editor_splitter.addWidget(right_box)
+
+        editor_splitter.setSizes([500, 500])
+        layout.addWidget(editor_splitter)
+
+        return container
+
+    # ── View 3: Git DAG Graph View (Developer Mode) ───────────────────────────
+
+    def _create_graph_view(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        self.scene_graph = QGraphicsScene(container)
+        self.view_graph_view = QGraphicsView(self.scene_graph, container)
+        self.view_graph_view.setRenderHint(self.view_graph_view.renderHints())
+        self.view_graph_view.setStyleSheet("background-color: #ffffff; border: 1px solid #e5e5ea; border-radius: 8px;")
+        layout.addWidget(self.view_graph_view)
+
+        return container
+
+    # ── Navigation and State Handlers ─────────────────────────────────────────
 
     def switch_view_mode(self, index: int):
+        """Switches the active workspace stack view."""
         for i, btn in enumerate(self.tab_buttons):
             btn.setChecked(i == index)
         self.stack_views.setCurrentIndex(index)
 
         if index == 0:
-            self._render_incoming_cards()
+            self.render_timeline()
         elif index == 1:
-            self._render_diff_view()
+            self.render_review_changes()
         elif index == 2:
-            self._render_history_cards()
+            self.load_active_file()
+        elif index == 3:
+            self.render_dag_graph()
+
+    def _on_dev_mode_toggled(self, checked: bool):
+        self.developer_mode = checked
+        self.dev_branch_box.setVisible(checked)
+        self.dev_staging_box.setVisible(checked)
+        self.btn_tab_graph.setVisible(checked)
+        self.render_timeline()
+        self.render_review_changes()
+
+    def open_notebook_vcs(self, notebook_id: str):
+        """Focuses Version History on a specific notebook canvas board."""
+        self.active_notebook_id = notebook_id
+        target_filename = f"boards/board_{notebook_id}.json"
+        
+        # Check if this board file exists in the repo
+        fpath = os.path.join(self.git_mgr.repo_dir, target_filename)
+        if os.path.exists(fpath):
+            self.active_filename = target_filename
+        else:
+            # Fallback to main board
+            self.active_filename = "boards/board_main.json"
+
+        self.lbl_active_note.setText(os.path.basename(self.active_filename))
+        self.refresh_all()
+        self.switch_view_mode(0)
 
     def refresh_all(self):
-        self._populate_sidebar_tree()
-        self.switch_view_mode(self.stack_views.currentIndex())
+        """Refreshes sidebar tree, timeline, and status bar."""
+        self.refresh_branches()
+        self.refresh_file_tree()
+        self.render_timeline()
 
-    def _populate_sidebar_tree(self):
-        self.tree_pages.clear()
-        c = ThemeManager.instance().get_colors()
+    def refresh_branches(self):
+        self.cb_branches.blockSignals(True)
+        self.cb_branches.clear()
+        branches = self.git_mgr.get_branches()
+        cur = self.git_mgr.get_current_branch()
+        for b in branches:
+            self.cb_branches.addItem(b, b)
+        idx = self.cb_branches.findData(cur)
+        if idx >= 0:
+            self.cb_branches.setCurrentIndex(idx)
+        self.cb_branches.blockSignals(False)
 
-        pages = [
-            ("Kinematics Notes", "physics_quantum_notes.md", "You edited this page", "Edited"),
-            ("Calculus Reference", "calculus_reference.md", "You updated formulas", "Edited"),
-            ("Projectile Motion", "projectile_motion.md", "You added a new page", "New"),
-        ]
+    def refresh_file_tree(self):
+        """Renders documents and canvas boards in the left sidebar."""
+        self.tree_vcs.clear()
+        self.git_mgr.sync_boards_to_repo()
+        status_info = self.git_mgr.get_files_status()
 
-        for title, fname, subtitle, badge_txt in pages:
-            item = QTreeWidgetItem(self.tree_pages)
-            item.setSizeHint(0, QSize(228, 48))
+        # Canvas Boards Group
+        boards_root = QTreeWidgetItem(self.tree_vcs, ["Canvas Boards"])
+        boards_root.setIcon(0, qta.icon("fa5s.th-large", color="#7c3aed"))
+        boards_root.setExpanded(True)
 
-            row_widget = QWidget()
-            row_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-            r_layout = QHBoxLayout(row_widget)
-            r_layout.setContentsMargins(6, 4, 6, 4)
-            r_layout.setSpacing(8)
+        # Study Notes Group
+        notes_root = QTreeWidgetItem(self.tree_vcs, ["Study Notes"])
+        notes_root.setIcon(0, qta.icon("fa5s.book-open", color="#007aff"))
+        notes_root.setExpanded(True)
 
-            lbl_ic = QLabel(row_widget)
-            lbl_ic.setPixmap(qta.icon("ri.file-text-line", color=c['text_secondary']).pixmap(14, 14))
-            r_layout.addWidget(lbl_ic)
+        # Modified files lookup
+        uncommitted_files = {it["filename"] for it in status_info.get("unstaged", [])}
+        uncommitted_files.update(it["filename"] for it in status_info.get("staged", []))
 
-            text_vbox = QVBoxLayout()
-            text_vbox.setContentsMargins(0, 0, 0, 0)
-            text_vbox.setSpacing(2)
+        for f in status_info.get("all_files", []):
+            is_mod = f in uncommitted_files
+            display_name = os.path.basename(f)
+            if f.endswith(".json"):
+                item = QTreeWidgetItem(boards_root, [display_name + (" •" if is_mod else "")])
+                item.setIcon(0, qta.icon("fa5s.palette", color="#ff9500" if is_mod else "#6e6e73"))
+                item.setData(0, Qt.ItemDataRole.UserRole, f)
+            elif f.endswith(".md"):
+                item = QTreeWidgetItem(notes_root, [display_name + (" •" if is_mod else "")])
+                item.setIcon(0, qta.icon("fa5s.file-alt", color="#ff9500" if is_mod else "#6e6e73"))
+                item.setData(0, Qt.ItemDataRole.UserRole, f)
 
-            t_lbl = QLabel(title, row_widget)
-            t_lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_primary']}; font-family: {MONO_JETBRAINS}; line-height: 1.2;")
+        # Update status bar
+        if uncommitted_files:
+            self.lbl_status_vcs.setText(f"{len(uncommitted_files)} uncommitted change{'s' if len(uncommitted_files) != 1 else ''}")
+            self.lbl_status_vcs.setStyleSheet("color: #ff9500; font-weight: 500;")
+        else:
+            self.lbl_status_vcs.setText("All changes protected in Version History")
+            self.lbl_status_vcs.setStyleSheet("color: #28a745; font-weight: 500;")
 
-            s_lbl = QLabel(subtitle, row_widget)
-            s_lbl.setStyleSheet(f"font-size: 10px; color: {c['text_secondary']}; line-height: 1.1;")
+    # ── Rendering: Timeline Cards ─────────────────────────────────────────────
 
-            text_vbox.addWidget(t_lbl)
-            text_vbox.addWidget(s_lbl)
-            r_layout.addLayout(text_vbox, 1)
-
-            badge = QLabel(badge_txt, row_widget)
-            badge.setStyleSheet(f"""
-                font-family: {MONO_JETBRAINS};
-                font-size: 9px;
-                font-weight: 700;
-                color: {c['text_secondary']};
-                background: {c['panel_card_bg']};
-                border: 1px solid {c['border_color']};
-                border-radius: 3px;
-                padding: 1px 5px;
-            """)
-            r_layout.addWidget(badge)
-
-            self.tree_pages.setItemWidget(item, 0, row_widget)
-            item.setData(0, Qt.ItemDataRole.UserRole, fname)
-
-        if self.tree_pages.topLevelItemCount() > 0:
-            self.tree_pages.setCurrentItem(self.tree_pages.topLevelItem(0))
-
-    def _render_incoming_cards(self):
-        while self.incoming_cards_layout.count() > 0:
-            child = self.incoming_cards_layout.takeAt(0)
+    def render_timeline(self):
+        """Populates the timeline with clean, human-readable version snapshot cards."""
+        # Clear existing cards
+        while self.timeline_cards_layout.count() > 1:
+            child = self.timeline_cards_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
-        c = ThemeManager.instance().get_colors()
-        incoming = self.collab_mgr.get_incoming_contributions()
-
-        if not incoming:
-            empty_lbl = QLabel("No incoming changes waiting for review.", self.incoming_cards_widget)
-            empty_lbl.setStyleSheet(f"font-family: {MONO_JETBRAINS}; color: {c['text_secondary']}; font-size: 12px; margin-top: 20px;")
-            self.incoming_cards_layout.addWidget(empty_lbl)
-            return
-
-        for contrib in incoming:
-            card = QFrame()
-            card.setObjectName("IncomingCard")
-            card.setStyleSheet(f"""
-                QFrame#IncomingCard {{
-                    background-color: {c['bg_card']};
-                    border: 1px solid {c['border_color']};
-                    border-radius: 8px;
-                }}
-                QFrame#IncomingCard:hover {{
-                    border-color: {c['accent']};
-                }}
-            """)
-
-            card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(20, 16, 20, 16)
-            card_layout.setSpacing(12)
-
-            top_row = QHBoxLayout()
-            top_row.setSpacing(10)
-
-            initials = contrib["author"][:2].upper()
-            lbl_avatar = QLabel(initials, card)
-            lbl_avatar.setFixedSize(30, 30)
-            lbl_avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_avatar.setStyleSheet(f"""
-                background-color: {c['panel_card_bg']};
-                color: {c['text_primary']};
-                font-family: {MONO_JETBRAINS};
-                font-size: 11px;
-                font-weight: 700;
-                border-radius: 15px;
-                border: 1px solid {c['border_color']};
-            """)
-            top_row.addWidget(lbl_avatar)
-
-            lbl_author_time = QLabel(f"<b>{contrib['author']}</b><br/><span style='color:{c['text_secondary']}; font-size:11px; font-family:{MONO_JETBRAINS};'>Pending Branch: {contrib['branch']}</span>", card)
-            lbl_author_time.setStyleSheet(f"font-size: 13px; color: {c['text_primary']};")
-            top_row.addWidget(lbl_author_time)
-            top_row.addStretch()
-
-            card_layout.addLayout(top_row)
-
-            diff_summary = f"Added {contrib['diff']['additions']} lines, removed {contrib['diff']['deletions']} lines in {contrib['title']}."
-            lbl_msg = QLabel(diff_summary, card)
-            lbl_msg.setStyleSheet(f"font-size: 13px; color: {c['text_primary']}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;")
-            lbl_msg.setWordWrap(True)
-            card_layout.addWidget(lbl_msg)
-
-            btn_row = QHBoxLayout()
-            btn_row.setSpacing(12)
-
-            btn_accept = QPushButton("ACCEPT", card)
-            btn_accept.setFixedHeight(34)
-            btn_accept.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_accept.setStyleSheet(primary_button_qss(c))
-            btn_accept.clicked.connect(lambda _, b=contrib['branch']: self._accept_backend_contribution(b))
-            btn_row.addWidget(btn_accept, 1)
-
-            btn_dismiss = QPushButton("Dismiss", card)
-            btn_dismiss.setFixedHeight(34)
-            btn_dismiss.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_dismiss.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    border: none;
-                    color: {c['text_secondary']};
-                    font-family: {MONO_JETBRAINS};
-                    font-size: 12px;
-                    font-weight: 600;
-                    padding: 6px 14px;
-                }}
-                QPushButton:hover {{
-                    color: {c['text_primary']};
-                }}
-            """)
-            btn_dismiss.clicked.connect(lambda _, b=contrib['branch']: self._dismiss_backend_contribution(b))
-            btn_row.addWidget(btn_dismiss)
-
-            card_layout.addLayout(btn_row)
-            self.incoming_cards_layout.addWidget(card)
-
-    def _accept_backend_contribution(self, branch: str):
-        self.lbl_sync_status.setText("● Merging...")
-        self.collab_mgr.merge_contribution(branch)
-        self.lbl_sync_status.setText("● Auto-saving · Synced")
-        self.refresh_all()
-
-    def _dismiss_backend_contribution(self, branch: str):
-        try:
-            self.git_mgr._run_git(["branch", "-D", branch])
-        except Exception:
-            pass
-        self.refresh_all()
-
-    def _render_diff_view(self):
-        c = ThemeManager.instance().get_colors()
-        diff_data = self.git_mgr.get_diff(self.active_filename)
-        raw_diff = diff_data.get("raw", "")
-
-        if not raw_diff:
-            content = self.git_mgr.get_file_content(self.active_filename)
-            lines = [
-                f"<div style='color:{c['text_secondary']}; font-family:{MONO_JETBRAINS}; margin-bottom:8px;'>--- a/{self.active_filename}<br/>+++ b/{self.active_filename}</div>",
-                f"<div style='color:{c['text_primary']}; font-family:{MONO_JETBRAINS}; padding:2px 0;'>Current file content ({len(content.splitlines())} lines) is in sync with HEAD commit.</div>"
-            ]
-            self.diff_browser.setHtml("".join(lines))
-            return
-
-        formatted_lines = [
-            f"<div style='color:{c['text_secondary']}; font-family:{MONO_JETBRAINS}; margin-bottom:8px;'>--- a/{self.active_filename}<br/>+++ b/{self.active_filename}</div>"
-        ]
-
-        for line in raw_diff.splitlines():
-            esc = html.escape(line)
-            if line.startswith("+") and not line.startswith("+++"):
-                formatted_lines.append(f"<div style='background-color:{c['panel_card_bg']}; font-weight:700; color:{c['text_primary']}; font-family:{MONO_JETBRAINS}; padding:2px 4px;'>{esc}</div>")
-            elif line.startswith("-") and not line.startswith("---"):
-                formatted_lines.append(f"<div style='color:{c['text_secondary']}; text-decoration:line-through; font-family:{MONO_JETBRAINS}; padding:2px 4px;'>{esc}</div>")
-            else:
-                formatted_lines.append(f"<div style='color:{c['text_secondary']}; font-family:{MONO_JETBRAINS}; padding:2px 4px;'>{esc}</div>")
-
-        self.diff_browser.setHtml("".join(formatted_lines))
-
-    def _render_history_cards(self):
-        while self.history_cards_layout.count() > 0:
-            child = self.history_cards_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        c = ThemeManager.instance().get_colors()
         snapshots = self.version_service.get_version_history(notebook_id=self.active_notebook_id, limit=50)
 
+        if not snapshots:
+            empty_lbl = QLabel("No versions saved yet. Click 'Save Version' above to create your first checkpoint.")
+            empty_lbl.setStyleSheet("color: #8e8e93; font-size: 13px; padding: 20px;")
+            empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.timeline_cards_layout.insertWidget(0, empty_lbl)
+            return
+
         for snap in snapshots:
-            # Clean Single Outer Card (No nested outline boxes around title or description)
-            card = QFrame()
-            card.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {c['bg_card']};
-                    border: 1px solid {c['border_color']};
-                    border-radius: 8px;
-                }}
-                QFrame:hover {{
-                    border-color: {c['accent']};
-                }}
-            """)
+            card = self._create_version_card(snap)
+            # Insert before stretch
+            self.timeline_cards_layout.insertWidget(self.timeline_cards_layout.count() - 1, card)
 
-            card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(18, 14, 18, 14)
-            card_layout.setSpacing(6)
+    def _create_version_card(self, snap: VersionSnapshot) -> QFrame:
+        """Constructs a polished, accessible version card."""
+        is_dark = ThemeManager.instance().current_theme == "dark" if hasattr(ThemeManager, "instance") else False
+        card_bg = "#27272a" if is_dark else "#ffffff"
+        card_border = "#3f3f46" if is_dark else "#e5e5ea"
+        text_title = "#f4f4f5" if is_dark else "#1c1c1e"
+        text_desc = "#d4d4d8" if is_dark else "#3a3a3c"
+        text_meta = "#a1a1aa" if is_dark else "#8e8e93"
+        backup_bg = "#3f3f46" if is_dark else "#e5e5ea"
+        backup_color = "#d4d4d8" if is_dark else "#6e6e73"
 
-            # Top Row: Clean Bold Version Heading + Monospace Timestamp
-            top_row = QHBoxLayout()
-            top_row.setContentsMargins(0, 0, 0, 0)
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {card_bg};
+                border: 1px solid {card_border};
+                border-radius: 10px;
+                padding: 12px;
+            }}
+            QFrame:hover {{
+                border-color: #007aff;
+            }}
+        """)
 
-            lbl_title = QLabel(snap.title, card)
-            lbl_title.setStyleSheet(f"font-size: 14px; font-weight: 800; color: {c['text_primary']}; background: transparent; border: none;")
-            top_row.addWidget(lbl_title)
-            top_row.addStretch()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(6)
 
-            lbl_time = QLabel(snap.relative_time, card)
-            lbl_time.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']}; font-family: {MONO_JETBRAINS}; background: transparent; border: none;")
-            top_row.addWidget(lbl_time)
-            card_layout.addLayout(top_row)
+        # Top Row: Title + Timestamp + (Optional Dev SHA)
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
 
-            # Plain Text Commit Description (no nested box/pill)
-            lbl_desc = QLabel(snap.description, card)
-            lbl_desc.setWordWrap(True)
-            lbl_desc.setStyleSheet(f"font-size: 12px; color: {c['text_secondary']}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: transparent; border: none; margin-top: 2px; margin-bottom: 6px;")
-            card_layout.addWidget(lbl_desc)
+        lbl_title = QLabel(snap.title)
+        lbl_title.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {text_title};")
+        top_row.addWidget(lbl_title)
 
-            # Bottom Row: Restore Version Button Action
-            bot_row = QHBoxLayout()
-            bot_row.setContentsMargins(0, 0, 0, 0)
-            bot_row.addStretch()
+        if snap.is_backup:
+            lbl_backup = QLabel("Safety Backup")
+            lbl_backup.setStyleSheet(f"background-color: {backup_bg}; color: {backup_color}; font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px;")
+            top_row.addWidget(lbl_backup)
 
-            btn_restore = QPushButton("Restore Version", card)
-            btn_restore.setIcon(qta.icon("ri.restart-line", color=c['text_secondary']))
-            btn_restore.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_restore.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    border: 1px solid {c['border_color']};
-                    border-radius: 4px;
-                    padding: 4px 10px;
-                    font-family: {MONO_JETBRAINS};
-                    font-size: 11px;
-                    font-weight: 600;
-                    color: {c['text_primary']};
-                }}
-                QPushButton:hover {{
-                    background-color: {c['panel_card_bg']};
-                    border-color: {c['accent']};
-                }}
-            """)
-            btn_restore.clicked.connect(lambda _, s=snap: self._restore_backend_snapshot(s))
-            bot_row.addWidget(btn_restore)
-            card_layout.addLayout(bot_row)
+        top_row.addStretch()
 
-            self.history_cards_layout.addWidget(card)
+        if self.developer_mode and snap.commit_hash:
+            lbl_sha = QLabel(f"[{snap.commit_hash}]")
+            lbl_sha.setFont(QFont("Consolas", 10))
+            lbl_sha.setStyleSheet(f"color: {text_meta};")
+            top_row.addWidget(lbl_sha)
 
-    def _restore_backend_snapshot(self, snap: VersionSnapshot):
-        self.lbl_sync_status.setText("● Restoring...")
-        self.version_service.restore_version(snap.version_id)
-        self.version_restored.emit(snap.version_id)
-        self.lbl_sync_status.setText("● Auto-saving · Synced")
-        self.refresh_all()
+        lbl_time = QLabel(snap.relative_time)
+        lbl_time.setStyleSheet(f"font-size: 12px; color: {text_meta};")
+        top_row.addWidget(lbl_time)
 
-    def _on_save_snapshot_clicked(self):
-        msg = self.input_commit_msg.text().strip()
-        if not msg:
-            msg = "Manual Snapshot Checkpoint"
-        self.lbl_sync_status.setText("● Saving...")
-        self.version_service.create_checkpoint(title=msg, description="User saved version", is_backup=False)
-        self.input_commit_msg.clear()
-        self.lbl_sync_status.setText("● Auto-saving · Synced")
-        self.refresh_all()
+        card_layout.addLayout(top_row)
+
+        # Middle: Description
+        lbl_desc = QLabel(snap.description)
+        lbl_desc.setStyleSheet(f"font-size: 13px; color: {text_desc};")
+        lbl_desc.setWordWrap(True)
+        card_layout.addWidget(lbl_desc)
+
+        # Bottom Row: Summary Badge + Action Buttons
+        bot_row = QHBoxLayout()
+        bot_row.setContentsMargins(0, 4, 0, 0)
+        bot_row.setSpacing(8)
+
+        lbl_summary = QLabel(snap.changes_summary)
+        lbl_summary.setStyleSheet(f"color: {text_meta}; font-size: 11px;")
+        bot_row.addWidget(lbl_summary)
+
+        bot_row.addStretch()
+
+        # Action: Review Changes
+        btn_diff = QPushButton("Review Changes", card)
+        btn_diff.setIcon(qta.icon("fa5s.exchange-alt", color="#007aff"))
+        btn_diff.clicked.connect(lambda checked, s=snap: self._on_card_diff_clicked(s))
+        bot_row.addWidget(btn_diff)
+
+        # Action: Create Copy
+        btn_copy = QPushButton("Create Copy", card)
+        btn_copy.setIcon(qta.icon("fa5s.copy", color="#6e6e73"))
+        btn_copy.clicked.connect(lambda checked, s=snap: self._on_card_copy_clicked(s))
+        bot_row.addWidget(btn_copy)
+
+        # Action: Restore Version
+        btn_restore = QPushButton("Restore Version", card)
+        btn_restore.setIcon(qta.icon("fa5s.undo-alt", color="#28a745"))
+        btn_restore.clicked.connect(lambda checked, s=snap: self._on_card_restore_clicked(s))
+        bot_row.addWidget(btn_restore)
+
+        card_layout.addLayout(bot_row)
+
+        return card
+
+    # ── Rendering: Review Changes ─────────────────────────────────────────────
+
+    def render_review_changes(self, commit_ref: str = "HEAD"):
+        """Renders object-level change cards and line diffs."""
+        self.lbl_diff_header.setText(f"Review Changes: {os.path.basename(self.active_filename)}")
+
+        diff_info = self.version_service.compare_file_with_head(self.active_filename)
+
+        # 1. Populate Object Change Cards
+        while self.obj_changes_layout.count() > 1:
+            child = self.obj_changes_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        if not diff_info.object_changes:
+            no_changes = QLabel("No unsaved changes in this document. Everything is saved in Version History.")
+            no_changes.setStyleSheet("color: #8e8e93; font-size: 13px; padding: 12px;")
+            self.obj_changes_layout.insertWidget(0, no_changes)
+        else:
+            for obj in diff_info.object_changes:
+                row = QFrame()
+                row.setStyleSheet("background-color: #f8f9fa; border: 1px solid #e5e5ea; border-radius: 6px; padding: 8px;")
+                r_layout = QHBoxLayout(row)
+                r_layout.setContentsMargins(8, 6, 8, 6)
+                r_layout.setSpacing(10)
+
+                icon_lbl = QLabel(row)
+                icon_lbl.setPixmap(qta.icon(obj.icon, color=obj.badge_color).pixmap(16, 16))
+                r_layout.addWidget(icon_lbl)
+
+                text_vbox = QVBoxLayout()
+                text_vbox.setSpacing(2)
+                t_lbl = QLabel(obj.title, row)
+                t_lbl.setStyleSheet("font-weight: 600; font-size: 12px; color: #1c1c1e;")
+                d_lbl = QLabel(obj.description, row)
+                d_lbl.setStyleSheet("font-size: 11px; color: #6e6e73;")
+                text_vbox.addWidget(t_lbl)
+                text_vbox.addWidget(d_lbl)
+                r_layout.addLayout(text_vbox, 1)
+
+                badge = QLabel(obj.action.value.upper(), row)
+                badge.setStyleSheet(f"background-color: {obj.badge_color}; color: white; font-weight: bold; font-size: 9px; padding: 2px 6px; border-radius: 4px;")
+                r_layout.addWidget(badge)
+
+                self.obj_changes_layout.insertWidget(self.obj_changes_layout.count() - 1, row)
+
+        # 2. Populate Line Diff
+        html_lines = []
+        for line in diff_info.lines:
+            t = line.get("type", "same")
+            txt = html.escape(line.get("text", ""))
+            if t == "add":
+                html_lines.append(f"<div style='background-color:#e6ffec; color:#1a7f37; font-family:Consolas;'>+ {txt}</div>")
+            elif t == "del":
+                html_lines.append(f"<div style='background-color:#ffebe9; color:#cf222e; font-family:Consolas;'>- {txt}</div>")
+            else:
+                html_lines.append(f"<div style='color:#57606a; font-family:Consolas;'>  {txt}</div>")
+
+        if not html_lines:
+            self.diff_text_browser.setHtml("<div style='color:#8e8e93; font-family:Consolas;'>No line differences.</div>")
+        else:
+            self.diff_text_browser.setHtml("".join(html_lines))
+
+    # ── Rendering: DAG Graph ──────────────────────────────────────────────────
+
+    def render_dag_graph(self):
+        """Renders technical commit graph for Developer Mode."""
+        self.scene_graph.clear()
+        commits = self.git_mgr.get_commit_history()
+
+        y = 20
+        for i, commit in enumerate(commits):
+            self.scene_graph.addEllipse(30, y, 16, 16, QPen(QColor("#ffffff")), QBrush(QColor("#007aff" if i == 0 else "#28a745")))
+            if i < len(commits) - 1:
+                self.scene_graph.addLine(38, y + 16, 38, y + 60, QPen(QColor("#007aff"), 2))
+
+            title = self.scene_graph.addText(f"[{commit['hash']}] {commit['message']}")
+            title.setPos(60, y - 2)
+            title.setDefaultTextColor(QColor("#1c1c1e"))
+            font = title.font()
+            font.setBold(True)
+            title.setFont(font)
+
+            meta = self.scene_graph.addText(f"Author: {commit['author']} • {commit['date']}")
+            meta.setPos(60, y + 16)
+            meta.setDefaultTextColor(QColor("#6e6e73"))
+
+            y += 60
+
+    # ── Notes Editor & Preview ────────────────────────────────────────────────
+
+    def load_active_file(self):
+        """Loads active note content into editor."""
+        self.lbl_active_note.setText(os.path.basename(self.active_filename))
+        content = self.git_mgr.get_file_content(self.active_filename)
+        self.txt_editor.blockSignals(True)
+        self.txt_editor.setPlainText(content)
+        self.txt_editor.blockSignals(False)
+        self._update_preview(content)
+
+    def _on_editor_text_changed(self):
+        content = self.txt_editor.toPlainText()
+        self.git_mgr.save_file_content(self.active_filename, content)
+        self._update_preview(content)
+
+    def _update_preview(self, markdown_text: str):
+        # Basic markdown to HTML conversion for live preview
+        escaped = html.escape(markdown_text)
+        rendered = re.sub(r'^# (.+)$', r'<h1 style="color:#007aff; font-family:sans-serif;">\1</h1>', escaped, flags=re.MULTILINE)
+        rendered = re.sub(r'^## (.+)$', r'<h2 style="color:#1c1c1e; font-family:sans-serif;">\1</h2>', rendered, flags=re.MULTILINE)
+        rendered = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', rendered)
+        rendered = rendered.replace("\n", "<br>")
+        self.browser_preview.setHtml(rendered)
+
+    # ── Event Handlers & User Actions ─────────────────────────────────────────
 
     def _on_tree_item_clicked(self, item, col):
         fname = item.data(0, Qt.ItemDataRole.UserRole)
-        if fname:
+        if fname and isinstance(fname, str):
             self.active_filename = fname
+            self.lbl_active_note.setText(os.path.basename(fname))
             if self.stack_views.currentIndex() == 1:
-                self._render_diff_view()
+                self.render_review_changes()
+            elif self.stack_views.currentIndex() == 2:
+                self.load_active_file()
+
+    def _on_save_version_clicked(self):
+        """Prompts the user for a description and creates a safe version checkpoint."""
+        desc, ok = QInputDialog.getText(
+            self,
+            "Save Version",
+            "Describe the work completed in this version:",
+            text="Completed study session"
+        )
+        if not ok:
+            return
+
+        try:
+            snapshot = self.version_service.save_version(
+                description=desc.strip(),
+                notebook_id=self.active_notebook_id
+            )
+            QMessageBox.information(
+                self,
+                "Version Saved",
+                f"{snapshot.title} successfully saved!\n\"{snapshot.description}\""
+            )
+            self.refresh_all()
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", str(e))
+
+    def _on_card_restore_clicked(self, snap: VersionSnapshot):
+        """Safely restores a previous version non-destructively."""
+        reply = QMessageBox.question(
+            self,
+            f"Restore {snap.title}",
+            f"Are you sure you want to restore {snap.title} (\"{snap.description}\")?\n\n"
+            "This operation is safe and non-destructive. Kestrel will automatically create a "
+            "backup of your current work before restoring.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            res = self.version_service.restore_version(snap.version_id, create_backup=True)
+            QMessageBox.information(
+                self,
+                "Version Restored",
+                f"{snap.title} was successfully restored!\n\n"
+                f"A safety backup ({res.get('backup_version', 'backup')}) of your previous state "
+                "was automatically saved."
+            )
+            self.refresh_all()
+            self.version_restored.emit(snap.version_id)
+        except Exception as e:
+            QMessageBox.warning(self, "Restore Error", str(e))
+
+    def _on_card_diff_clicked(self, snap: VersionSnapshot):
+        """Switches to Review Changes tab comparing with this snapshot."""
+        self.switch_view_mode(1)
+        self.render_review_changes(snap.version_id)
+
+    def _on_card_copy_clicked(self, snap: VersionSnapshot):
+        """Prompts to create a copy from a specific version snapshot."""
+        name, ok = QInputDialog.getText(
+            self,
+            "Create Copy",
+            f"Enter a name for the copy of {snap.title}:",
+            text=f"Copy_of_{snap.title.replace(' ', '_')}"
+        )
+        if ok and name.strip():
+            try:
+                copy_name = self.version_service.create_copy(snap.version_id, name.strip())
+                QMessageBox.information(
+                    self,
+                    "Copy Created",
+                    f"Created copy '{copy_name}' from {snap.title}."
+                )
+                self.refresh_all()
+            except Exception as e:
+                QMessageBox.warning(self, "Copy Error", str(e))
+
+    def _on_stage_all(self):
+        self.git_mgr.stage_all()
+        self.refresh_file_tree()
+
+    def _on_unstage_all(self):
+        self.git_mgr.unstage_all()
+        self.refresh_file_tree()
+
+    def _on_branch_changed(self, idx):
+        bname = self.cb_branches.itemData(idx)
+        if bname and bname != self.git_mgr.get_current_branch():
+            self.git_mgr.switch_branch(bname)
+            self.refresh_all()
+
+    def _on_new_branch_clicked(self):
+        name, ok = QInputDialog.getText(self, "New Branch", "Enter branch name:")
+        if ok and name.strip():
+            if self.git_mgr.create_branch(name.strip()):
+                self.git_mgr.switch_branch(name.strip())
+                self.refresh_all()
+
+    def _on_new_note_clicked(self):
+        name, ok = QInputDialog.getText(self, "New Study Note", "Enter note filename (e.g. biology_cell_cycle.md):")
+        if ok and name.strip():
+            created = self.git_mgr.create_new_note(name.strip())
+            self.active_filename = created
+            self.refresh_all()
+            self.switch_view_mode(2)
 
 
-# Backward compatibility alias
+# Backward Compatibility Alias:
 GitNotesPanel = VersionHistoryPanel
