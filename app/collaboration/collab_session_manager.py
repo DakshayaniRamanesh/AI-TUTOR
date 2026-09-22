@@ -78,7 +78,7 @@ class CollabSessionManager(QObject):
 
     # ── Host Flow ─────────────────────────────────────────────────────────────
 
-    def start_hosting(self, display_ip: str = None, port: int = DEFAULT_COLLAB_PORT, user_name: str = "Host") -> Tuple[bool, str]:
+    def start_hosting(self, display_ip: str = None, port: int = DEFAULT_COLLAB_PORT, user_name: str = "Host") -> tuple[bool, str]:
         """Starts hosting a local collaboration session."""
         if self.is_in_session:
             self.leave_session()
@@ -130,7 +130,7 @@ class CollabSessionManager(QObject):
 
     # ── Join Flow ─────────────────────────────────────────────────────────────
 
-    def join_session(self, code_or_url: str, user_name: str = "Guest") -> Tuple[bool, str]:
+    def join_session(self, code_or_url: str, user_name: str = "Guest") -> tuple[bool, str]:
         """Joins an existing collaboration session using a code or link."""
         if self.is_in_session:
             self.leave_session()

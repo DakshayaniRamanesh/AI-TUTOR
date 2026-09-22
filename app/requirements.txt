@@ -7,3 +7,4 @@ matplotlib
 sounddevice
 python-dotenv
 requests>=2.31.0
+pydantic>=2.5.0

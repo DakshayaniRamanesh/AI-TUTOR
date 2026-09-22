@@ -170,8 +170,6 @@ class RendererAgent:
                 
                 rendered_mp4s.append(final_mp4)
 
-            # If there's only one video, use it. If multiple, we need to stitch them.
-            persistent_path = os.path.join(_VIDEOS_DIR, f"{job.job_id}_v{job.version}.mp4")
             if len(rendered_mp4s) == 1:
                 final_output = rendered_mp4s[0]
             else:
