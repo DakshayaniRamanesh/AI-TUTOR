@@ -71,9 +71,21 @@ flowchart TD
 - **Structured Academic Templates**: One-click generation of assignments, research papers, homework sets, and lecture slides.
 - **Split-View Editor**: Syntax-highlighted LaTeX input alongside real-time PDF previews.
 
-### 5. Knowledge Management & Version Control
-- **Obsidian-Style Graph**: Network visualization of concepts, `#tags`, and `[[wikilinks]]` extracted from notes and ingested documents.
-- **Git-Backed Notes**: Integrated local Git repository tracking note edits, board states, commit history, and diffs.
+### 6. Real-Time Collaborative Whiteboard
+- **LAN & Room-Code Collaboration**: Seamless peer-to-peer collaboration on the infinite whiteboard canvas using automated LAN IP discovery and 6-character room codes (`XXXX-XXXX`).
+- **Live Canvas Synchronization**: Zero-latency bidirectional streaming of freehand inking, sticky notes, geometric shapes, text updates, movements, and object deletions.
+- **Collaborator Awareness**: Live remote collaborator pointers (`RemoteCollaboratorCursor`) displaying participant names, cursor colors, and active drawing tools.
+
+### 7. Interactive In-Canvas Widgets & PenEcho Arcade
+- **Floating Interactive Windows**: Resizable, draggable macOS-style cards (`InteractiveCanvasItem`) embedded directly on the infinite canvas with minimize, collapse, and close controls.
+- **Multi-Timezone World Clock**: Comparative circular analog dials and digital cards supporting Colombo (LK), New York (NYC), London (UK), Auckland (NZ), Tokyo, and 500+ world timezones with live ticking hands, UTC offsets, and 1-click `[🕒 Circular]` / `[🔢 Digital]` toggles.
+- **PenEcho Procedural Simulations**: Real-time physics and mathematical curve engines:
+  - *Planetary Orbit Simulator*: Live gravitational $N$-body dynamics ($F = G \frac{m_1 m_2}{r^2}$) with orbital trails.
+  - *Wave Propagation*: Dynamic traveling sine waves ($y(x,t) = A\sin(kx - \omega t)$) with interactive wavelength and frequency sliders.
+  - *Harmonic Pendulum*: Damped harmonic oscillation ($T = 2\pi\sqrt{L/g}$) with live angle and damping adjustment.
+  - *Procedural Mathematical Curves*: Glowing mathematical curve summons (Lemniscate of Bernoulli, Rhodonea Rose, Lamé Superellipse, Golden Spiral, Deltoid).
+- **Embedded Tools & Mini-Games**: Flappy Bird, Retro Snake, Tic-Tac-Toe, Scientific Calculator, Stopwatch & Countdown Timer, Tally Counter, Dice & Coin Flipper, Physics Particle Sandbox, and Unit Converter.
+- **On-The-Fly Dynamic Synthesis**: Typo-tolerant prompt detection generating custom interactive PyQt widgets at runtime (Reaction Speed Test, Memory Match, Tone Synth Piano Keyboard, Todo Checklist, Study Flashcards).
 
 ---
 
@@ -88,9 +100,15 @@ AI-TUTOR/
 │   │   ├── ocr/                   # Handwriting OCR client
 │   │   ├── version_control/       # Git repository manager
 │   │   └── video_generation/      # Video generation API client
+│   ├── collaboration/             # Real-time WebSocket/TCP collaboration engine
+│   │   ├── collab_client.py       # Client socket listener & canvas dispatcher
+│   │   ├── collab_server.py       # Local room server & state distributor
+│   │   └── collab_session_manager.py # Session lifecycle & room codes
 │   ├── storage/                   # Database models & board file persistence
 │   ├── tests/                     # PyQt6 client unit & integration tests
 │   ├── ui/                        # Canvas scene, views, widgets, and items
+│   │   ├── items/interactive_widgets/ # World clock, arcade games, PenEcho sims
+│   │   └── penecho_integration/   # Procedural curves, animation & draft layer
 │   └── main.py                    # Desktop application entry point
 ├── backend/                       # Server-side Video & LaTeX Pipeline
 │   ├── ci/                        # 4-stage validation harness
@@ -101,6 +119,7 @@ AI-TUTOR/
 │   ├── local_server.py            # Local FastAPI server
 │   └── modal_app.py               # Cloud serverless deployment (Modal)
 ├── docs/                          # Detailed technical documentation
+├── tests/                         # Collaboration & interactive widget test suite
 ├── requirements.txt               # Unified project dependencies
 └── tectonic.exe                   # Standalone XeTeX compiler executable
 ```
@@ -110,7 +129,7 @@ AI-TUTOR/
 ## Quickstart
 
 ### Prerequisites
-- Python 3.10 to 3.13 (Python 3.11 recommended for Modal cloud parity)
+- Python 3.10 to 3.14 (Python 3.11 recommended for Modal cloud parity)
 - Git installed and accessible on your system `PATH`
 - FFmpeg installed and accessible on `PATH` (optional for local dev: `imageio-ffmpeg` provides fallback)
 - Windows x64 / Linux / macOS (Tectonic binary bundled for Windows; installed via system packages on Linux/macOS)
@@ -148,7 +167,7 @@ cp backend/.env.example backend/.env
 Configure the essential API keys:
 
 ```ini
-# Groq API Key (required for high-speed script generation)
+# Groq API Key (required for high-speed script & widget generation)
 GROQ_API_KEY=gsk_your_groq_api_key
 
 # Google Gemini API Key (required for vision, OCR, and embeddings)
@@ -181,13 +200,20 @@ python app/main.py
 
 ## Testing
 
-Execute the test suite using pytest:
+Execute the test suites using pytest:
 
 ```bash
+# Run interactive widgets & arcade test suite
+python -m pytest tests/test_interactive_widgets.py -v
+
+# Run real-time collaboration test suite
+python -m pytest tests/test_collaboration.py -v
+
+# Run client application test suite
 python -m pytest app/tests
 ```
 
-All 61 test cases covering canvas state serialization, stroke processing, shape fitting, PenEcho integration, and LaTeX editor components should pass cleanly.
+All test cases covering canvas state serialization, stroke processing, collaboration sync, interactive widgets, and PenEcho procedural simulations pass cleanly.
 
 ---
 
@@ -197,8 +223,8 @@ For detailed specifications, consult the `/docs` directory:
 
 | Document | Description |
 | :--- | :--- |
-| [Architecture Guide](file:///D:/Kastrel/AI-TUTOR/docs/ARCHITECTURE.md) | In-depth breakdown of desktop client, LangGraph multi-agent pipeline, and data flow. |
-| [API Reference](file:///D:/Kastrel/AI-TUTOR/docs/API_REFERENCE.md) | Complete documentation of all REST endpoints, request/response schemas, and status codes. |
-| [Configuration Reference](file:///D:/Kastrel/AI-TUTOR/docs/CONFIGURATION.md) | Complete environment variable tables, storage layouts, and hardware acceleration options. |
-| [Developer Guide](file:///D:/Kastrel/AI-TUTOR/docs/DEVELOPER_GUIDE.md) | Development workflow, environment setup, testing standards, and diagnostics. |
-| [Performance Optimizations](file:///D:/Kastrel/AI-TUTOR/docs/OPTIMIZATIONS.md) | Analysis of GPU rendering, NVENC encoding, CI smoke tests, caching, and streaming updates. |
+| [Architecture Guide](docs/ARCHITECTURE.md) | In-depth breakdown of desktop client, LangGraph multi-agent pipeline, and data flow. |
+| [API Reference](docs/API_REFERENCE.md) | Complete documentation of all REST endpoints, request/response schemas, and status codes. |
+| [Configuration Reference](docs/CONFIGURATION.md) | Complete environment variable tables, storage layouts, and hardware acceleration options. |
+| [Developer Guide](docs/DEVELOPER_GUIDE.md) | Development workflow, environment setup, testing standards, and diagnostics. |
+| [Performance Optimizations](docs/OPTIMIZATIONS.md) | Analysis of GPU rendering, NVENC encoding, CI smoke tests, caching, and streaming updates. |
