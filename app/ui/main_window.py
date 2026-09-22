@@ -844,6 +844,11 @@ class MainWindow(QMainWindow):
         btn_video.clicked.connect(self._generate_video_from_canvas)
         layout.addWidget(btn_video)
 
+        # Developer 1: Check My Work Action
+        btn_check_work = self._make_toolbar_btn('ri.checkbox-circle-line', "Check Work", tb, '#2563eb', "Check My Work (Spacebar)")
+        btn_check_work.clicked.connect(self._on_check_my_work)
+        layout.addWidget(btn_check_work)
+
         layout.addWidget(self._make_toolbar_separator(tb))
 
         # Study/Classroom Mode
@@ -959,6 +964,47 @@ class MainWindow(QMainWindow):
             else:
                 self.btn_mode_toggle.setText("Study")
                 self.btn_mode_toggle.setIcon(qta.icon('ri.book-open-line', color=c['text_secondary']))
+
+    def keyPressEvent(self, event):
+        # Developer 1: Allow Spacebar to trigger "Check My Work" when canvas is focused
+        if event.key() == Qt.Key.Key_Space:
+            focus_w = QApplication.focusWidget()
+            if not isinstance(focus_w, (QLineEdit, QTextEdit)):
+                self._on_check_my_work()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def _on_check_my_work(self):
+        """
+        Developer 1: Demonstrates the complete Socratic tutor visual feedback chain.
+        1. Moves laser pointer with idle breathing pulse.
+        2. Draws ghost chalk oval around target math step in ~600ms.
+        3. Speaks tutor feedback via local VoiceSpeaker.
+        4. Displays SocraticHintBubble with citation & 3-level progressive hints.
+        """
+        target_rect = None
+        if hasattr(self, 'canvas_scene') and self.canvas_scene:
+            items = [item for item in self.canvas_scene.items() if hasattr(item, 'sceneBoundingRect') and item.zValue() < 900]
+            if items:
+                target_rect = items[0].sceneBoundingRect()
+            if not target_rect or target_rect.width() < 10 or target_rect.height() < 10:
+                target_rect = QRectF(200, 150, 140, 60)
+
+            pointer_pos = QPointF(target_rect.right() + 20, target_rect.center().y())
+
+            self.canvas_scene.show_tutor_feedback(
+                target_rect=target_rect,
+                pointer_pos=pointer_pos,
+                spoken_message="Take a look at your second step. The signs do not match the previous line.",
+                citation="Calculus: Early Transcendentals, §3.4, p.142",
+                hints=[
+                    "Check the signs when applying the distributive property.",
+                    "Recall: -(a - b) = -a + b or factor out (-1).",
+                    "In line 2, -(2x - 5) should become -2x + 5, not -2x - 5."
+                ],
+                mode="error"
+            )
 
     def _create_hud_overlay(self) -> QWidget:
         c = ThemeManager.instance().get_colors()

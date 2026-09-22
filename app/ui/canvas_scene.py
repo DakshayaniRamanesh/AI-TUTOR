@@ -30,6 +30,10 @@ from .penecho_integration import (
     PenechoDrawItem, PenechoAnimationItem, PenechoMixedTextItem,
     PenechoSummonItem, PenechoLassoOverlay, PenechoDraftLayerItem, point_in_polygon
 )
+from .items.laser_pointer_item import LaserPointerItem
+from .items.ghost_chalk_item import GhostChalkItem, GhostChalkMode
+from .audio.voice_speaker import VoiceSpeaker
+from .widgets.socratic_hint_bubble import SocraticHintBubble
 
 class CanvasScene(QGraphicsScene):
     ink_written_detected = pyqtSignal(str, QPointF)
@@ -113,6 +117,12 @@ class CanvasScene(QGraphicsScene):
         self._remote_cursors: dict = {}
         self._last_cursor_emit_time = 0.0
         self._item_pos_before_drag: dict = {}
+
+        # Developer 1: Socratic Visual & Audio Presentation Layer
+        self._laser_pointer_item = None
+        self._ghost_chalk_item = None
+        self._socratic_hint_bubble = None
+        self._socratic_hint_proxy = None
 
     def _on_theme_changed(self, theme_name: str):
         is_dark = theme_name == "dark"
@@ -830,6 +840,9 @@ class CanvasScene(QGraphicsScene):
         return False
 
     def mousePressEvent(self, event):
+        # Developer 1: Cancel tutor speech immediately when student interacts with canvas
+        VoiceSpeaker.instance().stop()
+
         pos = event.scenePos()
         clicked_items = self.items(pos)
 
@@ -1312,3 +1325,76 @@ class CanvasScene(QGraphicsScene):
         worker.finished.connect(lambda: self._ocr_workers.remove(worker) if worker in self._ocr_workers else None)
         worker.start()
         return True
+
+    # ── Developer 1: Visual and Audio Tutor Feedback Presentation ────────────
+
+    def show_tutor_feedback(
+        self,
+        target_rect: QRectF,
+        pointer_pos: QPointF = None,
+        spoken_message: str = "Take a look at your second step.",
+        citation: str = "Calculus: Early Transcendentals, §3.4, p.142",
+        hints: list = None,
+        mode: str = "error"
+    ):
+        """
+        Executes the visual and spoken feedback sequence:
+        1. Moves laser pointer to target coordinates.
+        2. Animates ghost chalk around or beneath target math bounding box.
+        3. Positions Socratic hint bubble adjacent to laser pointer.
+        4. Speaks the feedback message non-blockingly via VoiceSpeaker.
+        """
+        # 1. Target coordinate calculation
+        if pointer_pos is None:
+            pointer_pos = QPointF(target_rect.right() + 16.0, target_rect.center().y())
+
+        # 2. Laser Pointer
+        if self._laser_pointer_item is None or self._laser_pointer_item.scene() != self:
+            self._laser_pointer_item = LaserPointerItem()
+            self.addItem(self._laser_pointer_item)
+            self._laser_pointer_item.setPos(pointer_pos - QPointF(120, 80))
+
+        self._laser_pointer_item.show()
+        self._laser_pointer_item.move_to(pointer_pos)
+
+        # 3. Ghost Chalk Highlighting
+        chalk_mode = GhostChalkMode.VERIFIED if mode == "verified" else GhostChalkMode.ERROR
+        if self._ghost_chalk_item is None or self._ghost_chalk_item.scene() != self:
+            self._ghost_chalk_item = GhostChalkItem(target_rect, mode=chalk_mode)
+            self.addItem(self._ghost_chalk_item)
+        else:
+            self._ghost_chalk_item.show()
+            self._ghost_chalk_item.set_target_rect(target_rect, mode=chalk_mode)
+
+        # 4. Socratic Hint Bubble
+        if self._socratic_hint_bubble is None:
+            self._socratic_hint_bubble = SocraticHintBubble()
+            self._socratic_hint_proxy = self.addWidget(self._socratic_hint_bubble)
+            self._socratic_hint_proxy.setZValue(1001)
+            self._socratic_hint_bubble.closed.connect(self.clear_tutor_feedback)
+
+        self._socratic_hint_bubble.set_feedback(
+            spoken_message=spoken_message,
+            citation=citation,
+            hints=hints
+        )
+
+        bubble_x = pointer_pos.x() + 24.0
+        bubble_y = pointer_pos.y() - 40.0
+        self._socratic_hint_proxy.setPos(bubble_x, bubble_y)
+        self._socratic_hint_proxy.show()
+
+        # 5. Non-blocking voice playback
+        if spoken_message:
+            VoiceSpeaker.instance().speak(spoken_message)
+
+    def clear_tutor_feedback(self):
+        """Dismisses the laser pointer, ghost chalk, speech, and hint bubble."""
+        VoiceSpeaker.instance().stop()
+        if self._laser_pointer_item:
+            self._laser_pointer_item.stop_breathing()
+            self._laser_pointer_item.hide()
+        if self._ghost_chalk_item:
+            self._ghost_chalk_item.hide()
+        if self._socratic_hint_proxy:
+            self._socratic_hint_proxy.hide()
