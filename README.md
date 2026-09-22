@@ -93,6 +93,24 @@ flowchart TD
 - **Embedded STEM Utilities**: Scientific Calculator, Stopwatch & Countdown Timer, Tally Counter, Dice & Coin Flipper, Physics Particle Sandbox, and Unit Converter.
 - **On-The-Fly Dynamic Synthesis**: Typo-tolerant prompt detection generating custom interactive PyQt widgets at runtime (Tone Synth Piano Keyboard, Todo Checklist, Study Flashcards, Mini Sketchpad).
 
+### 8. Desmos-Style Graphing Studio (2D, 3D & Complex Analysis)
+- **Dedicated Graph Studio Workbench**: Full-screen graphing view accessible from the sidebar navigation rail (`ri.line-chart-line`) featuring a Desmos-style collapsible formula drawer, parameter sliders, preset library, and live coordinate readout.
+- **2D Function & Curve Plotting**:
+  - Simultaneous multi-equation plotting ($y_1, y_2, \dots$) with custom color pickers and visibility eye toggles.
+  - Supports Cartesian $y = f(x)$, polar $r = f(\theta)$, and parametric curves.
+  - Dynamic parameter sliders ($a, b$) with real-time curve warping and Play/Pause animation loops.
+- **3D Interactive Surfaces & Manifolds**:
+  - Real-time 3D surface mesh rendering for $z = f(x, y)$ with interactive click-and-drag mouse rotation, elevation/azimuth control, and zoom.
+  - Floor contour projections and gradient colormaps (`viridis`, `coolwarm`, `plasma`, `magma`).
+  - Famous 3D presets: Sombrero wave, Hyperbolic Paraboloid (Saddle), Monkey Saddle, Paraboloid Bowl, Gaussian peaks.
+- **Complex Analysis (2D & 3D)**:
+  - **2D Domain Coloring / Phase Portraits**: Maps complex functions $f(z)$ using the continuous color wheel (Hue = $\text{Arg}(f(z))$, Brightness = $|f(z)|$ with logarithmic contour rings), clearly revealing roots of unity, poles, essential singularities, and branch cuts.
+  - **3D Modulus Riemann Surfaces**: 3D elevation plots displaying $|f(x + iy)|$ textured with phase argument coloring.
+  - Built-in complex presets: $z^3 - 1$, $e^z$, $\frac{1}{z}$, $\frac{z-a}{z^2+1}$, $\sin(z)$, $e^{1/z}$, Möbius transformations.
+- **In-Canvas Interactive Graph Widget**:
+  - Floating Desmos-style mini card (`InteractiveGraphingWidget`) directly on the whiteboard canvas.
+  - Spawned instantly via natural language prompts (e.g. *"desmos"*, *"plot 3d surface"*, *"complex graph"*) or via the **"📌 Insert to Canvas"** studio button.
+
 ---
 
 ## Repository Layout
@@ -209,6 +227,9 @@ python app/main.py
 Execute the test suites using pytest:
 
 ```bash
+# Run Desmos-style Graphing Studio test suite (2D, 3D, Complex)
+python -m pytest tests/test_graphing_studio.py -v
+
 # Run interactive widgets & arcade test suite
 python -m pytest tests/test_interactive_widgets.py -v
 
@@ -219,7 +240,7 @@ python -m pytest tests/test_collaboration.py -v
 python -m pytest app/tests
 ```
 
-All test cases covering canvas state serialization, stroke processing, collaboration sync, interactive widgets, and PenEcho procedural simulations pass cleanly.
+All test cases covering canvas state serialization, stroke processing, collaboration sync, interactive widgets, PenEcho procedural simulations, and 2D/3D/Complex graphing pass cleanly.
 
 ---
 

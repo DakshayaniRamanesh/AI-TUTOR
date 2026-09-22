@@ -33,6 +33,7 @@ from .physics_sim_widget import PhysicsSimWidget
 from .unit_converter_widget import UnitConverterWidget
 from .world_clock_widget import WorldClockComparisonWidget, parse_timezones_from_prompt
 from .procedural_sim_widget import ProceduralSimulationWidget
+from .graph_widget import InteractiveGraphingWidget
 from ...kestrel_theme import MONO_FONT
 
 
@@ -122,27 +123,36 @@ def match_instant_interactive_preset(query: str) -> Optional[Tuple[str, str, str
     if "snake" in q:
         return ("snake_game", "Snake Arcade", "ri.gamepad-line")
 
-    # 6. Calculator
+    # 6. Desmos-Style Graphing Calculator (2D, 3D, Complex)
+    if any(k in q for k in [
+        "graph", "graphing", "desmos", "plot 2d", "plot 3d", "3d graph", "2d graph",
+        "complex graph", "complex plot", "riemann surface", "domain coloring",
+        "graphing calculator", "plot surface", "plot function"
+    ]):
+        mode_str = "3D" if "3d" in q else ("Complex" if "complex" in q else "2D/3D")
+        return ("graph_widget", f"Graphing Calculator ({mode_str})", "ri.line-chart-line")
+
+    # 7. Basic Calculator
     if any(k in q for k in ["calculator", "calc", "calculate"]):
         return ("calculator", "Calculator", "ri.calculator-line")
 
-    # 7. Tic-Tac-Toe
+    # 8. Tic-Tac-Toe
     if any(k in q for k in ["tic tac toe", "tictactoe", "xo game", "x and o"]):
         return ("tictactoe", "Tic-Tac-Toe", "ri.grid-line")
 
-    # 8. Counter
+    # 9. Counter
     if any(k in q for k in ["counter", "tally", "clicker"]):
         return ("counter", "Tally Counter", "ri.add-circle-line")
 
-    # 9. Dice / Coin
+    # 10. Dice / Coin
     if any(k in q for k in ["dice", "coin", "heads or tails", "flip a coin", "roll dice"]):
         return ("dice_coin", "Dice & Coin", "ri.copper-coin-line")
 
-    # 10. Physics Sandbox / Bouncing balls
+    # 11. Physics Sandbox / Bouncing balls
     if any(k in q for k in ["bouncing ball", "particle sim"]):
         return ("physics_sim", "Physics Sandbox", "ri.bubble-chart-line")
 
-    # 11. Unit Converter
+    # 12. Unit Converter
     if any(k in q for k in ["unit converter", "convert unit", "celsius to fahrenheit"]):
         return ("unit_converter", "Unit Converter", "ri.exchange-line")
 
@@ -270,6 +280,12 @@ def create_instant_widget_item(
         content = UnitConverterWidget()
         default_title = "Unit Converter"
         default_icon = "ri.exchange-line"
+    elif widget_type == "graph_widget":
+        p = prompt or (state_data.get("prompt", "") if state_data else "")
+        mode = "3d" if "3d" in p.lower() else ("complex" if "complex" in p.lower() else "2d")
+        content = InteractiveGraphingWidget(mode=mode)
+        default_title = "Graphing Calculator (3D)" if mode == "3d" else ("Graphing (Complex)" if mode == "complex" else "Graphing Calculator (2D)")
+        default_icon = "ri.line-chart-line"
     else:
         return None
 

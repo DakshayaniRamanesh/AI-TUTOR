@@ -43,6 +43,7 @@ from .views.home_view import HomeView
 from .views.subjects_list import SubjectsListView
 from .views.subject_detail_view import SubjectDetailView
 from .views.constants_library_view import ConstantsLibraryView
+from .views.graph_studio_view import GraphStudioView
 from .views.placeholder_panel import PlaceholderPanel
 from .views.settings_dialog import SettingsDialog
 from .views.progress_dialog import ProgressDialog
@@ -472,6 +473,11 @@ class MainWindow(QMainWindow):
         # Constants Library View Panel
         self.main_stack.addWidget(self.constants_library_view) # Index 6
 
+        # Desmos-Style Graph Studio View Panel (2D, 3D, Complex)
+        self.graph_studio_view = GraphStudioView(self.main_stack)
+        self.graph_studio_view.insert_to_canvas_requested.connect(self._on_insert_graph_to_canvas)
+        self.main_stack.addWidget(self.graph_studio_view) # Index 7
+
         cc_layout.addWidget(self.main_stack)
         self.splitter.addWidget(self.canvas_container)
 
@@ -664,6 +670,7 @@ class MainWindow(QMainWindow):
             ("ri.bookmark-line",   "Notebooks",       "notebooks"),
             ("ri.git-branch-line", "Version Control", "vcs"),
             ("ri.share-line",      "Knowledge Graph", "graph"),
+            ("ri.line-chart-line", "Graph Studio (2D / 3D / Complex)", "graphs"),
             ("ri.star-line",       "Favourites",      "favourites"),
             ("ri.download-line",   "Downloads",       "downloads"),
         ]
@@ -1563,6 +1570,9 @@ class MainWindow(QMainWindow):
             self.folder_tree.setVisible(False)
             self.obsidian_graph_panel.load_graph()
             self.main_stack.setCurrentWidget(self.obsidian_graph_panel)
+        elif key in ("graphs", "Graph Studio", "graph_studio", "Graph Studio (2D / 3D / Complex)"):
+            self.folder_tree.setVisible(False)
+            self.main_stack.setCurrentWidget(self.graph_studio_view)
         elif key in ("favourites", "Favourites"):
             self.folder_tree.setVisible(False)
             self.placeholder_panel.set_title("Favourites")
@@ -1575,6 +1585,46 @@ class MainWindow(QMainWindow):
             self.folder_tree.setVisible(False)
             self.placeholder_panel.set_title(str(key))
             self.main_stack.setCurrentWidget(self.placeholder_panel)
+
+    def _on_insert_graph_to_canvas(self, payload: dict):
+        """Drops an interactive graphing widget onto the whiteboard canvas."""
+        self.main_stack.setCurrentWidget(self._canvas_wrapper)
+        self._set_sidebar_active_button("canvas")
+
+        from .items.interactive_widgets.graph_widget import InteractiveGraphingWidget
+        from .items.interactive_widgets.base_interactive_widget import InteractiveCanvasItem
+
+        mode = payload.get("mode", "2d")
+        initial_expr = ""
+        if mode == "2d" and payload.get("equations_2d"):
+            initial_expr = payload["equations_2d"][0].get("expr", "")
+        elif mode == "3d":
+            initial_expr = payload.get("expr_3d", "")
+        else:
+            initial_expr = payload.get("expr_complex", "")
+
+        graph_content = InteractiveGraphingWidget(mode=mode, initial_expr=initial_expr)
+        if "param_a" in payload:
+            graph_content.slider_a_val = payload["param_a"]
+            graph_content.slider.setValue(int(payload["param_a"] * 100))
+            graph_content.update_plot()
+
+        mode_str = "3D" if mode == "3d" else ("Complex" if "complex" in mode else "2D")
+        item = InteractiveCanvasItem(
+            widget_type="graph_widget",
+            title=f"Graphing Calculator ({mode_str})",
+            icon_name="ri.line-chart-line",
+            content_widget=graph_content,
+            state_data=graph_content.to_dict()
+        )
+
+        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
+        clean_pos = self._find_non_overlapping_pos(center_pos, width=360.0, height=390.0)
+        item.setPos(clean_pos)
+        self.scene.addItem(item)
+        if hasattr(self.scene, "item_collaborated_add") and not getattr(self.scene, "_is_remote_event", False):
+            self.scene.item_collaborated_add.emit(item.to_dict())
+        self.scene.scene_changed.emit()
 
     def _refresh_folder_tree(self):
         from ..storage.notebook_storage import NotebookStorage
