@@ -19,47 +19,82 @@ from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QPolygonF
 from ...kestrel_theme import MONO_FONT
 
 
+import re
+from typing import List, Tuple, Dict, Any, Optional
+
 CITY_TIMEZONE_MAP = [
-    (["uk", "london", "britain", "england", "gmt", "bst"], "London (UK)", "Europe/London", "🇬🇧"),
-    (["nz", "new zealand", "auckland", "nzst", "nzdt"], "Auckland (NZ)", "Pacific/Auckland", "🇳🇿"),
-    (["us", "usa", "ny", "new york", "est", "edt"], "New York (US)", "America/New_York", "🇺🇸"),
-    (["california", "la", "los angeles", "pst", "pdt"], "Los Angeles (US)", "America/Los_Angeles", "🇺🇸"),
-    (["tokyo", "japan", "jst"], "Tokyo (JP)", "Asia/Tokyo", "🇯🇵"),
-    (["india", "delhi", "mumbai", "ist"], "New Delhi (IN)", "Asia/Kolkata", "🇮🇳"),
-    (["australia", "sydney", "aest"], "Sydney (AU)", "Australia/Sydney", "🇦🇺"),
-    (["paris", "france", "berlin", "germany", "cet"], "Paris (EU)", "Europe/Paris", "🇫🇷"),
-    (["dubai", "uae", "gst"], "Dubai (UAE)", "Asia/Dubai", "🇦🇪"),
-    (["singapore", "sgt"], "Singapore", "Asia/Singapore", "🇸🇬"),
+    ([r"\blk\b", r"sri\s*lanka", r"colombo"], "Colombo (LK)", "Asia/Colombo", "🇱🇰"),
+    ([r"\bnyc\b", r"\bny\b", r"new\s*york(\s*city)?", r"\best\b", r"\bedt\b"], "New York (US)", "America/New_York", "🇺🇸"),
+    ([r"\buk\b", r"\blondon\b", r"britain", r"england", r"\bgmt\b", r"\bbst\b"], "London (UK)", "Europe/London", "🇬🇧"),
+    ([r"\bnz\b", r"new\s*zealand", r"auckland", r"\bnzst\b", r"\bnzdt\b"], "Auckland (NZ)", "Pacific/Auckland", "🇳🇿"),
+    ([r"california", r"\bla\b", r"los\s*angeles", r"\bsf\b", r"san\s*francisco", r"\bpst\b", r"\bpdt\b", r"seattle"], "Los Angeles (US)", "America/Los_Angeles", "🇺🇸"),
+    ([r"tokyo", r"japan", r"\bjst\b", r"\bjp\b"], "Tokyo (JP)", "Asia/Tokyo", "🇯🇵"),
+    ([r"india", r"delhi", r"mumbai", r"\bist\b", r"\bin\b"], "New Delhi (IN)", "Asia/Kolkata", "🇮🇳"),
+    ([r"australia", r"sydney", r"melbourne", r"\baest\b", r"\bau\b"], "Sydney (AU)", "Australia/Sydney", "🇦🇺"),
+    ([r"\bparis\b", r"france", r"\bcet\b", r"\bfr\b"], "Paris (FR)", "Europe/Paris", "🇫🇷"),
+    ([r"berlin", r"germany", r"\bde\b"], "Berlin (DE)", "Europe/Berlin", "🇩🇪"),
+    ([r"dubai", r"\buae\b", r"\bgst\b"], "Dubai (UAE)", "Asia/Dubai", "🇦🇪"),
+    ([r"singapore", r"\bsgt\b", r"\bsg\b"], "Singapore (SG)", "Asia/Singapore", "🇸🇬"),
+    ([r"toronto", r"canada", r"vancouver"], "Toronto (CA)", "America/Toronto", "🇨🇦"),
+    ([r"chicago", r"\bcst\b", r"\bcdt\b"], "Chicago (US)", "America/Chicago", "🇺🇸"),
+    ([r"beijing", r"china", r"shanghai", r"\bcn\b"], "Beijing (CN)", "Asia/Shanghai", "🇨🇳"),
+    ([r"seoul", r"korea", r"\bkr\b"], "Seoul (KR)", "Asia/Seoul", "🇰🇷"),
 ]
 
 
 def parse_timezones_from_prompt(prompt: str) -> List[Tuple[str, str, str]]:
     """
     Extracts requested cities/countries from prompt text.
+    Uses regex word boundaries to avoid spurious matches (e.g. 'paris' in 'comparison').
+    Supports global city lookup in zoneinfo.available_timezones().
     Returns list of (display_name, zone_identifier, flag_emoji).
     """
     q = prompt.lower()
     selected = []
     seen_zones = set()
 
-    for keywords, name, zone_id, flag in CITY_TIMEZONE_MAP:
-        if any(k in q for k in keywords):
-            if zone_id not in seen_zones:
-                selected.append((name, zone_id, flag))
-                seen_zones.add(zone_id)
+    # 1. Check curated aliases with word boundaries
+    for patterns, name, zone_id, flag in CITY_TIMEZONE_MAP:
+        for pat in patterns:
+            if re.search(pat, q):
+                if zone_id not in seen_zones:
+                    selected.append((name, zone_id, flag))
+                    seen_zones.add(zone_id)
+                break
 
-    # If none or only one matched, provide UK and NZ comparison as primary default
+    # 2. Dynamic check across all IANA world timezones if less than 2 found
+    if len(selected) < 2:
+        try:
+            import zoneinfo
+            words = re.findall(r"\b[a-z]{3,}\b", q)
+            # Filter out common stop words
+            stops = {"the", "and", "time", "clock", "between", "betwhnn", "coption", "compare", "comparison", "show", "gimme", "what", "diff", "difference", "versus"}
+            candidate_words = [w for w in words if w not in stops]
+            all_tz = list(zoneinfo.available_timezones())
+            for word in candidate_words:
+                matches = [tz for tz in all_tz if word in tz.lower()]
+                for tz in matches:
+                    if tz not in seen_zones:
+                        city_name = tz.split("/")[-1].replace("_", " ")
+                        selected.append((f"{city_name} ({tz.split('/')[0]})", tz, "🌐"))
+                        seen_zones.add(tz)
+                        break
+        except Exception:
+            pass
+
+    # 3. Handle default fallbacks
     if not selected:
         selected = [
             ("London (UK)", "Europe/London", "🇬🇧"),
             ("Auckland (NZ)", "Pacific/Auckland", "🇳🇿"),
         ]
     elif len(selected) == 1:
-        # Add UK or NZ as counterpart
-        if selected[0][1] == "Europe/London":
-            selected.append(("Auckland (NZ)", "Pacific/Auckland", "🇳🇿"))
-        else:
+        # If user asked for only 1 specific place (e.g. 'time in lk'),
+        # pair it with New York or London for an immediate comparative reference!
+        if selected[0][1] in ("America/New_York", "America/Los_Angeles"):
             selected.append(("London (UK)", "Europe/London", "🇬🇧"))
+        else:
+            selected.append(("New York (US)", "America/New_York", "🇺🇸"))
 
     return selected[:3] # Up to 3 for clean card fit
 

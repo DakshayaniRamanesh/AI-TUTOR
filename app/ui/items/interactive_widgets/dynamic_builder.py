@@ -36,62 +36,113 @@ from .procedural_sim_widget import ProceduralSimulationWidget
 from ...kestrel_theme import MONO_FONT
 
 
+TIMEZONE_PATTERNS = [
+    r"\blk\b", r"sri\s*lanka", r"colombo",
+    r"\bnyc\b", r"\bny\b", r"new\s*york",
+    r"\buk\b", r"\blondon\b", r"britain", r"england",
+    r"\bnz\b", r"new\s*zealand", r"auckland",
+    r"california", r"\bla\b", r"los\s*angeles", r"\bsf\b", r"san\s*francisco",
+    r"tokyo", r"japan",
+    r"india", r"delhi", r"mumbai",
+    r"australia", r"sydney", r"melbourne",
+    r"\bparis\b", r"france", r"berlin", r"germany",
+    r"dubai", r"uae",
+    r"singapore",
+    r"toronto", r"canada", r"vancouver",
+    r"chicago",
+    r"beijing", r"china", r"shanghai",
+    r"seoul", r"korea",
+]
+
+
 def is_world_clock_request(query: str) -> bool:
-    """Detects if query is asking for world clock, timezone comparisons, or circular/digital clocks."""
-    q = query.lower()
-    has_clock = any(w in q for w in ["clock", "time", "timezone", "timezones"])
-    has_comparison = any(w in q for w in ["comparison", "compare", "difference", "between", "all the", "all", "versus", "vs", "comtsion"])
-    has_locations = any(w in q for w in ["uk", "nz", "london", "auckland", "new york", "tokyo", "japan", "india", "delhi", "sydney", "paris", "berlin", "dubai", "world", "gmt", "bst", "nzst"])
-    has_style = any(w in q for w in ["circular", "circlar", "analog", "digital"])
-    return (has_clock and (has_comparison or has_locations or has_style)) or (has_comparison and has_locations)
+    """
+    Detects if query is asking for world clock, timezone comparisons, or circular/digital clocks.
+    Handles typos like 'coption' (comparison), 'betwhnn' (between), and short codes (lk, nyc, nz, uk).
+    """
+    if not query or not query.strip():
+        return False
+    q = query.lower().strip()
+
+    # Explicit world clock / multi-clock phrases
+    if any(k in q for k in ["world clock", "timezone", "timezones", "circular clock", "digital clock", "analog clock", "clocks"]):
+        return True
+
+    has_time_term = bool(re.search(r"\b(time|times|clock|clocks|hour|hours|gmt|utc)\b", q))
+    has_comparison = bool(re.search(r"\b(compare|comparing|comparison|coption|comption|difference|diff|between|betwhnn|btwn|versus|vs|all\s*the)\b", q))
+
+    # Count how many locations are mentioned
+    matched_locations = sum(1 for pat in TIMEZONE_PATTERNS if re.search(pat, q))
+
+    if matched_locations >= 2:
+        return True
+    if matched_locations >= 1 and (has_time_term or has_comparison):
+        return True
+    if has_time_term and has_comparison:
+        return True
+    if ("circular" in q or "circlar" in q or "digital" in q) and has_time_term:
+        return True
+
+    return False
 
 
 def match_instant_interactive_preset(query: str) -> Optional[Tuple[str, str, str]]:
     """
     Returns (widget_type, title, icon_name) if query matches an instant built-in widget.
-    Bypasses presets for specific timezone comparisons or custom circular/digital requests.
+    Instantly mounts world clocks, procedural simulations, arcade games, and utilities.
     """
     q = query.lower().strip()
 
-    # Route specific timezone comparisons and circular/digital requests to dynamic builder!
+    # 1. World Clock & Multi-Timezone Comparison (Circular or Digital)
     if is_world_clock_request(q):
-        return None
+        mode_title = "World Clock (Digital)" if "digital" in q else "World Clock (Circular)"
+        return ("world_clock", mode_title, "ri.global-line")
 
-    # 1. Clock / Time / Stopwatch / Timer (Only basic single clock requests)
+    # 2. PenEcho-style Procedural Simulations
+    if any(k in q for k in ["orbit", "planetary", "gravity simulator", "planet orbit"]):
+        return ("procedural_sim:orbit", "Planetary Orbit Simulator", "ri.earth-line")
+    if any(k in q for k in ["pendulum", "harmonic pendulum"]):
+        return ("procedural_sim:pendulum", "Harmonic Pendulum", "ri.timer-flash-line")
+    if any(k in q for k in ["wave propagation", "sine wave", "wave simulator"]):
+        return ("procedural_sim:wave", "Wave Propagation Simulator", "ri.water-flash-line")
+    if any(k in q for k in ["lemniscate", "rose curve", "superellipse", "golden spiral", "deltoid", "penecho summon", "math curve"]):
+        return ("procedural_sim:curve", "Lemniscate Math Curve", "ri.sparkling-line")
+
+    # 3. Clock / Time / Stopwatch / Timer (Only basic single clock requests)
     if q in ["time", "clock", "stopwatch", "timer", "countdown", "what is the time", "what's the time", "gimme the time", "show time", "current time"]:
         return ("clock", "Live Clock & Timer", "ri.time-line")
     if any(k in q for k in ["stopwatch", "countdown timer", "open timer", "start timer"]):
         return ("clock", "Live Clock & Timer", "ri.time-line")
 
-    # 2. Flappy Bird / Bird game
-    if any(k in q for k in ["flappy", "floppy", "bird game", "floopy", "flappy bird"]):
+    # 4. Flappy Bird / Bird game (handles typos like 'floopy', 'floppy')
+    if any(k in q for k in ["flappy", "floppy", "floopy", "bird game", "flappy bird"]):
         return ("flappy_bird", "Flappy Bird Arcade", "ri.gamepad-line")
 
-    # 3. Snake Game
+    # 5. Snake Game
     if "snake" in q:
         return ("snake_game", "Snake Arcade", "ri.gamepad-line")
 
-    # 4. Calculator
+    # 6. Calculator
     if any(k in q for k in ["calculator", "calc", "calculate"]):
         return ("calculator", "Calculator", "ri.calculator-line")
 
-    # 5. Tic-Tac-Toe
+    # 7. Tic-Tac-Toe
     if any(k in q for k in ["tic tac toe", "tictactoe", "xo game", "x and o"]):
         return ("tictactoe", "Tic-Tac-Toe", "ri.grid-line")
 
-    # 6. Counter
+    # 8. Counter
     if any(k in q for k in ["counter", "tally", "clicker"]):
         return ("counter", "Tally Counter", "ri.add-circle-line")
 
-    # 7. Dice / Coin
+    # 9. Dice / Coin
     if any(k in q for k in ["dice", "coin", "heads or tails", "flip a coin", "roll dice"]):
         return ("dice_coin", "Dice & Coin", "ri.copper-coin-line")
 
-    # 8. Physics / Bouncing balls
+    # 10. Physics Sandbox / Bouncing balls
     if any(k in q for k in ["bouncing ball", "particle sim"]):
         return ("physics_sim", "Physics Sandbox", "ri.bubble-chart-line")
 
-    # 9. Unit Converter
+    # 11. Unit Converter
     if any(k in q for k in ["unit converter", "convert unit", "celsius to fahrenheit"]):
         return ("unit_converter", "Unit Converter", "ri.exchange-line")
 
@@ -102,24 +153,32 @@ def is_interactive_build_request(query: str) -> bool:
     """
     Detects if the user prompt is asking to build, create, or spawn an interactive
     tool, widget, game, simulation, or app dynamically on the canvas.
+    Handles casual phrasing and common phonetic typos (bulid, buid, intetive, gimme).
     """
     if not query or not query.strip():
         return False
 
     q = query.lower().strip()
 
-    # Direct keyword triggers
-    triggers = [
-        "build", "make", "create", "construct", "spawn", "generate",
-        "interactive", "simulator", "simulation", "game", "widget",
-        "tool", "app", "mini app", "tester", "ready to build"
-    ]
+    if is_world_clock_request(q):
+        return True
+    if match_instant_interactive_preset(q) is not None:
+        return True
+
+    build_verbs = r"\b(build|bulid|buid|make|create|creat|construct|spawn|generate|gimme|give\s*me|show\s*me|ready\s*to\s*build)\b"
+    interactive_nouns = r"\b(game|widget|tool|app|sim|simulation|simulator|clock|clocks|board|tester|synth|piano|counter|calc|calculator|match|quiz|card|curve|wave|pendulum|orbit|floopy|flappy|snake)\b"
+    interactive_modifiers = r"\b(interactive|intetive|interative|playable|realtime)\b"
+
+    if re.search(interactive_modifiers, q) and (re.search(build_verbs, q) or re.search(interactive_nouns, q)):
+        return True
+    if re.search(build_verbs, q) and re.search(interactive_nouns, q):
+        return True
 
     # Regex patterns for natural language prompts
     patterns = [
-        r"\b(build|make|create|construct|spawn|generate)\b.*\b(game|widget|tool|app|sim|simulation|tester|pad|board|card)\b",
-        r"\b(can you|please|ready to)\b\s*(build|make|create)\b",
-        r"\b(interactive|playable|realtime)\b\s*(game|tool|sim|app|widget|element)",
+        r"\b(build|bulid|buid|make|create|construct|spawn|generate)\b.*\b(game|widget|tool|app|sim|simulation|tester|pad|board|card)\b",
+        r"\b(can you|please|ready to)\b\s*(build|bulid|make|create)\b",
+        r"\b(interactive|intetive|playable|realtime)\b\s*(game|tool|sim|app|widget|element)",
         r"\b(reaction|reflex)\s*(test|game)",
         r"\b(memory|flashcard|quiz)\s*(game|card|widget)",
         r"\b(piano|synth|music)\s*(keyboard|widget|tool)",
@@ -132,11 +191,8 @@ def is_interactive_build_request(query: str) -> bool:
         if re.search(pat, q):
             return True
 
-    if is_world_clock_request(q):
-        return True
-
     # Check words combination
-    has_action = any(w in q for w in ["build", "make", "create", "spawn", "generate", "play", "gimme", "give", "show", "tell", "compare"])
+    has_action = any(w in q for w in ["build", "bulid", "buid", "make", "create", "spawn", "generate", "play", "gimme", "give", "show", "tell", "compare"])
     has_target = any(w in q for w in ["game", "widget", "tool", "app", "sim", "interactive", "board", "clock", "simulator"])
     if has_action and has_target:
         return True
@@ -144,13 +200,41 @@ def is_interactive_build_request(query: str) -> bool:
     return False
 
 
-def create_instant_widget_item(widget_type: str, title: str = None, icon: str = None, state_data: dict = None) -> Optional[InteractiveCanvasItem]:
+def create_instant_widget_item(
+    widget_type: str,
+    title: str = None,
+    icon: str = None,
+    state_data: dict = None,
+    prompt: str = ""
+) -> Optional[InteractiveCanvasItem]:
     """Instantiates a built-in interactive widget."""
     content = None
     default_title = "Interactive Widget"
     default_icon = "ri.apps-line"
 
-    if widget_type == "clock":
+    if widget_type == "world_clock":
+        p = prompt or (state_data.get("prompt", "") if state_data else "")
+        default_mode = "digital" if "digital" in p.lower() else "circular"
+        content = WorldClockComparisonWidget(prompt=p, default_mode=default_mode)
+        default_title = "World Clock (Digital)" if default_mode == "digital" else "World Clock (Circular)"
+        default_icon = "ri.global-line"
+        if not state_data:
+            state_data = {}
+        state_data["prompt"] = p
+    elif widget_type.startswith("procedural_sim"):
+        sim_type = widget_type.split(":")[-1] if ":" in widget_type else "pendulum"
+        content = ProceduralSimulationWidget(sim_type=sim_type)
+        name_map = {
+            "orbit": ("Planetary Orbit Simulator", "ri.earth-line"),
+            "pendulum": ("Harmonic Pendulum", "ri.timer-flash-line"),
+            "wave": ("Wave Propagation Simulator", "ri.water-flash-line"),
+            "curve": ("Lemniscate Math Curve", "ri.sparkling-line")
+        }
+        default_title, default_icon = name_map.get(sim_type, ("Procedural Simulation", "ri.sparkling-line"))
+        if not state_data:
+            state_data = {}
+        state_data["sim_type"] = sim_type
+    elif widget_type == "clock":
         content = InteractiveClockWidget()
         default_title = "Live Clock & Timer"
         default_icon = "ri.time-line"
@@ -787,7 +871,7 @@ class DynamicWidgetBuilderWorker(QThread):
         q = prompt.lower()
         if any(w in q for w in ["orbit", "planetary", "gravity simulator", "planet orbit"]):
             widget_inst = ProceduralSimulationWidget(sim_type="orbit")
-            return widget_inst, "Planetary Orbit Simulator", "ri.planet-line", "class GeneratedCustomWidget(ProceduralSimulationWidget):\n    def __init__(self, parent=None):\n        super().__init__(sim_type='orbit', parent=parent)\n"
+            return widget_inst, "Planetary Orbit Simulator", "ri.earth-line", "class GeneratedCustomWidget(ProceduralSimulationWidget):\n    def __init__(self, parent=None):\n        super().__init__(sim_type='orbit', parent=parent)\n"
         elif any(w in q for w in ["pendulum", "harmonic pendulum"]):
             widget_inst = ProceduralSimulationWidget(sim_type="pendulum")
             return widget_inst, "Harmonic Pendulum", "ri.timer-flash-line", "class GeneratedCustomWidget(ProceduralSimulationWidget):\n    def __init__(self, parent=None):\n        super().__init__(sim_type='pendulum', parent=parent)\n"

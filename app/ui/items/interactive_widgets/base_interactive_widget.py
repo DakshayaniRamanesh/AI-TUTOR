@@ -86,7 +86,11 @@ class InteractiveCardContainer(QWidget):
 
         # Icon + Title
         icon_lbl = QLabel(self.header)
-        icon_lbl.setPixmap(qta.icon(icon_name, color="#8b5cf6").pixmap(15, 15))
+        try:
+            icon_pixmap = qta.icon(icon_name or "ri.apps-line", color="#8b5cf6").pixmap(15, 15)
+        except Exception:
+            icon_pixmap = qta.icon("ri.apps-line", color="#8b5cf6").pixmap(15, 15)
+        icon_lbl.setPixmap(icon_pixmap)
         hdr_layout.addWidget(icon_lbl)
 
         self.title_lbl = QLabel(title, self.header)

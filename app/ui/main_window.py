@@ -1941,8 +1941,8 @@ class MainWindow(QMainWindow):
         preset = match_instant_interactive_preset(q)
         if preset:
             widget_type, title, icon = preset
-            clean_pos = self._find_non_overlapping_pos(raw_pos, width=320.0, height=360.0)
-            widget_item = create_instant_widget_item(widget_type, title=title, icon=icon)
+            clean_pos = self._find_non_overlapping_pos(raw_pos, width=340.0, height=360.0)
+            widget_item = create_instant_widget_item(widget_type, title=title, icon=icon, prompt=q)
             if widget_item:
                 widget_item.setPos(clean_pos)
                 self.scene.addItem(widget_item)

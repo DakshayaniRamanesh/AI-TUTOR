@@ -181,58 +181,82 @@ def test_dynamic_code_execution_safety():
 
 
 def test_world_clock_comparison_circular_and_digital():
-    """Verify specific prompt for UK and NZ time comparison builds custom world clock widget."""
-    from app.ui.items.interactive_widgets.dynamic_builder import is_world_clock_request
+    """Verify specific prompt for UK/NZ or LK/NYC time comparison builds custom world clock widget."""
+    from app.ui.items.interactive_widgets.dynamic_builder import (
+        is_world_clock_request, match_instant_interactive_preset, create_instant_widget_item
+    )
     from app.ui.items.interactive_widgets.world_clock_widget import WorldClockComparisonWidget
 
     # 1. Circular clock comparison prompt
     p_circ = "gimme the comparison on all the uk nz time in circular clock"
     assert is_world_clock_request(p_circ) is True
-    assert match_instant_interactive_preset(p_circ) is None # NOT hijacked by generic single stopwatch
-    assert is_interactive_build_request(p_circ) is True
+    preset_circ = match_instant_interactive_preset(p_circ)
+    assert preset_circ[0] == "world_clock"
+    assert preset_circ[1] == "World Clock (Circular)"
+    item_circ = create_instant_widget_item(preset_circ[0], title=preset_circ[1], icon=preset_circ[2], prompt=p_circ)
+    assert isinstance(item_circ.content_widget, WorldClockComparisonWidget)
+    assert item_circ.content_widget.mode == "circular"
+    assert any("London" in tz[0] for tz in item_circ.content_widget.timezones)
+    assert any("Auckland" in tz[0] for tz in item_circ.content_widget.timezones)
 
-    worker = DynamicWidgetBuilderWorker(prompt=p_circ)
-    w_inst, title, icon, code = worker._generate_custom_widget(p_circ)
-    assert isinstance(w_inst, WorldClockComparisonWidget)
-    assert w_inst.mode == "circular"
-    assert any("London" in tz[0] for tz in w_inst.timezones)
-    assert any("Auckland" in tz[0] for tz in w_inst.timezones)
+    # 2. Typos & LK / NYC specific comparison
+    p_lk_nyc = "gimme the coption time betwhnn lk and NYC"
+    assert is_world_clock_request(p_lk_nyc) is True
+    preset_lk = match_instant_interactive_preset(p_lk_nyc)
+    assert preset_lk[0] == "world_clock"
+    item_lk = create_instant_widget_item(preset_lk[0], title=preset_lk[1], icon=preset_lk[2], prompt=p_lk_nyc)
+    assert isinstance(item_lk.content_widget, WorldClockComparisonWidget)
+    tz_names = [tz[0] for tz in item_lk.content_widget.timezones]
+    assert any("Colombo" in n for n in tz_names)
+    assert any("New York" in n for n in tz_names)
+    assert len(item_lk.content_widget.timezones) == 2
 
-    # 2. Digital clock comparison prompt
+    # 3. Digital clock comparison prompt
     p_dig = "give me the comparison of uk and nz time in digital clock"
     assert is_world_clock_request(p_dig) is True
-    assert match_instant_interactive_preset(p_dig) is None
-    w_dig, title_d, icon_d, code_d = worker._generate_custom_widget(p_dig)
-    assert isinstance(w_dig, WorldClockComparisonWidget)
-    assert w_dig.mode == "digital"
+    preset_dig = match_instant_interactive_preset(p_dig)
+    assert preset_dig[1] == "World Clock (Digital)"
+    item_dig = create_instant_widget_item(preset_dig[0], title=preset_dig[1], icon=preset_dig[2], prompt=p_dig)
+    assert isinstance(item_dig.content_widget, WorldClockComparisonWidget)
+    assert item_dig.content_widget.mode == "digital"
 
-    # 3. Test serialization and roundtrip reconstruction in CanvasScene
-    item = InteractiveCanvasItem(
-        widget_type="dynamic_custom",
-        title=title,
-        icon_name=icon,
-        content_widget=w_inst,
-        state_data={"widget_code": code}
-    )
+    # 4. Test serialization and roundtrip reconstruction in CanvasScene
     scene = CanvasScene()
-    restored = scene.create_item_from_dict(item.to_dict())
+    restored = scene.create_item_from_dict(item_circ.to_dict())
     assert restored is not None
     assert isinstance(restored, InteractiveCanvasItem)
+    assert isinstance(restored.content_widget, WorldClockComparisonWidget)
 
 
 def test_procedural_simulation_generation():
     """Verify PenEcho-style physics, orbit, wave, and curve simulators are built on prompt request."""
     from app.ui.items.interactive_widgets.procedural_sim_widget import ProceduralSimulationWidget
+    from app.ui.items.interactive_widgets.dynamic_builder import (
+        match_instant_interactive_preset, create_instant_widget_item
+    )
 
-    worker = DynamicWidgetBuilderWorker(prompt="build a planetary orbit simulation")
-    w, title, icon, code = worker._generate_custom_widget("build a planetary orbit simulation")
-    assert isinstance(w, ProceduralSimulationWidget)
-    assert w.sim_type == "orbit"
+    # Test preset creation
+    preset_orbit = match_instant_interactive_preset("build a planetary orbit simulation")
+    assert preset_orbit[0] == "procedural_sim:orbit"
+    item_orbit = create_instant_widget_item(preset_orbit[0], title=preset_orbit[1], icon=preset_orbit[2])
+    assert isinstance(item_orbit.content_widget, ProceduralSimulationWidget)
+    assert item_orbit.content_widget.sim_type == "orbit"
 
-    w_wave, _, _, _ = worker._generate_custom_widget("make a wave propagation simulator")
-    assert isinstance(w_wave, ProceduralSimulationWidget)
-    assert w_wave.sim_type == "wave"
+    preset_wave = match_instant_interactive_preset("make a wave propagation simulator")
+    assert preset_wave[0] == "procedural_sim:wave"
+    item_wave = create_instant_widget_item(preset_wave[0], title=preset_wave[1], icon=preset_wave[2])
+    assert isinstance(item_wave.content_widget, ProceduralSimulationWidget)
+    assert item_wave.content_widget.sim_type == "wave"
 
-    w_pend, _, _, _ = worker._generate_custom_widget("build a harmonic pendulum")
-    assert isinstance(w_pend, ProceduralSimulationWidget)
-    assert w_pend.sim_type == "pendulum"
+    preset_pend = match_instant_interactive_preset("build a harmonic pendulum")
+    assert preset_pend[0] == "procedural_sim:pendulum"
+    item_pend = create_instant_widget_item(preset_pend[0], title=preset_pend[1], icon=preset_pend[2])
+    assert isinstance(item_pend.content_widget, ProceduralSimulationWidget)
+    assert item_pend.content_widget.sim_type == "pendulum"
+
+    # Test roundtrip serialization in scene
+    scene = CanvasScene()
+    restored = scene.create_item_from_dict(item_orbit.to_dict())
+    assert restored is not None
+    assert isinstance(restored.content_widget, ProceduralSimulationWidget)
+    assert restored.content_widget.sim_type == "orbit"
