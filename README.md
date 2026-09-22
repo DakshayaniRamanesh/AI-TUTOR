@@ -84,8 +84,14 @@ flowchart TD
   - *Wave Propagation*: Dynamic traveling sine waves ($y(x,t) = A\sin(kx - \omega t)$) with interactive wavelength and frequency sliders.
   - *Harmonic Pendulum*: Damped harmonic oscillation ($T = 2\pi\sqrt{L/g}$) with live angle and damping adjustment.
   - *Procedural Mathematical Curves*: Glowing mathematical curve summons (Lemniscate of Bernoulli, Rhodonea Rose, Lamé Superellipse, Golden Spiral, Deltoid).
-- **Embedded Tools & Mini-Games**: Flappy Bird, Retro Snake, Tic-Tac-Toe, Scientific Calculator, Stopwatch & Countdown Timer, Tally Counter, Dice & Coin Flipper, Physics Particle Sandbox, and Unit Converter.
-- **On-The-Fly Dynamic Synthesis**: Typo-tolerant prompt detection generating custom interactive PyQt widgets at runtime (Reaction Speed Test, Memory Match, Tone Synth Piano Keyboard, Todo Checklist, Study Flashcards).
+- **🕹️ Study Break Easter Eggs & Arcade Games**: Built-in interactive mini-games and easter eggs that students can summon onto the whiteboard for quick study breaks simply by asking:
+  - **Flappy Bird Arcade**: Complete physics-based arcade flyer with procedural pipe obstacles, score counters, and collision detection (try asking: *"build a flappy bird game"* or even *"floopy bod"*).
+  - **Retro Snake Arcade**: Classic grid-based snake game with smooth keyboard controls and score tracker (*"snake game"*).
+  - **Tic-Tac-Toe**: Interactive 2-player board game (*"tic tac toe"*).
+  - **Reaction Speed Tester**: Millisecond reflex benchmark with live rankings (*"reaction speed test"*).
+  - **Memory Card Match**: 4x4 visual memory matching mini-game (*"memory match game"*).
+- **Embedded STEM Utilities**: Scientific Calculator, Stopwatch & Countdown Timer, Tally Counter, Dice & Coin Flipper, Physics Particle Sandbox, and Unit Converter.
+- **On-The-Fly Dynamic Synthesis**: Typo-tolerant prompt detection generating custom interactive PyQt widgets at runtime (Tone Synth Piano Keyboard, Todo Checklist, Study Flashcards, Mini Sketchpad).
 
 ---
 
