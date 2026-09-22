@@ -65,6 +65,7 @@ from ..storage.board_model import BoardModel
 from ..storage.notebook_storage import NotebookStorage
 from ..storage.downloads_manager import DownloadsManager
 from ..backend.math_engine.latex_client import request_latex_generation, LatexPollWorker
+from ..collaboration.collab_session_manager import CollabSessionManager
 
 # ── Autosave Configuration ─────────────────────────────────────────────────────
 # Delay (ms) after the last scene change before autosave fires to disk.
@@ -936,6 +937,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_settings)
 
         return tb
+
+    def _toggle_theme(self):
+        ThemeManager.instance().toggle_theme()
 
     def _toggle_tutor_mode(self):
         curr = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
