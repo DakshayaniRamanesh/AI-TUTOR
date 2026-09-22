@@ -31,17 +31,36 @@ from .counter_widget import InteractiveCounterWidget
 from .dice_coin_widget import InteractiveDiceCoinWidget
 from .physics_sim_widget import PhysicsSimWidget
 from .unit_converter_widget import UnitConverterWidget
+from .world_clock_widget import WorldClockComparisonWidget, parse_timezones_from_prompt
+from .procedural_sim_widget import ProceduralSimulationWidget
 from ...kestrel_theme import MONO_FONT
+
+
+def is_world_clock_request(query: str) -> bool:
+    """Detects if query is asking for world clock, timezone comparisons, or circular/digital clocks."""
+    q = query.lower()
+    has_clock = any(w in q for w in ["clock", "time", "timezone", "timezones"])
+    has_comparison = any(w in q for w in ["comparison", "compare", "difference", "between", "all the", "all", "versus", "vs", "comtsion"])
+    has_locations = any(w in q for w in ["uk", "nz", "london", "auckland", "new york", "tokyo", "japan", "india", "delhi", "sydney", "paris", "berlin", "dubai", "world", "gmt", "bst", "nzst"])
+    has_style = any(w in q for w in ["circular", "circlar", "analog", "digital"])
+    return (has_clock and (has_comparison or has_locations or has_style)) or (has_comparison and has_locations)
 
 
 def match_instant_interactive_preset(query: str) -> Optional[Tuple[str, str, str]]:
     """
     Returns (widget_type, title, icon_name) if query matches an instant built-in widget.
+    Bypasses presets for specific timezone comparisons or custom circular/digital requests.
     """
     q = query.lower().strip()
 
-    # 1. Clock / Time / Stopwatch / Timer
-    if any(k in q for k in ["time", "clock", "stopwatch", "timer", "countdown", "what is the time", "gimme the time"]):
+    # Route specific timezone comparisons and circular/digital requests to dynamic builder!
+    if is_world_clock_request(q):
+        return None
+
+    # 1. Clock / Time / Stopwatch / Timer (Only basic single clock requests)
+    if q in ["time", "clock", "stopwatch", "timer", "countdown", "what is the time", "what's the time", "gimme the time", "show time", "current time"]:
+        return ("clock", "Live Clock & Timer", "ri.time-line")
+    if any(k in q for k in ["stopwatch", "countdown timer", "open timer", "start timer"]):
         return ("clock", "Live Clock & Timer", "ri.time-line")
 
     # 2. Flappy Bird / Bird game
@@ -69,11 +88,11 @@ def match_instant_interactive_preset(query: str) -> Optional[Tuple[str, str, str
         return ("dice_coin", "Dice & Coin", "ri.copper-coin-line")
 
     # 8. Physics / Bouncing balls
-    if any(k in q for k in ["physics", "gravity", "bouncing ball", "particle sim"]):
+    if any(k in q for k in ["bouncing ball", "particle sim"]):
         return ("physics_sim", "Physics Sandbox", "ri.bubble-chart-line")
 
     # 9. Unit Converter
-    if any(k in q for k in ["unit converter", "convert unit", "converter", "celsius to fahrenheit"]):
+    if any(k in q for k in ["unit converter", "convert unit", "celsius to fahrenheit"]):
         return ("unit_converter", "Unit Converter", "ri.exchange-line")
 
     return None
@@ -113,9 +132,12 @@ def is_interactive_build_request(query: str) -> bool:
         if re.search(pat, q):
             return True
 
+    if is_world_clock_request(q):
+        return True
+
     # Check words combination
-    has_action = any(w in q for w in ["build", "make", "create", "spawn", "generate", "play"])
-    has_target = any(w in q for w in ["game", "widget", "tool", "app", "sim", "interactive", "board"])
+    has_action = any(w in q for w in ["build", "make", "create", "spawn", "generate", "play", "gimme", "give", "show", "tell", "compare"])
+    has_target = any(w in q for w in ["game", "widget", "tool", "app", "sim", "interactive", "board", "clock", "simulator"])
     if has_action and has_target:
         return True
 
@@ -748,7 +770,40 @@ class DynamicWidgetBuilderWorker(QThread):
             self.build_failed.emit(self.prompt, str(err))
 
     def _generate_custom_widget(self, prompt: str) -> Tuple[Optional[QWidget], str, str, str]:
-        # 1. Attempt LLM generation via Groq or Gemini
+        # 1. Prompt-Aware World Clock & Multi-Timezone Comparison (Circular or Digital)
+        if is_world_clock_request(prompt):
+            default_mode = "digital" if "digital" in prompt.lower() else "circular"
+            widget_inst = WorldClockComparisonWidget(prompt=prompt, default_mode=default_mode)
+            title = "World Clock (Digital)" if default_mode == "digital" else "World Clock (Circular)"
+            icon = "ri.global-line"
+            code = (
+                f"class GeneratedCustomWidget(WorldClockComparisonWidget):\n"
+                f"    def __init__(self, parent=None):\n"
+                f"        super().__init__(prompt={repr(prompt)}, default_mode={repr(default_mode)}, parent=parent)\n"
+            )
+            return widget_inst, title, icon, code
+
+        # 2. PenEcho-style Procedural Physics & Math Simulators
+        q = prompt.lower()
+        if any(w in q for w in ["orbit", "planetary", "gravity simulator", "planet orbit"]):
+            widget_inst = ProceduralSimulationWidget(sim_type="orbit")
+            return widget_inst, "Planetary Orbit Simulator", "ri.planet-line", "class GeneratedCustomWidget(ProceduralSimulationWidget):\n    def __init__(self, parent=None):\n        super().__init__(sim_type='orbit', parent=parent)\n"
+        elif any(w in q for w in ["pendulum", "harmonic pendulum"]):
+            widget_inst = ProceduralSimulationWidget(sim_type="pendulum")
+            return widget_inst, "Harmonic Pendulum", "ri.timer-flash-line", "class GeneratedCustomWidget(ProceduralSimulationWidget):\n    def __init__(self, parent=None):\n        super().__init__(sim_type='pendulum', parent=parent)\n"
+        elif any(w in q for w in ["wave", "sine wave", "wave propagation"]):
+            widget_inst = ProceduralSimulationWidget(sim_type="wave")
+            return widget_inst, "Wave Propagation", "ri.water-flash-line", "class GeneratedCustomWidget(ProceduralSimulationWidget):\n    def __init__(self, parent=None):\n        super().__init__(sim_type='wave', parent=parent)\n"
+        elif any(w in q for w in ["curve", "lemniscate", "math curve", "spiral", "rose curve"]):
+            widget_inst = ProceduralSimulationWidget(sim_type="curve")
+            return widget_inst, "Lemniscate Math Curve", "ri.sparkling-line", "class GeneratedCustomWidget(ProceduralSimulationWidget):\n    def __init__(self, parent=None):\n        super().__init__(sim_type='curve', parent=parent)\n"
+
+        # 3. Attempt LLM generation via Groq or Gemini
+        if not os.environ.get("GROQ_API_KEY"):
+            from dotenv import load_dotenv
+            backend_env = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "backend", ".env"))
+            if os.path.exists(backend_env):
+                load_dotenv(backend_env)
         groq_key = os.environ.get("GROQ_API_KEY", "").strip()
         gemini_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
 
@@ -840,6 +895,8 @@ class DynamicWidgetBuilderWorker(QThread):
                     "QBrush": QBrush,
                     "QPainter": QPainter,
                     "QPainterPath": QPainterPath,
+                    "WorldClockComparisonWidget": WorldClockComparisonWidget,
+                    "ProceduralSimulationWidget": ProceduralSimulationWidget,
                     "ReactionSpeedWidget": ReactionSpeedWidget,
                     "MemoryMatchWidget": MemoryMatchWidget,
                     "ColorPaletteWidget": ColorPaletteWidget,

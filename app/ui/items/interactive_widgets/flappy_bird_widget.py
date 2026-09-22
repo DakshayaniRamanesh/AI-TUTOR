@@ -203,17 +203,17 @@ class FlappyBirdGameWidget(QWidget):
         # Body (Yellow)
         painter.setBrush(QColor("#facc15"))
         painter.setPen(QPen(QColor("#b45309"), 1.5))
-        painter.drawEllipse(-self.bird_radius, -self.bird_radius, self.bird_radius * 2, self.bird_radius * 2)
+        painter.drawEllipse(QRectF(-self.bird_radius, -self.bird_radius, self.bird_radius * 2, self.bird_radius * 2))
 
         # Wing
         painter.setBrush(QColor("#fef08a"))
-        painter.drawEllipse(-10, -4, 11, 7)
+        painter.drawEllipse(QRectF(-10, -4, 11, 7))
 
         # Eye
         painter.setBrush(QColor("#ffffff"))
-        painter.drawEllipse(3, -7, 6, 6)
+        painter.drawEllipse(QRectF(3, -7, 6, 6))
         painter.setBrush(QColor("#000000"))
-        painter.drawEllipse(6, -6, 2.5, 2.5)
+        painter.drawEllipse(QRectF(5.5, -5.5, 3.0, 3.0))
 
         # Beak
         painter.setBrush(QColor("#f97316"))

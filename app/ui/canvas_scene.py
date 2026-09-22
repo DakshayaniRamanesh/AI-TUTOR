@@ -650,7 +650,8 @@ class CanvasScene(QGraphicsScene):
             from .items.interactive_widgets.dynamic_builder import (
                 create_instant_widget_item, ReactionSpeedWidget, MemoryMatchWidget,
                 ColorPaletteWidget, FlashcardQuizWidget, ToneSynthWidget,
-                MiniSketchWidget, QuickTasksWidget
+                MiniSketchWidget, QuickTasksWidget, WorldClockComparisonWidget,
+                ProceduralSimulationWidget
             )
             from .items.interactive_widgets.base_interactive_widget import InteractiveCanvasItem
             from PyQt6.QtWidgets import (
@@ -704,6 +705,8 @@ class CanvasScene(QGraphicsScene):
                         "QBrush": QBrush,
                         "QPainter": QPainter,
                         "QPainterPath": QPainterPath,
+                        "WorldClockComparisonWidget": WorldClockComparisonWidget,
+                        "ProceduralSimulationWidget": ProceduralSimulationWidget,
                         "ReactionSpeedWidget": ReactionSpeedWidget,
                         "MemoryMatchWidget": MemoryMatchWidget,
                         "ColorPaletteWidget": ColorPaletteWidget,
