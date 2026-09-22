@@ -246,7 +246,7 @@ class QdrantRAGStore:
             points, _ = exact_results
             if points:
                 payload = points[0].payload
-                print(f"[QdrantRAGStore] ✅ Exact cache hit for hash {content_hash[:12]}...")
+                print(f"[QdrantRAGStore] HIT (exact) for hash {content_hash[:12]}...")
                 return {
                     "video_url": payload.get("video_url"),
                     "manim_code": payload.get("manim_code"),
@@ -264,7 +264,7 @@ class QdrantRAGStore:
 
             if semantic_results and semantic_results[0].score >= similarity_threshold:
                 payload = semantic_results[0].payload
-                print(f"[QdrantRAGStore] ✅ Semantic cache hit (score={semantic_results[0].score:.3f}) for '{user_prompt[:40]}'")
+                print(f"[QdrantRAGStore] HIT (semantic, score={semantic_results[0].score:.3f}) for '{user_prompt[:40]}'")
                 return {
                     "video_url": payload.get("video_url"),
                     "manim_code": payload.get("manim_code"),
