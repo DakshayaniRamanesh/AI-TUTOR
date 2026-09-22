@@ -20,6 +20,7 @@ from .items.answer_bubble import AnswerBubble
 from .items.group_selection import GroupSelection
 from .items.image_item import ImageItem
 from .items.smart_shape_item import SmartShapeItem
+from .items.remote_cursor import RemoteCollaboratorCursor
 from .shape_handles import ShapeResizeHandles
 from .shape_properties_panel import ShapePropertiesPanel
 from .stroke_processor import (
@@ -37,6 +38,14 @@ class CanvasScene(QGraphicsScene):
     # Emitted whenever the scene content changes (stroke, erase, shape add/remove).
     # MainWindow connects this to the debounced autosave timer.
     scene_changed = pyqtSignal()
+
+    # Collaboration signals (outbound to CollabSessionManager)
+    item_collaborated_add = pyqtSignal(dict)
+    item_collaborated_update = pyqtSignal(dict)
+    item_collaborated_delete = pyqtSignal(list)
+    cursor_collaborated_move = pyqtSignal(float, float)
+    canvas_collaborated_clear = pyqtSignal()
+    bg_collaborated_changed = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -99,6 +108,12 @@ class CanvasScene(QGraphicsScene):
         # Keep references to background OCR workers to prevent premature GC
         self._ocr_workers: list = []
 
+        # Collaboration state
+        self._is_remote_event = False
+        self._remote_cursors: dict = {}
+        self._last_cursor_emit_time = 0.0
+        self._item_pos_before_drag: dict = {}
+
     def _on_theme_changed(self, theme_name: str):
         is_dark = theme_name == "dark"
         
@@ -145,6 +160,8 @@ class CanvasScene(QGraphicsScene):
         if mode in ["dotted", "ruled", "blank", "math_ruled"]:
             self.background_mode = mode
             self.update()
+            if not self._is_remote_event:
+                self.bg_collaborated_changed.emit(mode)
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
         c = ThemeManager.instance().get_colors()
@@ -187,29 +204,48 @@ class CanvasScene(QGraphicsScene):
         
         items = self.items(path, Qt.ItemSelectionMode.IntersectsItemShape)
         erased_any = False
+        erased_ids = []
         for item in items:
             if item.scene() == self:
                 if item == self._active_handles or item == self._active_properties_panel:
                     continue
+                if isinstance(item, RemoteCollaboratorCursor):
+                    continue
                 if item == self._active_shape_item:
                     self.deactivate_active_shape()
+                iid = getattr(item, "item_id", None)
+                if iid:
+                    erased_ids.append(iid)
                 self.removeItem(item)
                 erased_any = True
         if erased_any:
             self.scene_changed.emit()
+            if not self._is_remote_event and erased_ids:
+                self.item_collaborated_delete.emit(erased_ids)
 
     def erase_selected_items(self):
         items_to_remove = list(self.selectedItems())
+        erased_ids = []
         for item in items_to_remove:
+            if isinstance(item, RemoteCollaboratorCursor):
+                continue
             if item == self._active_shape_item:
                 self.deactivate_active_shape()
+            iid = getattr(item, "item_id", None)
+            if iid:
+                erased_ids.append(iid)
             self.removeItem(item)
         if items_to_remove:
             self.scene_changed.emit()
+            if not self._is_remote_event and erased_ids:
+                self.item_collaborated_delete.emit(erased_ids)
 
     def clear_all(self):
         self.deactivate_active_shape()
         self.clear()
+        self.clear_remote_cursors()
+        if not self._is_remote_event:
+            self.canvas_collaborated_clear.emit()
 
     def activate_shape(self, shape_item):
         """Activates an item, attaching interactive resize handles and properties panel."""
@@ -286,13 +322,18 @@ class CanvasScene(QGraphicsScene):
                 print(f"[HoldSnapTimer] SNAP SUCCESS! Replacing raw stroke with SmartShapeItem({snapped_item.stroke_type}) live while held.", flush=True)
             # Hide live raw path and show snapped shape
             if self._current_path_item and self._current_path_item.scene() == self:
+                old_id = getattr(self._current_path_item, "item_id", None)
                 self.removeItem(self._current_path_item)
+                if not self._is_remote_event and old_id:
+                    self.item_collaborated_delete.emit([old_id])
 
             self.addItem(snapped_item)
             self._snapped_shape_item = snapped_item
             self._is_live_snapped = True
             self.activate_shape(snapped_item)
             self.scene_changed.emit()
+            if not self._is_remote_event and hasattr(snapped_item, "to_dict"):
+                self.item_collaborated_add.emit(snapped_item.to_dict())
         else:
             if SHAPE_DEBUG:
                 print(f"[HoldSnapTimer] Classified as handwriting. Kept raw stroke.", flush=True)
@@ -300,12 +341,141 @@ class CanvasScene(QGraphicsScene):
     def to_dict_list(self) -> list[dict]:
         items_data = [{"type": "_canvas_meta", "background_mode": self.background_mode}]
         for item in self.items():
-            if hasattr(item, "to_dict") and item not in [self._active_handles, self._active_properties_panel] and not isinstance(item, (PenechoLassoOverlay, PenechoDraftLayerItem)):
+            if hasattr(item, "to_dict") and item not in [self._active_handles, self._active_properties_panel] and not isinstance(item, (PenechoLassoOverlay, PenechoDraftLayerItem, RemoteCollaboratorCursor)):
                 try:
                     items_data.append(item.to_dict())
                 except Exception as err:
                     print(f"[CanvasScene] Notice serializing item: {err}")
         return items_data
+
+    # ── Collaboration Remote Application Handlers ─────────────────────────────
+
+    def find_item_by_id(self, item_id: str):
+        """Looks up an item in the scene matching item_id."""
+        if not item_id:
+            return None
+        for item in self.items():
+            if getattr(item, "item_id", None) == item_id:
+                return item
+        return None
+
+    def apply_remote_sync(self, board_data: dict):
+        """Replaces entire canvas state with remote full-sync snapshot."""
+        self._is_remote_event = True
+        try:
+            items_list = board_data.get("items", [])
+            bg_mode = board_data.get("background_mode", "blank")
+            self.load_from_dict_list(items_list)
+            self.set_background_mode(bg_mode)
+        finally:
+            self._is_remote_event = False
+
+    def apply_remote_item_add(self, item_dict: dict):
+        """Adds a remote item (stroke, note, shape) to the canvas."""
+        item_id = item_dict.get("item_id")
+        if item_id and self.find_item_by_id(item_id):
+            self.apply_remote_item_update(item_dict)
+            return
+
+        self._is_remote_event = True
+        try:
+            item = self.create_item_from_dict(item_dict)
+            if item:
+                x = item_dict.get("x", 0)
+                y = item_dict.get("y", 0)
+                item.setPos(x, y)
+                if "z_value" in item_dict:
+                    item.setZValue(item_dict["z_value"])
+                if item_id:
+                    item.item_id = item_id
+                self.addItem(item)
+                self.scene_changed.emit()
+        finally:
+            self._is_remote_event = False
+
+    def apply_remote_item_update(self, item_dict: dict):
+        """Updates geometry, position, or content of a remote item."""
+        item_id = item_dict.get("item_id")
+        item = self.find_item_by_id(item_id)
+        if not item:
+            self.apply_remote_item_add(item_dict)
+            return
+
+        self._is_remote_event = True
+        try:
+            x = item_dict.get("x")
+            y = item_dict.get("y")
+            if x is not None and y is not None:
+                item.setPos(x, y)
+            
+            itype = item_dict.get("type")
+            if itype == "StickyNote" and hasattr(item, "widget"):
+                new_text = item_dict.get("text", "")
+                if hasattr(item.widget, "text_edit") and item.widget.text_edit.toPlainText() != new_text:
+                    item.widget.text_edit.setPlainText(new_text)
+            elif itype == "HandwritingNote" and hasattr(item, "widget"):
+                new_text = item_dict.get("text", "")
+                if hasattr(item.widget, "text_edit") and item.widget.text_edit.toPlainText() != new_text:
+                    item.widget.text_edit.setPlainText(new_text)
+            elif itype == "SmartShapeItem":
+                dims = item_dict.get("dimensions_px")
+                if dims and hasattr(item, "set_dimensions_px"):
+                    item.set_dimensions_px(dims)
+            self.update()
+            self.scene_changed.emit()
+        finally:
+            self._is_remote_event = False
+
+    def apply_remote_item_delete(self, item_ids: list):
+        """Removes items deleted by a collaborator."""
+        self._is_remote_event = True
+        try:
+            for item_id in item_ids:
+                item = self.find_item_by_id(item_id)
+                if item and item.scene() == self:
+                    if item == self._active_shape_item:
+                        self.deactivate_active_shape()
+                    self.removeItem(item)
+            self.scene_changed.emit()
+        finally:
+            self._is_remote_event = False
+
+    def apply_remote_clear(self):
+        """Clears board when collaborator clears all."""
+        self._is_remote_event = True
+        try:
+            self.clear_all()
+            self.scene_changed.emit()
+        finally:
+            self._is_remote_event = False
+
+    def apply_remote_bg(self, mode: str):
+        self._is_remote_event = True
+        try:
+            self.set_background_mode(mode)
+        finally:
+            self._is_remote_event = False
+
+    def apply_remote_cursor(self, client_id: str, name: str, color: str, x: float, y: float):
+        """Updates remote collaborator cursor position and badge."""
+        cursor = self._remote_cursors.get(client_id)
+        if not cursor or cursor.scene() != self:
+            cursor = RemoteCollaboratorCursor(client_id, name, color)
+            self.addItem(cursor)
+            self._remote_cursors[client_id] = cursor
+        cursor.update_info(name, color)
+        cursor.set_position(x, y)
+
+    def remove_remote_cursor(self, client_id: str):
+        cursor = self._remote_cursors.pop(client_id, None)
+        if cursor and cursor.scene() == self:
+            self.removeItem(cursor)
+
+    def clear_remote_cursors(self):
+        for cursor in list(self._remote_cursors.values()):
+            if cursor.scene() == self:
+                self.removeItem(cursor)
+        self._remote_cursors.clear()
 
     def load_from_dict_list(self, items_data: list[dict], video_requested_callback=None, solve_requested_callback=None):
         self.clear_all()
@@ -668,10 +838,22 @@ class CanvasScene(QGraphicsScene):
             self._hold_snap_timer.start(HOLD_DURATION_MS)
             event.accept()
         else:
+            if self.active_tool == "select" and event.button() == Qt.MouseButton.LeftButton:
+                self._item_pos_before_drag.clear()
+                for item in self.selectedItems():
+                    iid = getattr(item, "item_id", None)
+                    if iid:
+                        self._item_pos_before_drag[iid] = QPointF(item.pos())
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         pos = event.scenePos()
+
+        # Throttled collaborative cursor broadcasting (approx 25 fps)
+        now = time.time()
+        if now - self._last_cursor_emit_time > 0.04:
+            self._last_cursor_emit_time = now
+            self.cursor_collaborated_move.emit(pos.x(), pos.y())
 
         if self._is_erasing and self.active_tool == "eraser":
             self.erase_items_at(pos)
@@ -751,7 +933,7 @@ class CanvasScene(QGraphicsScene):
                 # Find all items enclosed by the lasso polygon
                 selected = []
                 for item in self.items():
-                    if item.scene() == self and hasattr(item, "to_dict") and not isinstance(item, (PenechoLassoOverlay, ShapeResizeHandles)):
+                    if item.scene() == self and hasattr(item, "to_dict") and not isinstance(item, (PenechoLassoOverlay, ShapeResizeHandles, RemoteCollaboratorCursor)):
                         center = item.sceneBoundingRect().center()
                         if point_in_polygon(center.x(), center.y(), self._lasso_points):
                             selected.append(item)
@@ -769,10 +951,13 @@ class CanvasScene(QGraphicsScene):
             self._lasso_points = []
             event.accept()
         elif self.active_tool == "shapes" and hasattr(self, '_shape_start_pos') and self._shape_start_pos:
-            self.activate_shape(self._current_drawing_shape)
+            shape_item = self._current_drawing_shape
+            self.activate_shape(shape_item)
             self._shape_start_pos = None
             self._current_drawing_shape = None
             self.scene_changed.emit()
+            if not self._is_remote_event and shape_item and hasattr(shape_item, "to_dict"):
+                self.item_collaborated_add.emit(shape_item.to_dict())
             event.accept()
         elif self._current_path_item:
             if self._is_live_snapped and self._snapped_shape_item:
@@ -804,8 +989,12 @@ class CanvasScene(QGraphicsScene):
                     if self.auto_ai_enabled:
                         self._auto_ai_timer.start(int(self.auto_ai_delay_sec * 1000))
                 self.scene_changed.emit()
+                if not self._is_remote_event and hasattr(final_item, "to_dict"):
+                    self.item_collaborated_add.emit(final_item.to_dict())
             elif self._current_path_item:  # Highlighter or very short stroke — keep it
                 self.scene_changed.emit()
+                if not self._is_remote_event and hasattr(self._current_path_item, "to_dict"):
+                    self.item_collaborated_add.emit(self._current_path_item.to_dict())
 
             self._current_path_item = None
             self._current_painter_path = None
@@ -813,6 +1002,15 @@ class CanvasScene(QGraphicsScene):
             event.accept()
         else:
             super().mouseReleaseEvent(event)
+            if self.active_tool == "select" and self._item_pos_before_drag:
+                for item in self.selectedItems():
+                    iid = getattr(item, "item_id", None)
+                    if iid and iid in self._item_pos_before_drag:
+                        old_pos = self._item_pos_before_drag[iid]
+                        if item.pos() != old_pos:
+                            if not self._is_remote_event and hasattr(item, "to_dict"):
+                                self.item_collaborated_update.emit(item.to_dict())
+                self._item_pos_before_drag.clear()
 
     def _on_auto_convert_ink(self):
         if not self._recent_ink_strokes:

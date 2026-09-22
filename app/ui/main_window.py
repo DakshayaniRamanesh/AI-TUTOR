@@ -56,6 +56,8 @@ from .widgets.latex_editor_widget import LatexEditorWidget
 from .widgets.speedometer_progress_widget import SpeedometerProgressWidget
 from .widgets.feather_ai_button import FeatherAIButton
 MagicOrbWidget = FeatherAIButton
+from .dialogs.collab_dialog import CollabDialog
+from ..collaboration.collab_session_manager import CollabSessionManager, CollabRole
 
 from ..backend.math_engine.stem_solver import solve_stem_question
 from ..backend.workspace.pdf_rag_manager import PdfRAGManager
@@ -353,6 +355,13 @@ class MainWindow(QMainWindow):
         self.scene.auto_ai_failed.connect(self._on_auto_ai_failed)
         # Connect scene_changed to the debounced autosave
         self.scene.scene_changed.connect(self._on_scene_changed)
+
+        # Collaboration Session Manager Integration
+        self.collab_mgr = CollabSessionManager.instance()
+        self.collab_mgr.bind_canvas_scene(self.scene)
+        self.collab_mgr.session_state_changed.connect(self._on_collab_state_changed)
+        self.collab_mgr.peer_notification.connect(self._on_collab_notification)
+
         self.view = CanvasView(self.scene, self)
         self.view.zoom_changed.connect(self._on_zoom_changed)
         
@@ -907,13 +916,18 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.btn_save)
 
-        layout.addWidget(self._make_toolbar_separator(tb))
-
         # Search / Share / Settings
         btn_search = self._make_toolbar_btn('ri.search-line', "", tb, None, "Search")
-        btn_share = self._make_toolbar_btn('ri.share-line', "", tb, None, "Share")
+        btn_share = self._make_toolbar_btn('ri.share-line', "Share", tb, '#8b5cf6', "Live Collaboration Session")
+        btn_share.clicked.connect(self._open_collab_dialog)
         layout.addWidget(btn_search)
         layout.addWidget(btn_share)
+
+        # Live Collaboration Status Pill (shown when in session)
+        self.btn_collab_status = self._make_toolbar_btn('ri.team-line', "Live", tb, '#10b981', "Active Collaboration Session")
+        self.btn_collab_status.setVisible(False)
+        self.btn_collab_status.clicked.connect(self._open_collab_dialog)
+        layout.addWidget(self.btn_collab_status)
 
         # Settings
         btn_settings = self._make_toolbar_btn('ri.settings-3-line', "", tb, None, "Settings")
@@ -1639,6 +1653,21 @@ class MainWindow(QMainWindow):
         if clear_after_ms > 0:
             self._save_status_clear_timer.start(clear_after_ms)
 
+    def _open_collab_dialog(self):
+        dialog = CollabDialog(self)
+        dialog.exec()
+
+    def _on_collab_state_changed(self, role: str, room_code: str, share_link: str):
+        if hasattr(self, 'btn_collab_status'):
+            if role != CollabRole.IDLE:
+                self.btn_collab_status.setText(f"🟢 {room_code}")
+                self.btn_collab_status.setVisible(True)
+            else:
+                self.btn_collab_status.setVisible(False)
+
+    def _on_collab_notification(self, notif_type: str, message: str):
+        self._set_save_status(message, clear_after_ms=3000)
+
 
     def _on_load_notebook_requested(self, notebook_id: str):
         try:
@@ -1722,6 +1751,8 @@ class MainWindow(QMainWindow):
             item.setPos(center_pos)
             self.scene.addItem(item)
             self.scene.scene_changed.emit()
+            if hasattr(self.scene, "item_collaborated_add") and not getattr(self.scene, "_is_remote_event", False):
+                self.scene.item_collaborated_add.emit(item.to_dict())
 
     def _add_sticky_note(self):
         self.scene.active_tool = "select"
@@ -1729,6 +1760,8 @@ class MainWindow(QMainWindow):
         item.setPos(self.view.mapToScene(self.view.viewport().rect().center()))
         self.scene.addItem(item)
         self.scene.scene_changed.emit()
+        if hasattr(self.scene, "item_collaborated_add") and not getattr(self.scene, "_is_remote_event", False):
+            self.scene.item_collaborated_add.emit(item.to_dict())
 
     def _add_handwriting_note(self):
         self.scene.active_tool = "select"
@@ -1738,6 +1771,8 @@ class MainWindow(QMainWindow):
         item.widget.solve_requested.connect(self._on_stem_question_asked)
         self.scene.addItem(item)
         self.scene.scene_changed.emit()
+        if hasattr(self.scene, "item_collaborated_add") and not getattr(self.scene, "_is_remote_event", False):
+            self.scene.item_collaborated_add.emit(item.to_dict())
 
     def _add_table(self):
         self.scene.active_tool = "select"
@@ -1745,6 +1780,8 @@ class MainWindow(QMainWindow):
         item.setPos(self.view.mapToScene(self.view.viewport().rect().center()))
         self.scene.addItem(item)
         self.scene.scene_changed.emit()
+        if hasattr(self.scene, "item_collaborated_add") and not getattr(self.scene, "_is_remote_event", False):
+            self.scene.item_collaborated_add.emit(item.to_dict())
 
     def _on_insert_reference_table(self, data: dict):
         self.scene.active_tool = "select"

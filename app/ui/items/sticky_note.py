@@ -182,11 +182,20 @@ class StickyNote(QGraphicsProxyWidget, BaseGraphicsItemMixin):
         
         self.widget = StickyNoteWidget(text, color_key, proxy_getter=lambda: self)
         self.widget.delete_requested.connect(self._delete_self)
+        self.widget.text_edit.textChanged.connect(self._on_text_changed)
         self.setWidget(self.widget)
+
+    def _on_text_changed(self):
+        scene = self.scene()
+        if scene and hasattr(scene, "item_collaborated_update") and not getattr(scene, "_is_remote_event", False):
+            scene.item_collaborated_update.emit(self.to_dict())
 
     def _delete_self(self):
         scene = self.scene()
         if scene:
+            iid = getattr(self, "item_id", None)
+            if hasattr(scene, "item_collaborated_delete") and not getattr(scene, "_is_remote_event", False) and iid:
+                scene.item_collaborated_delete.emit([iid])
             scene.removeItem(self)
 
     def contextMenuEvent(self, event):
