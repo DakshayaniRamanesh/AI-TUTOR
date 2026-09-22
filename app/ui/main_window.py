@@ -1046,6 +1046,13 @@ class MainWindow(QMainWindow):
         return hud
 
     def _on_auto_ai_requested(self, query: str, target_pos: QPointF, mode: str = None):
+        from .items.interactive_widgets.dynamic_builder import (
+            match_instant_interactive_preset, is_interactive_build_request
+        )
+        if match_instant_interactive_preset(query) or is_interactive_build_request(query):
+            self._on_stem_question_asked(query, target_pos=target_pos, mode=mode)
+            return
+
         from .penecho_integration.ai_canvas_bridge import AICanvasWorker, create_draft_from_payload
         self.magic_orb.set_state("thinking", "Feathering…")
 
@@ -1909,10 +1916,101 @@ class MainWindow(QMainWindow):
                 self._set_sidebar_active_button("ref")
 
     def _on_stem_question_asked(self, question: str, target_pos=None, mode: str = None):
-        # 1. Grounded RAG if PDF Study Mode is active
+        if not question or not str(question).strip():
+            return
+        q = str(question).strip()
+
+        # Compute position
+        if target_pos:
+            raw_pos = target_pos
+        elif hasattr(self.view, 'last_mouse_scene_pos') and not self.view.last_mouse_scene_pos.isNull():
+            raw_pos = self.view.last_mouse_scene_pos
+        else:
+            raw_pos = self.view.mapToScene(self.view.viewport().rect().center())
+
+        # 1. Check for Instant Built-In Interactive Widget Preset (Clock, Flappy Bird, Snake, Calculator, etc.)
+        from .items.interactive_widgets.dynamic_builder import (
+            match_instant_interactive_preset,
+            create_instant_widget_item,
+            is_interactive_build_request,
+            DynamicWidgetBuilderWorker,
+            DynamicWidgetPlaceholder
+        )
+        from .items.interactive_widgets.base_interactive_widget import InteractiveCanvasItem
+
+        preset = match_instant_interactive_preset(q)
+        if preset:
+            widget_type, title, icon = preset
+            clean_pos = self._find_non_overlapping_pos(raw_pos, width=320.0, height=360.0)
+            widget_item = create_instant_widget_item(widget_type, title=title, icon=icon)
+            if widget_item:
+                widget_item.setPos(clean_pos)
+                self.scene.addItem(widget_item)
+                if hasattr(self.scene, "item_collaborated_add") and not getattr(self.scene, "_is_remote_event", False):
+                    self.scene.item_collaborated_add.emit(widget_item.to_dict())
+                self.scene.scene_changed.emit()
+                if hasattr(self, "magic_orb"):
+                    self.magic_orb.set_state("idle")
+                return
+
+        # 2. Check for On-The-Fly Custom Interactive Build Request (Any game, widget, tool, simulator, or app)
+        if is_interactive_build_request(q):
+            clean_pos = self._find_non_overlapping_pos(raw_pos, width=300.0, height=180.0)
+            placeholder_content = DynamicWidgetPlaceholder(prompt=q)
+            placeholder_item = InteractiveCanvasItem(
+                widget_type="building_placeholder",
+                title="Synthesizing Widget...",
+                icon_name="ri.loader-4-line",
+                content_widget=placeholder_content
+            )
+            placeholder_item.setPos(clean_pos)
+            self.scene.addItem(placeholder_item)
+
+            if hasattr(self, "magic_orb"):
+                self.magic_orb.set_state("thinking", "Synthesizing Widget…")
+
+            worker = DynamicWidgetBuilderWorker(prompt=q, parent=self)
+
+            def _on_widget_built(prompt_text, widget_instance, title_text, icon_name, code_text):
+                if placeholder_item.scene() == self.scene:
+                    self.scene.removeItem(placeholder_item)
+
+                final_item = InteractiveCanvasItem(
+                    widget_type="dynamic_custom",
+                    title=title_text,
+                    icon_name=icon_name,
+                    content_widget=widget_instance,
+                    state_data={"widget_code": code_text, "prompt": prompt_text}
+                )
+                final_item.setPos(clean_pos)
+                self.scene.addItem(final_item)
+
+                if hasattr(self.scene, "item_collaborated_add") and not getattr(self.scene, "_is_remote_event", False):
+                    self.scene.item_collaborated_add.emit(final_item.to_dict())
+                self.scene.scene_changed.emit()
+
+                if hasattr(self, "magic_orb"):
+                    self.magic_orb.set_state("idle")
+                if worker in self._solver_workers:
+                    self._solver_workers.remove(worker)
+
+            def _on_widget_build_failed(prompt_text, err_msg):
+                if placeholder_item.scene() == self.scene:
+                    self.scene.removeItem(placeholder_item)
+                if hasattr(self, "magic_orb"):
+                    self.magic_orb.set_state("error")
+                if worker in self._solver_workers:
+                    self._solver_workers.remove(worker)
+
+            worker.widget_built.connect(_on_widget_built)
+            worker.build_failed.connect(_on_widget_build_failed)
+            self._solver_workers.append(worker)
+            worker.start()
+            return
+
+        # 3. Grounded RAG if PDF Study Mode is active
         if hasattr(self, 'pdf_rag_mgr') and self.pdf_rag_mgr.is_loaded() and hasattr(self, 'pdf_viewer_widget') and self.pdf_viewer_widget.isVisible():
             ai_response = self.pdf_rag_mgr.generate_grounded_answer(question)
-            raw_pos = target_pos or self.view.mapToScene(self.view.viewport().rect().center())
             center_pos = self._find_non_overlapping_pos(raw_pos, width=580.0, height=220.0)
             bubble = AnswerBubble(title="PDF Grounded Answer", full_text=ai_response, question=question)
             bubble.setPos(center_pos)
@@ -2031,14 +2129,6 @@ class MainWindow(QMainWindow):
         self.latex_worker.start()
 
         self.ask_bar.input_field.setPlaceholderText(f"Converting to {template_type}...")
-
-    def _on_stem_question_asked(self, question: str):
-        """Called when user types a question in the Ask Bar and submits."""
-        if not question or not question.strip():
-            return
-        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
-        active_mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
-        self._on_auto_ai_requested(question.strip(), center_pos, mode=active_mode)
 
     def _show_or_update_tab(self, widget: QWidget, tab_title: str):
         idx = self.canvas_tabs.indexOf(widget)

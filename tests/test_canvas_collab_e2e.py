@@ -28,7 +28,11 @@ def test_canvas_e2e_collaboration():
     if not app:
         app = QApplication([])
 
-    test_port = 8993
+    import socket
+    s = socket.socket()
+    s.bind(("", 0))
+    test_port = s.getsockname()[1]
+    s.close()
 
     # 1. Setup Host Environment
     host_scene = CanvasScene()

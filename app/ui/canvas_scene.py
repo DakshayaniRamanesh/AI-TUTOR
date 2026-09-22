@@ -421,6 +421,9 @@ class CanvasScene(QGraphicsScene):
                 dims = item_dict.get("dimensions_px")
                 if dims and hasattr(item, "set_dimensions_px"):
                     item.set_dimensions_px(dims)
+            elif itype == "InteractiveCanvasWidget" and hasattr(item, "container"):
+                if "is_minimized" in item_dict and item.container.is_minimized != item_dict["is_minimized"]:
+                    item.container._toggle_minimize()
             self.update()
             self.scene_changed.emit()
         finally:
@@ -642,6 +645,92 @@ class CanvasScene(QGraphicsScene):
 
         elif itype == "PenechoSummonItem":
             item = PenechoSummonItem.from_dict(data)
+
+        elif itype == "InteractiveCanvasWidget":
+            from .items.interactive_widgets.dynamic_builder import (
+                create_instant_widget_item, ReactionSpeedWidget, MemoryMatchWidget,
+                ColorPaletteWidget, FlashcardQuizWidget, ToneSynthWidget,
+                MiniSketchWidget, QuickTasksWidget
+            )
+            from .items.interactive_widgets.base_interactive_widget import InteractiveCanvasItem
+            from PyQt6.QtWidgets import (
+                QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+                QPushButton, QLineEdit, QTextEdit, QSlider, QProgressBar,
+                QCheckBox, QRadioButton, QComboBox, QSpinBox, QFrame, QScrollArea
+            )
+            from PyQt6.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QRectF
+            from PyQt6.QtGui import QColor, QFont, QPen, QBrush, QPainter, QPainterPath
+            import random, math, time
+            from .kestrel_theme import MONO_FONT
+
+            w_type = data.get("widget_type", "")
+            title = data.get("title", "Interactive Widget")
+            icon_name = data.get("icon_name", "ri.apps-line")
+            state_data = data.get("state_data", {})
+
+            # 1. Try built-in instant widget
+            item = create_instant_widget_item(w_type, title=title, icon=icon_name, state_data=state_data)
+
+            # 2. Try recreating dynamically generated widget from code
+            if item is None and "widget_code" in state_data and state_data["widget_code"]:
+                try:
+                    scope = {
+                        "__builtins__": __builtins__,
+                        "QWidget": QWidget,
+                        "QVBoxLayout": QVBoxLayout,
+                        "QHBoxLayout": QHBoxLayout,
+                        "QGridLayout": QGridLayout,
+                        "QLabel": QLabel,
+                        "QPushButton": QPushButton,
+                        "QLineEdit": QLineEdit,
+                        "QTextEdit": QTextEdit,
+                        "QSlider": QSlider,
+                        "QProgressBar": QProgressBar,
+                        "QTimer": QTimer,
+                        "QCheckBox": QCheckBox,
+                        "QRadioButton": QRadioButton,
+                        "QComboBox": QComboBox,
+                        "QSpinBox": QSpinBox,
+                        "QFrame": QFrame,
+                        "QScrollArea": QScrollArea,
+                        "Qt": Qt,
+                        "QPoint": QPoint,
+                        "QPointF": QPointF,
+                        "QRect": QRect,
+                        "QRectF": QRectF,
+                        "QColor": QColor,
+                        "QFont": QFont,
+                        "QPen": QPen,
+                        "QBrush": QBrush,
+                        "QPainter": QPainter,
+                        "QPainterPath": QPainterPath,
+                        "ReactionSpeedWidget": ReactionSpeedWidget,
+                        "MemoryMatchWidget": MemoryMatchWidget,
+                        "ColorPaletteWidget": ColorPaletteWidget,
+                        "FlashcardQuizWidget": FlashcardQuizWidget,
+                        "ToneSynthWidget": ToneSynthWidget,
+                        "MiniSketchWidget": MiniSketchWidget,
+                        "QuickTasksWidget": QuickTasksWidget,
+                        "random": random,
+                        "math": math,
+                        "time": time,
+                        "MONO_FONT": MONO_FONT,
+                    }
+                    exec(state_data["widget_code"], scope)
+                    if "GeneratedCustomWidget" in scope:
+                        custom_w = scope["GeneratedCustomWidget"]()
+                        item = InteractiveCanvasItem(
+                            widget_type=w_type or "dynamic_custom",
+                            title=title,
+                            icon_name=icon_name,
+                            content_widget=custom_w,
+                            state_data=state_data
+                        )
+                except Exception as e:
+                    print(f"[CanvasScene] Could not recompile custom dynamic widget: {e}")
+
+            if item and data.get("is_minimized") and hasattr(item, "container"):
+                item.container._toggle_minimize()
 
         else:
             print(f"[CanvasScene] WARNING: Unrecognized item type '{itype}' — skipping. "
