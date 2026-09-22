@@ -1,7 +1,7 @@
 """
 In-Canvas Interactive Graphing Widget (2D Curves, 3D Surfaces, Complex Analysis)
-Allows users to evaluate, interact with, and rotate 2D, 3D, and Complex plots directly on
-the infinite whiteboard canvas.
+Clean, professional light theme matching Kestrel design system and academic workstations.
+No emojis or neon styling — uses crisp typography, Remix icons, and light high-contrast palette.
 """
 
 import re
@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor
+import qtawesome as qta
 
 from ...kestrel_theme import MONO_FONT
 
@@ -34,11 +35,13 @@ class InteractiveGraphingWidget(QWidget):
     """
     Compact Desmos-style interactive widget designed to live as a draggable,
     minimizable card directly on the whiteboard canvas.
+    Light theme, academic aesthetic, Remix icons.
     """
 
     def __init__(self, mode: str = "2d", initial_expr: str = "", parent=None):
         super().__init__(parent)
         self.setFixedSize(360, 390)
+        self.setStyleSheet("background-color: #ffffff;")
         self.mode = mode if mode in ("2d", "3d", "complex") else "2d"
         self.expr_2d = initial_expr if (initial_expr and self.mode == "2d") else "sin(a*x) + 0.3*sin(3*x)"
         self.expr_3d = initial_expr if (initial_expr and self.mode == "3d") else "sin(sqrt(x^2 + y^2) * a) / (sqrt(x^2 + y^2) + 0.05)"
@@ -53,17 +56,16 @@ class InteractiveGraphingWidget(QWidget):
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(6)
 
-        # 1. Mode Pill Row
+        # 1. Mode Pill Row (No emojis, clean Remix icons)
         row_modes = QHBoxLayout()
         row_modes.setSpacing(4)
-        self.btn_2d = QPushButton("📈 2D Curve", self)
-        self.btn_3d = QPushButton("🌐 3D Surface", self)
-        self.btn_comp = QPushButton("🔮 Complex", self)
+        self.btn_2d = QPushButton("2D Curve", self)
+        self.btn_3d = QPushButton("3D Surface", self)
+        self.btn_comp = QPushButton("Complex", self)
 
         for btn in (self.btn_2d, self.btn_3d, self.btn_comp):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setFixedHeight(24)
-            btn.setStyleSheet("font-size: 10px; font-weight: 700; border-radius: 4px; padding: 2px 6px;")
 
         self.btn_2d.clicked.connect(lambda: self._switch_mode("2d"))
         self.btn_3d.clicked.connect(lambda: self._switch_mode("3d"))
@@ -74,53 +76,82 @@ class InteractiveGraphingWidget(QWidget):
         row_modes.addWidget(self.btn_comp)
         layout.addLayout(row_modes)
 
-        # 2. Formula Input + Presets
+        # 2. Formula Input + Presets (Light Theme)
         inp_row = QHBoxLayout()
         self.inp_formula = QLineEdit(self)
         self.inp_formula.setStyleSheet(f"""
             QLineEdit {{
-                background-color: #1e1e24;
-                color: #38bdf8;
-                border: 1px solid #3f3f46;
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #cbd5e1;
                 border-radius: 4px;
                 padding: 4px 6px;
                 font-family: {MONO_FONT};
                 font-size: 11px;
-                font-weight: 700;
+                font-weight: 600;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid #2563eb;
             }}
         """)
         self.inp_formula.returnPressed.connect(self._on_formula_submitted)
         inp_row.addWidget(self.inp_formula, stretch=1)
 
         self.combo_presets = QComboBox(self)
-        self.combo_presets.setFixedWidth(80)
+        self.combo_presets.setFixedWidth(85)
         self.combo_presets.setStyleSheet("""
             QComboBox {
-                background-color: #27272a;
-                color: #e4e4e7;
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #cbd5e1;
                 border-radius: 4px;
                 font-size: 10px;
-                padding: 2px;
+                padding: 2px 6px;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background-color: #ffffff;
+                color: #0f172a;
+                selection-background-color: #2563eb;
+                selection-color: #ffffff;
             }
         """)
         self.combo_presets.currentIndexChanged.connect(self._on_preset_picked)
         inp_row.addWidget(self.combo_presets)
         layout.addLayout(inp_row)
 
-        # 3. Parameter Slider `a`
+        # 3. Parameter Slider `a` (Light Theme)
         slider_row = QHBoxLayout()
         self.lbl_slider = QLabel("a = 1.00", self)
-        self.lbl_slider.setStyleSheet(f"font-size: 10px; color: #a855f7; font-family: {MONO_FONT}; font-weight: 700;")
+        self.lbl_slider.setStyleSheet(f"font-size: 10px; color: #0f172a; font-family: {MONO_FONT}; font-weight: 600;")
         self.slider = QSlider(Qt.Orientation.Horizontal, self)
         self.slider.setRange(-400, 400)
         self.slider.setValue(100)
+        self.slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                height: 4px;
+                background: #e2e8f0;
+                border-radius: 2px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #2563eb;
+                border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                background: #ffffff;
+                border: 2px solid #2563eb;
+                width: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
+            }
+        """)
         self.slider.valueChanged.connect(self._on_slider_changed)
         slider_row.addWidget(self.lbl_slider)
         slider_row.addWidget(self.slider)
         layout.addLayout(slider_row)
 
-        # 4. Embedded Matplotlib Figure Canvas
-        self.figure = Figure(figsize=(3.4, 2.7), dpi=90, facecolor="#121217")
+        # 4. Embedded Matplotlib Figure Canvas (Pure White Academic Light)
+        self.figure = Figure(figsize=(3.4, 2.7), dpi=90, facecolor="#ffffff")
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.canvas)
@@ -135,12 +166,45 @@ class InteractiveGraphingWidget(QWidget):
         self.update_plot()
 
     def _update_button_styles(self):
-        active_style = "background-color: #8b5cf6; color: #ffffff; font-weight: 800;"
-        idle_style = "background-color: #1e1e24; color: #94a3b8; font-weight: 600;"
+        active_style = """
+            QPushButton {
+                background-color: #2563eb;
+                color: #ffffff;
+                font-size: 10px;
+                font-weight: 600;
+                border: 1px solid #2563eb;
+                border-radius: 4px;
+                padding: 2px 6px;
+            }
+        """
+        idle_style = """
+            QPushButton {
+                background-color: #f8fafc;
+                color: #475569;
+                font-size: 10px;
+                font-weight: 500;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+                padding: 2px 6px;
+            }
+            QPushButton:hover {
+                background-color: #f1f5f9;
+                color: #0f172a;
+            }
+        """
 
         self.btn_2d.setStyleSheet(active_style if self.mode == "2d" else idle_style)
         self.btn_3d.setStyleSheet(active_style if self.mode == "3d" else idle_style)
         self.btn_comp.setStyleSheet(active_style if self.mode == "complex" else idle_style)
+
+        # Remix icons instead of emojis
+        col_2d = "#ffffff" if self.mode == "2d" else "#475569"
+        col_3d = "#ffffff" if self.mode == "3d" else "#475569"
+        col_comp = "#ffffff" if self.mode == "complex" else "#475569"
+
+        self.btn_2d.setIcon(qta.icon("ri.line-chart-line", color=col_2d))
+        self.btn_3d.setIcon(qta.icon("ri.shape-line", color=col_3d))
+        self.btn_comp.setIcon(qta.icon("ri.contrast-drop-line", color=col_comp))
 
         if self.mode == "2d":
             self.inp_formula.setText(self.expr_2d)
@@ -208,8 +272,8 @@ class InteractiveGraphingWidget(QWidget):
         try:
             if self.mode == "2d":
                 ax = self.figure.add_subplot(111)
-                ax.set_facecolor("#0e0e12")
-                self.figure.patch.set_facecolor("#121217")
+                ax.set_facecolor("#ffffff")
+                self.figure.patch.set_facecolor("#ffffff")
 
                 x = np.linspace(-8, 8, 400)
                 scope = {
@@ -226,20 +290,20 @@ class InteractiveGraphingWidget(QWidget):
                 y_clean = np.copy(y)
                 y_clean[np.abs(y_clean) > 40] = np.nan
 
-                ax.axhline(0, color="#27272a", linewidth=0.8)
-                ax.axvline(0, color="#27272a", linewidth=0.8)
-                ax.grid(True, color="#27272a", linestyle="--", linewidth=0.5, alpha=0.6)
-                ax.plot(x, y_clean, color="#38bdf8", linewidth=2.0)
+                ax.axhline(0, color="#94a3b8", linewidth=0.8)
+                ax.axvline(0, color="#94a3b8", linewidth=0.8)
+                ax.grid(True, color="#e2e8f0", linestyle="--", linewidth=0.6, alpha=0.8)
+                ax.plot(x, y_clean, color="#2563eb", linewidth=2.0)
                 ax.set_xlim(-8, 8)
                 ax.set_ylim(-5, 5)
-                ax.tick_params(colors="#71717a", labelsize=7)
+                ax.tick_params(colors="#64748b", labelsize=7)
                 for spine in ax.spines.values():
-                    spine.set_color("#27272a")
+                    spine.set_color("#cbd5e1")
 
             elif self.mode == "3d":
                 ax = self.figure.add_subplot(111, projection="3d")
-                ax.set_facecolor("#0e0e12")
-                self.figure.patch.set_facecolor("#121217")
+                ax.set_facecolor("#ffffff")
+                self.figure.patch.set_facecolor("#ffffff")
 
                 x = np.linspace(-3, 3, 40)
                 y = np.linspace(-3, 3, 40)
@@ -260,12 +324,16 @@ class InteractiveGraphingWidget(QWidget):
                 ax.xaxis.pane.fill = False
                 ax.yaxis.pane.fill = False
                 ax.zaxis.pane.fill = False
-                ax.tick_params(colors="#71717a", labelsize=6)
+                ax.xaxis.pane.set_edgecolor("#e2e8f0")
+                ax.yaxis.pane.set_edgecolor("#e2e8f0")
+                ax.zaxis.pane.set_edgecolor("#e2e8f0")
+                ax.tick_params(colors="#64748b", labelsize=6)
+                ax.grid(color="#e2e8f0", linestyle=":")
 
             else: # complex
                 ax = self.figure.add_subplot(111)
-                ax.set_facecolor("#0e0e12")
-                self.figure.patch.set_facecolor("#121217")
+                ax.set_facecolor("#ffffff")
+                self.figure.patch.set_facecolor("#ffffff")
 
                 res = 120
                 x = np.linspace(-2.5, 2.5, res)
@@ -291,17 +359,19 @@ class InteractiveGraphingWidget(QWidget):
                 RGB = mcolors.hsv_to_rgb(HSV)
 
                 ax.imshow(RGB, extent=[-2.5, 2.5, -2.5, 2.5], origin="lower")
-                ax.axhline(0, color="#ffffff", linewidth=0.5, alpha=0.5)
-                ax.axvline(0, color="#ffffff", linewidth=0.5, alpha=0.5)
-                ax.tick_params(colors="#71717a", labelsize=6)
+                ax.axhline(0, color="#ffffff", linewidth=0.5, alpha=0.6)
+                ax.axvline(0, color="#ffffff", linewidth=0.5, alpha=0.6)
+                ax.tick_params(colors="#64748b", labelsize=6)
                 for spine in ax.spines.values():
-                    spine.set_color("#27272a")
+                    spine.set_color("#cbd5e1")
 
             self.figure.tight_layout(pad=1.0)
 
         except Exception as err:
             ax = self.figure.add_subplot(111)
-            ax.text(0.5, 0.5, f"Syntax Error:\n{err}", color="#f87171", fontsize=8, ha="center", va="center")
+            ax.set_facecolor("#ffffff")
+            self.figure.patch.set_facecolor("#ffffff")
+            ax.text(0.5, 0.5, f"Syntax Error:\n{err}", color="#dc2626", fontsize=8, ha="center", va="center")
 
         self.canvas.draw_idle()
 

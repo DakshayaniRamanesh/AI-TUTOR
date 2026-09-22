@@ -35,6 +35,7 @@ from .world_clock_widget import WorldClockComparisonWidget, parse_timezones_from
 from .procedural_sim_widget import ProceduralSimulationWidget
 from .graph_widget import InteractiveGraphingWidget
 from ...kestrel_theme import MONO_FONT
+import qtawesome as qta
 
 
 TIMEZONE_PATTERNS = [
@@ -310,7 +311,8 @@ class DynamicWidgetPlaceholder(QWidget):
         self.setFixedSize(280, 115)
         self.setStyleSheet("""
             QWidget {
-                background: #18181b;
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
                 border-radius: 8px;
             }
         """)
@@ -318,13 +320,20 @@ class DynamicWidgetPlaceholder(QWidget):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(6)
 
-        header_lbl = QLabel("⚡ Synthesizing Interactive Widget...", self)
-        header_lbl.setStyleSheet(f"font-weight: 700; font-size: 12px; color: #a855f7; font-family: {MONO_FONT};")
-        layout.addWidget(header_lbl)
+        hdr_row = QHBoxLayout()
+        icon_lbl = QLabel(self)
+        icon_lbl.setPixmap(qta.icon("ri.sparkling-line", color="#2563eb").pixmap(14, 14))
+        hdr_row.addWidget(icon_lbl)
+
+        header_lbl = QLabel("Synthesizing Interactive Widget...", self)
+        header_lbl.setStyleSheet(f"font-weight: 700; font-size: 11px; color: #0f172a; font-family: {MONO_FONT};")
+        hdr_row.addWidget(header_lbl)
+        hdr_row.addStretch(1)
+        layout.addLayout(hdr_row)
 
         clean_p = prompt[:38] + "..." if len(prompt) > 38 else prompt
         prompt_lbl = QLabel(f"\"{clean_p}\"", self)
-        prompt_lbl.setStyleSheet("font-size: 11px; color: #a1a1aa; font-style: italic;")
+        prompt_lbl.setStyleSheet("font-size: 11px; color: #64748b; font-style: italic;")
         prompt_lbl.setWordWrap(True)
         layout.addWidget(prompt_lbl)
 
@@ -335,12 +344,12 @@ class DynamicWidgetPlaceholder(QWidget):
         self.pbar.setTextVisible(False)
         self.pbar.setStyleSheet("""
             QProgressBar {
-                background: #27272a;
-                border: none;
+                background: #f1f5f9;
+                border: 1px solid #e2e8f0;
                 border-radius: 2px;
             }
             QProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #8b5cf6, stop:1 #ec4899);
+                background: #2563eb;
                 border-radius: 2px;
             }
         """)
@@ -350,26 +359,27 @@ class DynamicWidgetPlaceholder(QWidget):
 # ── Rich Generative Fallback Widgets ───────────────────────────────────────────
 
 class ReactionSpeedWidget(QWidget):
-    """Interactive reaction time speed tester."""
+    """Interactive reaction time speed tester in clean academic light theme."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(280, 240)
-        self.state = "idle" # idle, waiting, ready, result
+        self.setStyleSheet("background-color: #ffffff;")
+        self.state = "idle"
         self.start_time = 0.0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        self.btn = QPushButton("⚡ Click to Start Test", self)
+        self.btn = QPushButton("Click to Begin Reflex Test", self)
         self.btn.setFixedHeight(140)
         self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn.clicked.connect(self._on_btn_clicked)
         layout.addWidget(self.btn)
 
-        self.status_lbl = QLabel("Test your reflexes! Click Start.", self)
+        self.status_lbl = QLabel("Test your visual response time. Click Start.", self)
         self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_lbl.setStyleSheet(f"font-size: 11px; color: #94a3b8; font-family: {MONO_FONT};")
+        self.status_lbl.setStyleSheet(f"font-size: 11px; color: #64748b; font-family: {MONO_FONT};")
         layout.addWidget(self.status_lbl)
 
         self.timer = QTimer(self)
@@ -380,86 +390,92 @@ class ReactionSpeedWidget(QWidget):
 
     def _set_idle_style(self):
         self.state = "idle"
-        self.btn.setText("⚡ Click to Start")
+        self.btn.setText("Click to Begin Test")
+        self.btn.setIcon(qta.icon("ri.play-line", color="#ffffff"))
         self.btn.setStyleSheet("""
             QPushButton {
-                background-color: #3b82f6;
+                background-color: #2563eb;
                 color: #ffffff;
-                font-weight: 700;
-                font-size: 15px;
-                border-radius: 8px;
+                font-weight: 600;
+                font-size: 14px;
+                border-radius: 6px;
             }
-            QPushButton:hover { background-color: #2563eb; }
+            QPushButton:hover { background-color: #1d4ed8; }
         """)
 
     def _on_btn_clicked(self):
         if self.state == "idle":
             self.state = "waiting"
-            self.btn.setText("⏳ Wait for GREEN...")
+            self.btn.setText("Wait for Green Signal...")
+            self.btn.setIcon(qta.icon("ri.time-line", color="#ffffff"))
             self.btn.setStyleSheet("""
                 QPushButton {
                     background-color: #dc2626;
                     color: #ffffff;
-                    font-weight: 700;
-                    font-size: 14px;
-                    border-radius: 8px;
+                    font-weight: 600;
+                    font-size: 13px;
+                    border-radius: 6px;
                 }
             """)
-            self.status_lbl.setText("Do not click yet! Wait for green...")
+            self.status_lbl.setText("Hold! Do not click yet...")
             delay_ms = random.randint(1400, 3800)
             self.timer.start(delay_ms)
 
         elif self.state == "waiting":
             self.timer.stop()
             self.state = "early"
-            self.btn.setText("⚠️ Too Early!")
-            self.btn.setStyleSheet("QPushButton { background: #b91c1c; color: #fff; font-weight: 700; font-size: 14px; border-radius: 8px; }")
-            self.status_lbl.setText("Clicked before green! Click to retry.")
+            self.btn.setText("Premature Click!")
+            self.btn.setIcon(qta.icon("ri.error-warning-line", color="#ffffff"))
+            self.btn.setStyleSheet("QPushButton { background: #b91c1c; color: #fff; font-weight: 600; font-size: 13px; border-radius: 6px; }")
+            self.status_lbl.setText("Triggered too early. Click to retry.")
             self.state = "idle"
 
         elif self.state == "ready":
             elapsed_ms = int((time.time() - self.start_time) * 1000)
             self.state = "result"
-            rank = "⚡ Godlike" if elapsed_ms < 200 else ("🐆 Fast" if elapsed_ms < 280 else "🐢 Average")
-            self.btn.setText(f"🎉 {elapsed_ms} ms!\n{rank}")
+            rank = "Exceptional" if elapsed_ms < 200 else ("Fast" if elapsed_ms < 280 else "Standard")
+            self.btn.setText(f"{elapsed_ms} ms\n({rank})")
+            self.btn.setIcon(qta.icon("ri.check-line", color="#ffffff"))
             self.btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #8b5cf6;
+                    background-color: #0f172a;
                     color: #ffffff;
                     font-weight: 700;
                     font-size: 16px;
-                    border-radius: 8px;
+                    border-radius: 6px;
                 }
             """)
-            self.status_lbl.setText(f"Your reaction: {elapsed_ms}ms. Click to retry.")
+            self.status_lbl.setText(f"Recorded latency: {elapsed_ms} ms. Click to repeat.")
             self.state = "idle"
 
     def _on_green_flash(self):
         self.state = "ready"
         self.start_time = time.time()
-        self.btn.setText("💥 CLICK NOW!")
+        self.btn.setText("TRIGGER NOW!")
+        self.btn.setIcon(qta.icon("ri.flashlight-line", color="#ffffff"))
         self.btn.setStyleSheet("""
             QPushButton {
-                background-color: #10b981;
+                background-color: #059669;
                 color: #ffffff;
-                font-weight: 900;
-                font-size: 18px;
-                border-radius: 8px;
+                font-weight: 800;
+                font-size: 16px;
+                border-radius: 6px;
             }
         """)
 
 
 class MemoryMatchWidget(QWidget):
-    """Interactive 4x4 card matching memory mini-game."""
+    """Interactive 4x4 card matching memory mini-game in academic light theme."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(280, 270)
+        self.setStyleSheet("background-color: #ffffff;")
         self.moves = 0
         self.matches = 0
         self.first_card = None
         self.second_card = None
 
-        symbols = ["🍎", "🍌", "🍇", "🍓", "🥑", "🍕", "🚀", "⭐"] * 2
+        symbols = ["α", "β", "γ", "δ", "θ", "λ", "π", "ω"] * 2
         random.shuffle(symbols)
         self.cards_symbols = symbols
 
@@ -472,16 +488,19 @@ class MemoryMatchWidget(QWidget):
         self.buttons = []
 
         for i in range(16):
-            btn = QPushButton("❓", self)
+            btn = QPushButton("·", self)
             btn.setFixedSize(58, 48)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #27272a;
-                    color: #e4e4e7;
+                    background-color: #f8fafc;
+                    color: #94a3b8;
                     font-size: 16px;
+                    font-weight: 700;
+                    border: 1px solid #cbd5e1;
                     border-radius: 6px;
                 }
-                QPushButton:hover { background-color: #3f3f46; }
+                QPushButton:hover { background-color: #f1f5f9; color: #0f172a; }
             """)
             btn.clicked.connect(lambda _, idx=i: self._on_card_clicked(idx))
             grid.addWidget(btn, i // 4, i % 4)
@@ -491,18 +510,18 @@ class MemoryMatchWidget(QWidget):
 
         self.info_lbl = QLabel("Matches: 0/8 | Moves: 0", self)
         self.info_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.info_lbl.setStyleSheet(f"font-size: 11px; color: #a1a1aa; font-family: {MONO_FONT};")
+        self.info_lbl.setStyleSheet(f"font-size: 11px; color: #64748b; font-family: {MONO_FONT};")
         layout.addWidget(self.info_lbl)
 
     def _on_card_clicked(self, idx: int):
         if self.first_card is not None and self.second_card is not None:
             return
         btn = self.buttons[idx]
-        if btn.text() != "❓":
+        if btn.text() != "·":
             return
 
         btn.setText(self.cards_symbols[idx])
-        btn.setStyleSheet("QPushButton { background-color: #8b5cf6; color: #fff; font-size: 16px; border-radius: 6px; }")
+        btn.setStyleSheet("QPushButton { background-color: #2563eb; color: #ffffff; font-size: 16px; font-weight: 700; border-radius: 6px; }")
 
         if self.first_card is None:
             self.first_card = idx
@@ -515,58 +534,76 @@ class MemoryMatchWidget(QWidget):
                 self.second_card = None
                 self.info_lbl.setText(f"Matches: {self.matches}/8 | Moves: {self.moves}")
                 if self.matches == 8:
-                    self.info_lbl.setText(f"🏆 Victory in {self.moves} moves!")
+                    self.info_lbl.setText(f"Completed in {self.moves} moves!")
             else:
                 QTimer.singleShot(600, self._reset_unmatched)
 
     def _reset_unmatched(self):
         if self.first_card is not None and self.second_card is not None:
-            self.buttons[self.first_card].setText("❓")
-            self.buttons[self.first_card].setStyleSheet("QPushButton { background: #27272a; color: #e4e4e7; font-size: 16px; border-radius: 6px; }")
-            self.buttons[self.second_card].setText("❓")
-            self.buttons[self.second_card].setStyleSheet("QPushButton { background: #27272a; color: #e4e4e7; font-size: 16px; border-radius: 6px; }")
+            self.buttons[self.first_card].setText("·")
+            self.buttons[self.first_card].setStyleSheet("QPushButton { background-color: #f8fafc; color: #94a3b8; font-size: 16px; font-weight: 700; border: 1px solid #cbd5e1; border-radius: 6px; }")
+            self.buttons[self.second_card].setText("·")
+            self.buttons[self.second_card].setStyleSheet("QPushButton { background-color: #f8fafc; color: #94a3b8; font-size: 16px; font-weight: 700; border: 1px solid #cbd5e1; border-radius: 6px; }")
             self.first_card = None
             self.second_card = None
 
 
 class ColorPaletteWidget(QWidget):
-    """Interactive RGB & HEX color mixer tool."""
+    """Interactive RGB & HEX color mixer tool in academic light theme."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(280, 260)
+        self.setStyleSheet("background-color: #ffffff;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
         self.preview = QFrame(self)
         self.preview.setFixedHeight(75)
-        self.preview.setStyleSheet("border-radius: 6px; background-color: #8b5cf6;")
+        self.preview.setStyleSheet("border-radius: 6px; border: 1px solid #cbd5e1; background-color: #2563eb;")
         layout.addWidget(self.preview)
 
-        self.hex_lbl = QLabel("#8B5CF6", self)
+        self.hex_lbl = QLabel("#2563EB", self)
         self.hex_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.hex_lbl.setStyleSheet(f"font-weight: 700; font-size: 14px; color: #f4f4f5; font-family: {MONO_FONT};")
+        self.hex_lbl.setStyleSheet(f"font-weight: 700; font-size: 14px; color: #0f172a; font-family: {MONO_FONT};")
         layout.addWidget(self.hex_lbl)
 
         # Sliders
-        self.r_slider = self._make_slider(139)
-        self.g_slider = self._make_slider(92)
-        self.b_slider = self._make_slider(246)
+        self.r_slider = self._make_slider(37)
+        self.g_slider = self._make_slider(99)
+        self.b_slider = self._make_slider(235)
 
         layout.addLayout(self._make_slider_row("R", self.r_slider))
         layout.addLayout(self._make_slider_row("G", self.g_slider))
         layout.addLayout(self._make_slider_row("B", self.b_slider))
 
-        self.btn_copy = QPushButton("📋 Copy Hex Code", self)
+        self.btn_copy = QPushButton("Copy Hex Code", self)
+        self.btn_copy.setIcon(qta.icon("ri.file-copy-line", color="#0f172a"))
         self.btn_copy.setFixedHeight(28)
+        self.btn_copy.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_copy.clicked.connect(self._copy_hex)
-        self.btn_copy.setStyleSheet("QPushButton { background: #27272a; color: #fff; border-radius: 4px; font-size: 11px; } QPushButton:hover { background: #3f3f46; }")
+        self.btn_copy.setStyleSheet("""
+            QPushButton {
+                background: #f1f5f9;
+                color: #0f172a;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background: #e2e8f0; }
+        """)
         layout.addWidget(self.btn_copy)
 
     def _make_slider(self, val: int):
         s = QSlider(Qt.Orientation.Horizontal, self)
         s.setRange(0, 255)
         s.setValue(val)
+        s.setStyleSheet("""
+            QSlider::groove:horizontal { height: 4px; background: #e2e8f0; border-radius: 2px; }
+            QSlider::sub-page:horizontal { background: #2563eb; border-radius: 2px; }
+            QSlider::handle:horizontal { background: #ffffff; border: 2px solid #2563eb; width: 12px; margin: -4px 0; border-radius: 6px; }
+        """)
         s.valueChanged.connect(self._update_color)
         return s
 
@@ -574,7 +611,7 @@ class ColorPaletteWidget(QWidget):
         row = QHBoxLayout()
         lbl = QLabel(label, self)
         lbl.setFixedWidth(16)
-        lbl.setStyleSheet(f"font-weight: 700; color: #a1a1aa; font-family: {MONO_FONT};")
+        lbl.setStyleSheet(f"font-weight: 700; color: #64748b; font-family: {MONO_FONT};")
         row.addWidget(lbl)
         row.addWidget(slider)
         return row
@@ -583,21 +620,26 @@ class ColorPaletteWidget(QWidget):
         r, g, b = self.r_slider.value(), self.g_slider.value(), self.b_slider.value()
         hex_str = f"#{r:02X}{g:02X}{b:02X}"
         self.hex_lbl.setText(hex_str)
-        self.preview.setStyleSheet(f"border-radius: 6px; background-color: {hex_str};")
+        self.preview.setStyleSheet(f"border-radius: 6px; border: 1px solid #cbd5e1; background-color: {hex_str};")
 
     def _copy_hex(self):
         cb = QApplication.clipboard()
         if cb:
             cb.setText(self.hex_lbl.text())
-            self.btn_copy.setText("✓ Copied!")
-            QTimer.singleShot(1200, lambda: self.btn_copy.setText("📋 Copy Hex Code"))
+            self.btn_copy.setText("Copied!")
+            self.btn_copy.setIcon(qta.icon("ri.check-line", color="#059669"))
+            QTimer.singleShot(1200, lambda: (
+                self.btn_copy.setText("Copy Hex Code"),
+                self.btn_copy.setIcon(qta.icon("ri.file-copy-line", color="#0f172a"))
+            ))
 
 
 class FlashcardQuizWidget(QWidget):
-    """Interactive study flashcards / quiz card widget."""
+    """Interactive study flashcards / quiz card widget in academic light theme."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(280, 250)
+        self.setStyleSheet("background-color: #ffffff;")
         self.idx = 0
         self.is_flipped = False
 
@@ -619,30 +661,59 @@ class FlashcardQuizWidget(QWidget):
         self.card_btn.clicked.connect(self._toggle_flip)
         self.card_btn.setStyleSheet("""
             QPushButton {
-                background-color: #1e1e24;
-                color: #f4f4f5;
+                background-color: #f8fafc;
+                color: #0f172a;
                 font-size: 13px;
                 font-weight: 600;
                 padding: 12px;
-                border: 1px solid #3f3f46;
+                border: 1px solid #cbd5e1;
                 border-radius: 8px;
             }
-            QPushButton:hover { border-color: #8b5cf6; }
+            QPushButton:hover { border-color: #2563eb; background-color: #f1f5f9; }
         """)
         layout.addWidget(self.card_btn)
 
         row = QHBoxLayout()
-        btn_prev = QPushButton("◀ Prev", self)
+        btn_prev = QPushButton(self)
+        btn_prev.setIcon(qta.icon("ri.arrow-left-s-line", color="#334155"))
+        btn_prev.setText("Prev")
+        btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_prev.clicked.connect(self._prev)
-        btn_prev.setStyleSheet("QPushButton { background: #27272a; color: #fff; border-radius: 4px; padding: 6px; }")
-        
+        btn_prev.setStyleSheet("""
+            QPushButton {
+                background: #f1f5f9;
+                color: #334155;
+                font-size: 11px;
+                font-weight: 600;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover { background: #e2e8f0; }
+        """)
+
         self.page_lbl = QLabel(f"1/{len(self.cards)}", self)
         self.page_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.page_lbl.setStyleSheet(f"color: #a1a1aa; font-size: 11px; font-family: {MONO_FONT};")
+        self.page_lbl.setStyleSheet(f"color: #64748b; font-size: 11px; font-family: {MONO_FONT};")
 
-        btn_next = QPushButton("Next ▶", self)
+        btn_next = QPushButton(self)
+        btn_next.setIcon(qta.icon("ri.arrow-right-s-line", color="#334155"))
+        btn_next.setText("Next")
+        btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_next.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         btn_next.clicked.connect(self._next)
-        btn_next.setStyleSheet("QPushButton { background: #27272a; color: #fff; border-radius: 4px; padding: 6px; }")
+        btn_next.setStyleSheet("""
+            QPushButton {
+                background: #f1f5f9;
+                color: #334155;
+                font-size: 11px;
+                font-weight: 600;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover { background: #e2e8f0; }
+        """)
 
         row.addWidget(btn_prev)
         row.addWidget(self.page_lbl)
@@ -653,40 +724,41 @@ class FlashcardQuizWidget(QWidget):
         self.is_flipped = not self.is_flipped
         q, a = self.cards[self.idx]
         if self.is_flipped:
-            self.card_btn.setText(f"💡 Answer:\n\n{a}")
-            self.card_btn.setStyleSheet("QPushButton { background-color: #064e3b; color: #6ee7b7; font-size: 13px; font-weight: 700; border-radius: 8px; padding: 12px; }")
+            self.card_btn.setText(f"Answer:\n\n{a}")
+            self.card_btn.setStyleSheet("QPushButton { background-color: #eff6ff; color: #1e3a8a; border: 1px solid #bfdbfe; font-size: 13px; font-weight: 600; border-radius: 8px; padding: 12px; }")
         else:
             self.card_btn.setText(q)
-            self.card_btn.setStyleSheet("QPushButton { background-color: #1e1e24; color: #f4f4f5; font-size: 13px; font-weight: 600; border: 1px solid #3f3f46; border-radius: 8px; padding: 12px; }")
+            self.card_btn.setStyleSheet("QPushButton { background-color: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; font-size: 13px; font-weight: 600; border-radius: 8px; padding: 12px; }")
 
     def _next(self):
         self.idx = (self.idx + 1) % len(self.cards)
         self.is_flipped = False
         self.card_btn.setText(self.cards[self.idx][0])
-        self.card_btn.setStyleSheet("QPushButton { background-color: #1e1e24; color: #f4f4f5; font-size: 13px; font-weight: 600; border: 1px solid #3f3f46; border-radius: 8px; padding: 12px; }")
+        self.card_btn.setStyleSheet("QPushButton { background-color: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; font-size: 13px; font-weight: 600; border-radius: 8px; padding: 12px; }")
         self.page_lbl.setText(f"{self.idx + 1}/{len(self.cards)}")
 
     def _prev(self):
         self.idx = (self.idx - 1) % len(self.cards)
         self.is_flipped = False
         self.card_btn.setText(self.cards[self.idx][0])
-        self.card_btn.setStyleSheet("QPushButton { background-color: #1e1e24; color: #f4f4f5; font-size: 13px; font-weight: 600; border: 1px solid #3f3f46; border-radius: 8px; padding: 12px; }")
+        self.card_btn.setStyleSheet("QPushButton { background-color: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; font-size: 13px; font-weight: 600; border-radius: 8px; padding: 12px; }")
         self.page_lbl.setText(f"{self.idx + 1}/{len(self.cards)}")
 
 
 class ToneSynthWidget(QWidget):
-    """Interactive mini piano / musical notes keyboard."""
+    """Interactive mini audio synthesizer / musical notes in academic light theme."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(280, 220)
+        self.setStyleSheet("background-color: #ffffff;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        self.display_lbl = QLabel("🎵 Play a note!", self)
+        self.display_lbl = QLabel("Tone Synthesizer", self)
         self.display_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.display_lbl.setFixedHeight(50)
-        self.display_lbl.setStyleSheet(f"font-size: 16px; font-weight: 700; color: #a855f7; background: #18181b; border-radius: 6px; font-family: {MONO_FONT};")
+        self.display_lbl.setFixedHeight(46)
+        self.display_lbl.setStyleSheet(f"font-size: 13px; font-weight: 700; color: #0f172a; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-family: {MONO_FONT};")
         layout.addWidget(self.display_lbl)
 
         notes = [("C", "261 Hz"), ("D", "293 Hz"), ("E", "329 Hz"), ("F", "349 Hz"),
@@ -700,14 +772,15 @@ class ToneSynthWidget(QWidget):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #27272a;
-                    color: #ffffff;
+                    background-color: #f8fafc;
+                    color: #0f172a;
                     font-weight: 700;
                     font-size: 13px;
+                    border: 1px solid #cbd5e1;
                     border-radius: 4px;
                 }
-                QPushButton:hover { background-color: #8b5cf6; }
-                QPushButton:pressed { background-color: #ec4899; }
+                QPushButton:hover { background-color: #e2e8f0; }
+                QPushButton:pressed { background-color: #2563eb; color: #ffffff; }
             """)
             btn.clicked.connect(lambda _, n=note, f=freq: self._play_note(n, f))
             row1.addWidget(btn)
@@ -715,8 +788,7 @@ class ToneSynthWidget(QWidget):
         layout.addLayout(row1)
 
     def _play_note(self, note: str, freq: str):
-        self.display_lbl.setText(f"🎶 Note {note}  ({freq})")
-        # Try OS beep if on Windows
+        self.display_lbl.setText(f"Pitch: {note} ({freq})")
         try:
             import winsound
             f_num = int(freq.split()[0])
@@ -726,13 +798,14 @@ class ToneSynthWidget(QWidget):
 
 
 class MiniSketchWidget(QWidget):
-    """Interactive mini scratchpad / whiteboard drawing tool."""
+    """Interactive mini scratchpad / whiteboard drawing tool in academic light theme."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(280, 250)
+        self.setStyleSheet("background-color: #ffffff;")
         self.drawing = False
         self.last_point = QPoint()
-        self.color = QColor("#8b5cf6")
+        self.color = QColor("#2563eb")
         self.lines = []
 
         layout = QVBoxLayout(self)
@@ -741,23 +814,37 @@ class MiniSketchWidget(QWidget):
 
         # Canvas surface
         self.canvas_area = QFrame(self)
-        self.canvas_area.setStyleSheet("background: #0f172a; border-radius: 6px;")
+        self.canvas_area.setStyleSheet("background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px;")
         layout.addWidget(self.canvas_area, stretch=1)
 
         # Toolbar
         row = QHBoxLayout()
-        colors = [("#8b5cf6", "Purple"), ("#10b981", "Green"), ("#ef4444", "Red"), ("#f59e0b", "Gold")]
+        colors = [("#2563eb", "Blue"), ("#059669", "Green"), ("#dc2626", "Red"), ("#0f172a", "Black")]
         for hex_val, name in colors:
             btn = QPushButton(self)
-            btn.setFixedSize(22, 22)
-            btn.setStyleSheet(f"background-color: {hex_val}; border-radius: 11px; border: 1px solid #fff;")
+            btn.setFixedSize(20, 20)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(f"background-color: {hex_val}; border-radius: 10px; border: 1px solid #cbd5e1;")
             btn.clicked.connect(lambda _, c=hex_val: setattr(self, "color", QColor(c)))
             row.addWidget(btn)
 
-        btn_clear = QPushButton("🗑️ Clear", self)
+        btn_clear = QPushButton("Clear", self)
+        btn_clear.setIcon(qta.icon("ri.delete-bin-line", color="#334155"))
         btn_clear.setFixedHeight(24)
+        btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_clear.clicked.connect(self._clear)
-        btn_clear.setStyleSheet("QPushButton { background: #27272a; color: #fff; font-size: 11px; border-radius: 4px; padding: 2px 8px; }")
+        btn_clear.setStyleSheet("""
+            QPushButton {
+                background: #f1f5f9;
+                color: #334155;
+                font-size: 11px;
+                font-weight: 600;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+                padding: 2px 8px;
+            }
+            QPushButton:hover { background: #e2e8f0; }
+        """)
         row.addWidget(btn_clear)
         layout.addLayout(row)
 
@@ -785,15 +872,16 @@ class MiniSketchWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         for p1, p2, col in self.lines:
-            painter.setPen(QPen(col, 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.setPen(QPen(col, 2.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawLine(p1, p2)
 
 
 class QuickTasksWidget(QWidget):
-    """Interactive checklist / task tracker widget."""
+    """Interactive checklist / task tracker widget in academic light theme."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(280, 260)
+        self.setStyleSheet("background-color: #ffffff;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(6)
@@ -801,15 +889,17 @@ class QuickTasksWidget(QWidget):
         # Input row
         row = QHBoxLayout()
         self.inp = QLineEdit(self)
-        self.inp.setPlaceholderText("New task...")
-        self.inp.setStyleSheet("QLineEdit { background: #1e1e24; color: #fff; border: 1px solid #3f3f46; border-radius: 4px; padding: 4px 8px; }")
+        self.inp.setPlaceholderText("New task item...")
+        self.inp.setStyleSheet("QLineEdit { background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 8px; font-size: 11px; }")
         self.inp.returnPressed.connect(self._add_task)
         row.addWidget(self.inp)
 
-        btn_add = QPushButton("➕", self)
+        btn_add = QPushButton(self)
+        btn_add.setIcon(qta.icon("ri.add-line", color="#ffffff"))
         btn_add.setFixedSize(30, 28)
+        btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_add.clicked.connect(self._add_task)
-        btn_add.setStyleSheet("QPushButton { background: #8b5cf6; color: #fff; border-radius: 4px; font-weight: 700; }")
+        btn_add.setStyleSheet("QPushButton { background: #0f172a; color: #ffffff; border-radius: 4px; } QPushButton:hover { background: #1e293b; }")
         row.addWidget(btn_add)
         layout.addLayout(row)
 
@@ -838,9 +928,9 @@ class QuickTasksWidget(QWidget):
     def _add_item_ui(self, text: str):
         cb = QCheckBox(text, self.task_container)
         cb.setStyleSheet("""
-            QCheckBox { color: #e4e4e7; font-size: 12px; }
-            QCheckBox::indicator { width: 15px; height: 15px; border-radius: 3px; border: 1px solid #71717a; }
-            QCheckBox::indicator:checked { background-color: #10b981; }
+            QCheckBox { color: #0f172a; font-size: 11px; }
+            QCheckBox::indicator { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #cbd5e1; background: #f8fafc; }
+            QCheckBox::indicator:checked { background-color: #2563eb; border-color: #2563eb; }
         """)
         self.task_layout.insertWidget(self.task_layout.count() - 1, cb)
 
