@@ -4,7 +4,7 @@ Central coordinator managing local hosting, joining remote sessions,
 dispatching canvas events, and tracking session state.
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from .collab_protocol import (

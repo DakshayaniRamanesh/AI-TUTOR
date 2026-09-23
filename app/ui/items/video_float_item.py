@@ -332,7 +332,6 @@ class VideoPlayerWidget(QWidget):
             filename = f"ai_tutor_video_{int(time.time())}.mp4"
         else:
             filename = os.path.basename(self.video_path)
-
         local_path = os.path.join(DOWNLOADS_DIR, filename)
         try:
             if self.video_path.startswith("http"):

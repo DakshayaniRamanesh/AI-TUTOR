@@ -3,10 +3,11 @@ Main Application Window (Apple Freeform Shell Layout)
 Frameless macOS Window Design with Traffic Light Controls, Sidebar (~260px), Top Toolbar, Infinite Canvas, Zoom HUD, Floating Tool Palette, AskBar, Notebooks Panel & PDF Split-Screen Study Mode
 """
 
+from PyQt6.QtCore import QThread
 import os
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QListWidget,
-    QListWidgetItem, QPushButton, QLineEdit, QLabel, QFrame,
+    QListWidgetItem, QPushButton, QLineEdit, QTextEdit, QPlainTextEdit, QLabel, QFrame,
     QSplitter, QStackedWidget, QFileDialog, QInputDialog, QMessageBox,
     QGraphicsDropShadowEffect, QMenu, QComboBox, QTabWidget, QTabBar, QApplication
 )
@@ -854,6 +855,16 @@ class MainWindow(QMainWindow):
         btn_latex.clicked.connect(self._convert_to_latex)
         layout.addWidget(btn_latex)
 
+        btn_video = self._make_toolbar_btn('fa5s.video', " Video", tb, '#10b981', "Generate Video Lesson")
+        btn_video.clicked.connect(self._generate_video_from_canvas)
+        layout.addWidget(btn_video)
+
+        # Developer 1: Check My Work Action
+        self._correction_running = False
+        self._btn_check_work = self._make_toolbar_btn('ri.checkbox-circle-line', "Check Work", tb, '#2563eb', "Check My Work (Spacebar)")
+        self._btn_check_work.clicked.connect(self._on_check_my_work)
+        layout.addWidget(self._btn_check_work)
+
         layout.addWidget(self._make_toolbar_separator(tb))
 
         # Study/Classroom Mode
@@ -972,6 +983,212 @@ class MainWindow(QMainWindow):
             else:
                 self.btn_mode_toggle.setText("Study")
                 self.btn_mode_toggle.setIcon(qta.icon('ri.book-open-line', color=c['text_secondary']))
+
+    def keyPressEvent(self, event):
+        # Developer 1: Allow Spacebar to trigger "Check My Work" when canvas is focused
+        if event.key() == Qt.Key.Key_Space:
+            focus_w = QApplication.focusWidget()
+            if not isinstance(focus_w, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                self._on_check_my_work()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+
+    # ── Developer 1: Work Correction QThread Worker ───────────────────────────
+
+    class _WorkCorrectionWorker(QThread):
+        """
+        Background worker that sends the canvas image to the AI vision backend
+        and emits the structured feedback result. Runs off the main thread so
+        the UI stays completely responsive during the API call.
+        """
+        result_ready = pyqtSignal(dict)
+        error_occurred = pyqtSignal(str)
+
+        def __init__(self, b64_image: str, parent=None, **kwargs):
+            super().__init__(parent)
+            self._b64 = b64_image
+            self._session_id = kwargs.get("session_id")
+            self._hints_given = kwargs.get("hints_given", [])
+
+        def run(self):
+            try:
+                from ..backend.ocr.work_corrector import analyse_student_work
+                result = analyse_student_work(self._b64)
+                self.result_ready.emit(result)
+            except Exception as exc:
+                print(f"[WorkCorrectionWorker] Error: {exc}")
+                self.error_occurred.emit(str(exc))
+
+    # ── Developer 1: Check My Work (Real AI-Powered) ──────────────────────────
+
+    def _on_check_my_work(self):
+        """
+        Captures the canvas, sends it to an AI vision model (Groq/Gemini), and
+        drives the full Socratic feedback chain — laser pointer, ghost chalk,
+        hint bubble, and voice — with real analysis of what the student wrote.
+        """
+        scene = getattr(self, 'scene', None)
+        view = getattr(self, 'view', None)
+        if not scene:
+            return
+
+        # Prevent double-trigger while analysis is in flight
+        if getattr(self, '_correction_running', False):
+            return
+
+        # Switch to canvas view if needed
+        if hasattr(self, 'main_stack') and hasattr(self, '_canvas_wrapper'):
+            self.main_stack.setCurrentWidget(self._canvas_wrapper)
+            self._set_sidebar_active_button("canvas")
+
+        # ── Loading State ──────────────────────────────────────────────────────
+        self._correction_running = True
+        if hasattr(self, '_btn_check_work') and self._btn_check_work:
+            self._btn_check_work.setEnabled(False)
+            self._btn_check_work.setText("Analysing…")
+            try:
+                import qtawesome as _qta
+                self._btn_check_work.setIcon(_qta.icon('ri.loader-4-line', color='#ffffff'))
+            except Exception:
+                pass
+
+        # ── Render canvas to base64 (main thread — Qt graphics must stay on main thread) ──
+        from .penecho_integration import render_canvas_to_b64
+        b64_img = render_canvas_to_b64(scene)
+
+        # ── Handle empty canvas ────────────────────────────────────────────────
+        if not b64_img:
+            self._correction_running = False
+            self._restore_check_work_button()
+            # Show a gentle prompt on the canvas centre
+            center_pos = (
+                view.mapToScene(view.viewport().rect().center())
+                if view else QPointF(200, 150)
+            )
+            empty_rect = QRectF(center_pos.x() - 10, center_pos.y() - 10, 20, 20)
+            scene.show_tutor_feedback(
+                target_rect=empty_rect,
+                pointer_pos=QPointF(center_pos.x() + 40, center_pos.y()),
+                spoken_message="Your canvas is empty. Write out your working and click Check Work again!",
+                citation="",
+                hints=[],
+                mode="verified"
+            )
+            return
+
+        # ── Compute content bounding box before spawning thread ────────────────
+        # (used later to map error_region → QRectF; safe to do on main thread)
+        content_items = [
+            it for it in scene.items()
+            if it.isVisible() and it.zValue() < 900.0
+        ]
+        if content_items:
+            cx_min = min(it.sceneBoundingRect().left() for it in content_items)
+            cy_min = min(it.sceneBoundingRect().top() for it in content_items)
+            cx_max = max(it.sceneBoundingRect().right() for it in content_items)
+            cy_max = max(it.sceneBoundingRect().bottom() for it in content_items)
+            self._content_bounds = QRectF(cx_min, cy_min, cx_max - cx_min, cy_max - cy_min)
+        else:
+            self._content_bounds = QRectF(0, 0, 400, 300)
+
+        # ── Spawn background AI worker ─────────────────────────────────────────
+        import uuid as _uuid
+        session_id = str(_uuid.uuid4())
+        hints_given = getattr(self, '_hints_given_this_session', [])
+        worker = self._WorkCorrectionWorker(
+            b64_img,
+            session_id=session_id,
+            hints_given=hints_given,
+            parent=self,
+        )
+        self._active_correction_worker = worker  # keep reference to prevent GC
+
+        def _on_result(feedback: dict):
+            self._correction_running = False
+            self._restore_check_work_button()
+            self._apply_correction_feedback(feedback, scene, view)
+
+        def _on_error(msg: str):
+            self._correction_running = False
+            self._restore_check_work_button()
+            print(f"[CheckWork] AI error: {msg}")
+            # Show a non-intrusive status message
+            if hasattr(self, 'lbl_save_status'):
+                self.lbl_save_status.setText("AI tutor unavailable — check API keys")
+                self.lbl_save_status.setVisible(True)
+                QTimer.singleShot(4000, lambda: self.lbl_save_status.setVisible(False))
+
+        worker.result_ready.connect(_on_result)
+        worker.error_occurred.connect(_on_error)
+        worker.start()
+
+    def _restore_check_work_button(self):
+        """Restores the Check Work button to its normal state."""
+        if hasattr(self, '_btn_check_work') and self._btn_check_work:
+            self._btn_check_work.setEnabled(True)
+            self._btn_check_work.setText("Check Work")
+            try:
+                import qtawesome as _qta
+                self._btn_check_work.setIcon(_qta.icon('ri.checkbox-circle-line', color='#ffffff'))
+            except Exception:
+                pass
+
+    def _apply_correction_feedback(self, feedback: dict, scene, view):
+        """
+        Maps the AI feedback dict to canvas coordinates and drives the
+        visual/audio Socratic feedback chain.
+        """
+        mode = feedback.get("mode", "error")
+        error_region = feedback.get("error_region", "full")
+        spoken_message = feedback.get("spoken_message", "")
+        hints = feedback.get("hints", [])
+
+        # ── Map error_region → QRectF on canvas ───────────────────────────────
+        bounds = getattr(self, '_content_bounds', QRectF(0, 0, 400, 300))
+        total_h = bounds.height()
+        third_h = total_h / 3.0
+
+        region_map = {
+            "top_third":    QRectF(bounds.left(), bounds.top(),            bounds.width(), third_h),
+            "middle":       QRectF(bounds.left(), bounds.top() + third_h,  bounds.width(), third_h),
+            "bottom_third": QRectF(bounds.left(), bounds.top() + third_h * 2, bounds.width(), third_h),
+            "full":         QRectF(bounds),
+        }
+        target_rect = region_map.get(error_region, QRectF(bounds))
+
+        # Add a small vertical margin so the chalk oval doesn't clip item borders
+        target_rect = target_rect.adjusted(4, 4, -4, -4)
+        if target_rect.width() < 20:
+            target_rect.setWidth(20)
+        if target_rect.height() < 20:
+            target_rect.setHeight(20)
+
+        # Laser pointer appears to the right of the error region
+        pointer_pos = QPointF(target_rect.right() + 24, target_rect.center().y())
+
+        # Ensure the error region is visible in the viewport
+        if view:
+            view.ensureVisible(target_rect.adjusted(-80, -80, 80, 80))
+
+        # ── Drive the full visual + audio feedback layer ───────────────────────
+        scene.show_tutor_feedback(
+            target_rect=target_rect,
+            pointer_pos=pointer_pos,
+            spoken_message=spoken_message,
+            citation=f"{feedback.get('subject', '')} — {feedback.get('method', '')}".strip(" —"),
+            hints=hints if hints else None,
+            mode=mode
+        )
+
+        # Log analysis result for debugging
+        print(
+            f"[CheckWork] Subject: {feedback.get('subject')} | "
+            f"Method: {feedback.get('method')} | "
+            f"Region: {error_region} | Mode: {mode}\n"
+            f"  Error: {feedback.get('error_description', '')}"
+        )
 
     def _create_hud_overlay(self) -> QWidget:
         c = ThemeManager.instance().get_colors()
@@ -1259,6 +1476,10 @@ class MainWindow(QMainWindow):
             self._add_table()
         elif action == "latex":
             self._convert_to_latex()
+        elif action == "video":
+            self._generate_video_from_canvas()
+        elif action == "check_work":
+            self._on_check_my_work()
         elif action == "more":
             self._show_overflow_menu()
             
@@ -1930,10 +2151,17 @@ class MainWindow(QMainWindow):
 
     def _on_generate_video_requested(self, selected_text: str):
         job_id = request_video_generation(selected_text)
-        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
-        v_item = VideoFloatItem(job_id=job_id, title=f"Video: {selected_text[:18]}...", video_url_or_path="")
-        v_item.setPos(center_pos.x() + 300, center_pos.y())
-        self.scene.addItem(v_item)
+        
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.start_task("Generating Video...")
+            
+        from .items.video_float_item import VideoPlayerWidget
+        player_widget = VideoPlayerWidget(job_id=job_id, title=f"Video: {selected_text[:18]}...", parent=self.canvas_tabs)
+        if hasattr(player_widget, 'worker') and hasattr(self, 'speedometer_widget'):
+            player_widget.worker.status_updated.connect(lambda job_id, stage, prog: self.speedometer_widget.update_progress(stage, prog))
+            
+        idx = self.canvas_tabs.addTab(player_widget, f"🎬 Video: {selected_text[:10]}...")
+        self.canvas_tabs.setCurrentIndex(idx)
 
     def _on_ink_written_detected(self, text: str, pos):
         clean_t = text.strip()
@@ -2045,6 +2273,14 @@ class MainWindow(QMainWindow):
             raw_pos = self.view.last_mouse_scene_pos
         else:
             raw_pos = self.view.mapToScene(self.view.viewport().rect().center())
+
+        # 0. Check for "Check My Work" / Socratic Tutor Feedback Request
+        q_lower = q.lower()
+        if any(k in q_lower for k in ["check my work", "check work", "check math", "check step", "check my step", "verify work", "verify step", "is this right", "is this correct", "look at my work", "check answer"]):
+            self._on_check_my_work()
+            if hasattr(self, "magic_orb"):
+                self.magic_orb.set_state("idle")
+            return
 
         # 1. Check for Instant Built-In Interactive Widget Preset (Clock, Flappy Bird, Snake, Calculator, etc.)
         from .items.interactive_widgets.dynamic_builder import (
@@ -2288,6 +2524,270 @@ class MainWindow(QMainWindow):
         self.last_compiled_pdf_path = pdf_path
         if hasattr(self, 'btn_view_pdf'):
             self.btn_view_pdf.setVisible(True)
+
+    def _on_pdf_reply_clicked(self, selected_text: str, page_num: int, surrounding_context: str):
+        if hasattr(self, 'ask_bar'):
+            self.ask_bar.set_selection_context(selected_text, page_num, surrounding_context)
+
+    def _on_latex_video_requested(self, latex_snippet: str):
+        prompt_text = f"Explain this mathematical formula or derivation:\n{latex_snippet}"
+        selection_payload = {
+            "board_id": getattr(self.current_board, "board_id", "canvas") if getattr(self, "current_board", None) else "canvas",
+            "selected_items": [],
+            "nearby_items": [],
+            "user_instruction": prompt_text,
+            "latex_snippet": latex_snippet,
+        }
+        self._start_video_generation(prompt_text, selection_payload)
+
+    def _generate_video_from_canvas(self):
+        """Show a dialog asking the user how to select the whiteboard content for video generation."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+        from PyQt6.QtCore import Qt
+
+        # If user chose lasso mode previously, this second click finishes the selection
+        if getattr(self, '_pending_lasso_video', False):
+            self._pending_lasso_video = False
+            # Use the items captured by the last lasso draw (stored on the scene)
+            lasso_items = getattr(self.scene, '_last_lasso_items', None)
+            # Fallback: try Qt selectedItems() in case items were selected another way
+            if not lasso_items:
+                lasso_items = self.scene.selectedItems()
+            if not lasso_items:
+                QMessageBox.information(self, "No Selection",
+                    "No items were found in the lasso area.\n"
+                    "Please draw a lasso around some content and try again.")
+                return
+            selection_payload, prompt_text = self._serialize_items_to_selection(lasso_items)
+            # Capture raster of just the lasso region
+            try:
+                from PyQt6.QtCore import QRectF
+                rect = lasso_items[0].sceneBoundingRect()
+                for it in lasso_items[1:]:
+                    rect = rect.united(it.sceneBoundingRect())
+                rect = rect.adjusted(-16, -16, 16, 16)
+                size = rect.size().toSize()
+                pixmap = QPixmap(size)
+                pixmap.fill(Qt.GlobalColor.white)
+                painter = QPainter(pixmap)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                self.scene.render(painter, target=QRectF(pixmap.rect()), source=rect)
+                painter.end()
+                buf = QBuffer()
+                buf.open(QIODevice.OpenModeFlag.WriteOnly)
+                pixmap.save(buf, "PNG")
+                selection_payload["image_b64"] = "data:image/png;base64," + buf.data().toBase64().data().decode()
+            except Exception as e:
+                print(f"[VideoGen] Could not capture lasso raster: {e}")
+            self._start_video_generation(prompt_text, selection_payload)
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Generate Video Lesson")
+        dialog.setModal(True)
+        dialog.setFixedWidth(380)
+        dialog.setStyleSheet("""
+            QDialog {
+                background: #ffffff;
+                border-radius: 12px;
+            }
+            QLabel#title_label {
+                font-size: 15px;
+                font-weight: 700;
+                color: #0f172a;
+            }
+            QLabel#sub_label {
+                font-size: 12px;
+                color: #64748b;
+            }
+            QPushButton {
+                border-radius: 8px;
+                padding: 12px 16px;
+                font-size: 13px;
+                font-weight: 600;
+                text-align: left;
+            }
+            QPushButton#btn_board {
+                background: #f0fdf4;
+                border: 2px solid #86efac;
+                color: #166534;
+            }
+            QPushButton#btn_board:hover { background: #dcfce7; border-color: #4ade80; }
+            QPushButton#btn_lasso {
+                background: #eff6ff;
+                border: 2px solid #93c5fd;
+                color: #1d4ed8;
+            }
+            QPushButton#btn_lasso:hover { background: #dbeafe; border-color: #60a5fa; }
+            QPushButton#btn_cancel {
+                background: transparent;
+                border: 1px solid #e2e8f0;
+                color: #64748b;
+            }
+            QPushButton#btn_cancel:hover { background: #f8fafc; }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 24, 24, 20)
+        layout.setSpacing(12)
+
+        title = QLabel("🎬 Generate Video Lesson", dialog)
+        title.setObjectName("title_label")
+        layout.addWidget(title)
+
+        sub = QLabel("How would you like to select content from the whiteboard?", dialog)
+        sub.setObjectName("sub_label")
+        sub.setWordWrap(True)
+        layout.addWidget(sub)
+
+        layout.addSpacing(4)
+
+        btn_board = QPushButton("🖥️  Entire Board\n         Use all content on the canvas", dialog)
+        btn_board.setObjectName("btn_board")
+        btn_board.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_board)
+
+        btn_lasso = QPushButton("✂️  Lasso Select\n         Draw to select a region", dialog)
+        btn_lasso.setObjectName("btn_lasso")
+        btn_lasso.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_lasso)
+
+        layout.addSpacing(4)
+
+        btn_cancel = QPushButton("Cancel", dialog)
+        btn_cancel.setObjectName("btn_cancel")
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_cancel)
+
+        choice = {"value": None}
+
+        def pick_board():
+            choice["value"] = "board"
+            dialog.accept()
+
+        def pick_lasso():
+            choice["value"] = "lasso"
+            dialog.accept()
+
+        btn_board.clicked.connect(pick_board)
+        btn_lasso.clicked.connect(pick_lasso)
+        btn_cancel.clicked.connect(dialog.reject)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        if choice["value"] == "board":
+            self._generate_video_from_entire_board()
+        elif choice["value"] == "lasso":
+            self._start_lasso_video_selection()
+
+    def _serialize_items_to_selection(self, items) -> dict:
+        """Serialize canvas items into a board_selection payload dict."""
+        selected_items = []
+        all_texts = []
+        for item in items:
+            item_data = {"item_id": str(id(item)), "type": type(item).__name__}
+            text = ""
+            if hasattr(item, "text") and isinstance(item.text, str):
+                text = item.text
+            elif hasattr(item, "_text") and isinstance(item._text, str):
+                text = item._text
+            elif hasattr(item, "to_markdown"):
+                try:
+                    text = item.to_markdown()
+                except Exception:
+                    pass
+            elif hasattr(item, "full_text") and isinstance(item.full_text, str):
+                text = item.full_text
+            if text:
+                item_data["text"] = text[:2000]
+                all_texts.append(text)
+            # Capture scene bounding box
+            try:
+                brect = item.sceneBoundingRect()
+                item_data["scene_bbox"] = {
+                    "x": brect.x(), "y": brect.y(),
+                    "width": brect.width(), "height": brect.height()
+                }
+            except Exception:
+                pass
+            selected_items.append(item_data)
+
+        prompt_text = " | ".join(all_texts)[:500] or "Explain the whiteboard content."
+        return {
+            "board_id": getattr(self.current_board, "board_id", "canvas") if getattr(self, "current_board", None) else "canvas",
+            "selected_items": selected_items,
+            "nearby_items": [],
+            "user_instruction": prompt_text,
+        }, prompt_text
+
+    def _generate_video_from_entire_board(self):
+        """Generate a video from the entire board's content."""
+        all_items = self.scene.items()
+        if not all_items:
+            QMessageBox.warning(self, "Empty Canvas", "There is nothing on the canvas to generate a video from.")
+            return
+
+        selection_payload, prompt_text = self._serialize_items_to_selection(all_items)
+
+        # Also capture a raster crop of the whole canvas for the vision model
+        try:
+            rect = self.scene.itemsBoundingRect().adjusted(-20, -20, 20, 20)
+            if not rect.isEmpty():
+                from PyQt6.QtCore import QRectF
+                size = rect.size().toSize()
+                if size.width() > 1920 or size.height() > 1080:
+                    scale = min(1920.0 / size.width(), 1080.0 / size.height())
+                    size = (rect.size() * scale).toSize()
+                pixmap = QPixmap(size)
+                pixmap.fill(Qt.GlobalColor.white)
+                painter = QPainter(pixmap)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                self.scene.render(painter, target=QRectF(pixmap.rect()), source=rect)
+                painter.end()
+                buf = QBuffer()
+                buf.open(QIODevice.OpenModeFlag.WriteOnly)
+                pixmap.save(buf, "PNG")
+                image_b64 = "data:image/png;base64," + buf.data().toBase64().data().decode()
+                selection_payload["image_b64"] = image_b64
+        except Exception as e:
+            print(f"[VideoGen] Could not capture canvas raster: {e}")
+
+        self._start_video_generation(prompt_text, selection_payload)
+
+    def _start_lasso_video_selection(self):
+        """Activate lasso selection mode on the canvas; when complete, video is generated."""
+        # Switch to lasso mode and connect a one-shot signal
+        self.floating_toolbar._set_tool("lasso")
+        QMessageBox.information(
+            self, "Lasso Select Mode",
+            "Draw a selection area around the content you want to include in the video.\n\n"
+            "After making your selection, click the '🎬 Video' button again to generate."
+        )
+        # Store flag so next video button click uses current selected items
+        self._pending_lasso_video = True
+
+    def _start_video_generation(self, prompt_text: str, selection_payload: dict):
+        """Kick off video generation with a selection payload and open a new tab."""
+        job_id = request_video_generation(prompt_text, selection_payload=selection_payload)
+
+        if hasattr(self, 'speedometer_widget'):
+            self.speedometer_widget.start_task("Generating Video...")
+
+        from .items.video_float_item import VideoPlayerWidget
+        title = f"Video: {prompt_text[:20]}..."
+        player_widget = VideoPlayerWidget(job_id=job_id, title=title, parent=self.canvas_tabs)
+        if hasattr(player_widget, 'worker') and hasattr(self, 'speedometer_widget'):
+            player_widget.worker.status_updated.connect(
+                lambda jid, stage, prog: self.speedometer_widget.update_progress(stage, prog)
+            )
+
+        tab_label = f"🎬 Video: {prompt_text[:10]}..."
+        idx = self.canvas_tabs.addTab(player_widget, tab_label)
+        self.canvas_tabs.setCurrentIndex(idx)
+
+    def _toggle_theme(self):
+        ThemeManager.instance().toggle_theme()
 
     def _open_in_app_pdf_viewer(self):
         if not getattr(self, 'last_compiled_pdf_path', None) or not os.path.exists(self.last_compiled_pdf_path):

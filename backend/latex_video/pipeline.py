@@ -194,7 +194,14 @@ class LatexVideoPipeline:
             assembled_raw = "Mathematical Foundations and Core Principles"
 
         # 3. Use LatexStructureAgent to structure and solve the content
-        from backend.video_generation.agents.latex_agents import LatexStructureAgent, _detect_educational_intent
+        from backend.video_generation.agents.latex_agents import LatexStructureAgent
+        try:
+            from backend.video_generation.agents.latex_agents import _detect_educational_intent
+        except ImportError:
+            try:
+                from backend.video_generation.agents.latex_agents import detect_educational_intent as _detect_educational_intent
+            except ImportError:
+                _detect_educational_intent = lambda t: "theory"
         structure_agent = LatexStructureAgent()
 
         # Detect intent from available text to set the right classroom_action
