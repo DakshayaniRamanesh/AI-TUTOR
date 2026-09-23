@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF
 from PyQt6.QtGui import QColor, QPen, QBrush, QFont, QPainter
 
-from ...backend.knowledge_graph.tag_graph_parser import TagGraphParser
+from app.services.knowledge.tag_graph_parser import TagGraphParser
 from ..theme_manager import ThemeManager
 from ..kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
 

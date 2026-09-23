@@ -26,8 +26,8 @@ from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QColor, QBrush, QPen, QIcon
 import qtawesome as qta
 
-from ...backend.version_control.git_notes_manager import GitNotesManager, GitAdapter, GitError
-from ...backend.version_control.version_service import (
+from app.services.collaboration.git_notes_manager import GitNotesManager, GitAdapter, GitError
+from app.services.collaboration.version_service import (
     VersionService, VersionSnapshot, ObjectChange, ChangeAction, VersionDiff
 )
 from ..theme_manager import ThemeManager

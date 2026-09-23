@@ -726,27 +726,7 @@ class SubjectDetailView(QWidget):
         
         def extract_and_save(pdf_paths, subj_id):
             try:
-                from pypdf import PdfReader
-                from app.backend.workspace.graph_extractor import GraphExtractor
-                from app.storage.database_ops import update_subject_knowledge_graph
-                
-                # 1. Read all PDF Texts
-                text = ""
-                for pdf_path in pdf_paths:
-                    reader = PdfReader(pdf_path)
-                    for page in reader.pages:
-                        text += (page.extract_text() or "") + "\n"
-                    
-                # 2. Extract concepts using AI
-                extractor = GraphExtractor()
-                nodes, edges = extractor.extract_graph_from_text(text)
-                
-                # 3. Save to DB
-                if nodes:
-                    print(f"[Graph] Found {len(nodes)} nodes! Saving to DB...")
-                    update_subject_knowledge_graph(subj_id, nodes, edges)
-                else:
-                    print("[Graph] No nodes found.")
+                print(f"[Graph] SubjectBrain migration in progress. Skipping legacy extraction for {len(pdf_paths)} PDFs.")
                     
             except Exception as e:
                 print(f"[GraphExtraction] Error: {e}")
@@ -801,11 +781,7 @@ class SubjectDetailView(QWidget):
             
             def rebuild_graph(subj_id):
                 try:
-                    from pypdf import PdfReader
-                    from app.backend.workspace.graph_extractor import GraphExtractor
                     from app.storage.database_ops import update_subject_knowledge_graph, get_subject_details
-                    
-                    # 1. Get the subject's remaining materials from DB
                     subject = get_subject_details(subj_id)
                     remaining_materials = subject.materials if subject else []
                     
@@ -813,22 +789,7 @@ class SubjectDetailView(QWidget):
                         print("[Graph] No materials left. Clearing graph.")
                         update_subject_knowledge_graph(subj_id, [], [], clear_existing=True)
                     else:
-                        print(f"[Graph] Rebuilding graph from {len(remaining_materials)} remaining PDF(s)...")
-                        combined_text = ""
-                        for mat in remaining_materials:
-                            if mat.file_path and os.path.exists(mat.file_path):
-                                try:
-                                    reader = PdfReader(mat.file_path)
-                                    for page in reader.pages:
-                                        combined_text += (page.extract_text() or "") + "\n"
-                                except Exception:
-                                    pass
-                                    
-                        extractor = GraphExtractor()
-                        nodes, edges = extractor.extract_graph_from_text(combined_text)
-                        
-                        # Save to DB and force it to clear out the old nodes first
-                        update_subject_knowledge_graph(subj_id, nodes, edges, clear_existing=True)
+                        print(f"[Graph] SubjectBrain migration in progress. Skipping legacy rebuild.")
                     
                     # 2. Tell UI to refresh when done
                     from PyQt6.QtCore import QTimer

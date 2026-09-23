@@ -6,7 +6,7 @@ from app.storage.models.learning import (
     LearningSession, ProblemAttempt, ReasoningStep, CanvasAnchorRecord, ValidationEvent,
     SessionStatus, AttemptStatus
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 class ReasoningStepDTO(BaseModel):
@@ -18,8 +18,7 @@ class ReasoningStepDTO(BaseModel):
     validation_verdict: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class MemoryRepository:
     def get_or_create_active_session(self, notebook_id: Optional[str] = None, user_id: Optional[str] = None) -> str:

@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QStackedWidget, QFileDialog, QInputDialog, QMessageBox,
     QGraphicsDropShadowEffect, QMenu, QComboBox, QTabWidget, QTabBar, QApplication
 )
-from PyQt6.QtCore import Qt, QSize, QEvent, QPoint, QPointF, QRectF, QRect, QBuffer, QIODevice, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QSize, QEvent, QPoint, QPointF, QRectF, QRect, QBuffer, QIODevice, QTimer, QUrl, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFont, QColor, QAction, QPixmap, QShortcut, QKeySequence, QPainter
 import base64
 import requests
@@ -58,13 +58,13 @@ from .widgets.speedometer_progress_widget import SpeedometerProgressWidget
 from .widgets.feather_ai_button import FeatherAIButton
 MagicOrbWidget = FeatherAIButton
 
-from ..backend.math_engine.stem_solver import solve_stem_question
-from ..backend.workspace.pdf_rag_manager import PdfRAGManager
-from ..backend.video_generation.video_gen_client import request_video_generation
+from app.services.reasoning.stem_solver import solve_stem_question
+from app.services.document.pdf_rag_manager import PdfRAGManager
+from app.services.tutoring.video_gen_client import request_video_generation
 from ..storage.board_model import BoardModel
 from ..storage.notebook_storage import NotebookStorage
 from ..storage.downloads_manager import DownloadsManager
-from ..backend.math_engine.latex_client import request_latex_generation, LatexPollWorker
+from app.services.reasoning.latex_client import request_latex_generation, LatexPollWorker
 from ..collaboration.collab_session_manager import CollabSessionManager
 
 # ── Autosave Configuration ─────────────────────────────────────────────────────
@@ -1072,6 +1072,9 @@ class MainWindow(QMainWindow):
             return
 
         # It's a RecognitionRequest
+        if hasattr(payload, 'learning_session_id') and hasattr(self, 'current_learning_session_id'):
+            payload.learning_session_id = self.current_learning_session_id
+            
         self.magic_orb.set_state("thinking", "Recognizing handwriting...")
         
         from app.services.recognition.vision_recognizer import VisionRecognizer, RealProviderClient
@@ -1084,16 +1087,20 @@ class MainWindow(QMainWindow):
         self._active_ocr_worker = worker
         
         def _on_success(result):
+            if self._active_ocr_worker != worker:
+                worker.deleteLater()
+                return
             self.scene.clear_ocr_in_flight()
-            if self._active_ocr_worker == worker:
-                self._active_ocr_worker = None
+            self._active_ocr_worker = None
             self._on_auto_ai_requested(result, target_pos)
             worker.deleteLater()
             
         def _on_failure(failure):
+            if self._active_ocr_worker != worker:
+                worker.deleteLater()
+                return
             self.scene.clear_ocr_in_flight()
-            if self._active_ocr_worker == worker:
-                self._active_ocr_worker = None
+            self._active_ocr_worker = None
             self._on_auto_ai_failed(failure.user_message)
             worker.deleteLater()
             
@@ -1149,7 +1156,7 @@ class MainWindow(QMainWindow):
                 return
                 
             from .items.answer_bubble import AnswerBubble
-            bubble = AnswerBubble(feedback.feedback_text, source="Tutor")
+            bubble = AnswerBubble(title="Tutor Feedback", full_text=feedback.feedback_text, hints="\n".join(feedback.socratic_hints) if feedback.socratic_hints else "")
             bubble.setPos(pos)
             self.scene.addItem(bubble)
             
@@ -1249,6 +1256,9 @@ class MainWindow(QMainWindow):
         """Called when an action button is clicked in the floating toolbar."""
         if action == "undo":
             pass  # TODO: Undo last action
+        elif action == "feather":
+            if hasattr(self, 'scene'):
+                self.scene.trigger_ai_on_dirty_ink()
         elif action == "sticky":
             self._add_sticky_note()
         elif action == "note":
@@ -1851,8 +1861,8 @@ class MainWindow(QMainWindow):
 
     def _on_toolbar_paste(self):
         self.scene.active_tool = "select"
-        from ..backend.workspace.link_utils import is_valid_url, fetch_url_metadata
-        from ..backend.workspace.summarizer_client import UrlSummarizerWorker
+        from app.services.workspace.link_utils import is_valid_url, fetch_url_metadata
+        from app.services.workspace.summarizer_client import UrlSummarizerWorker
 
         clipboard = QApplication.clipboard()
         text = clipboard.text().strip()
@@ -2159,7 +2169,7 @@ class MainWindow(QMainWindow):
         bubble.setPos(place_pos)
         self.scene.addItem(bubble)
 
-        from ..backend.math_engine.stem_solver import StemSolverWorker
+        from app.services.reasoning.stem_solver import StemSolverWorker
         worker = StemSolverWorker(question, mode=active_mode, parent=self)
 
         def _on_finished(q: str, res: dict):
@@ -2245,13 +2255,6 @@ class MainWindow(QMainWindow):
 
         self.ask_bar.input_field.setPlaceholderText(f"Converting to {template_type}...")
 
-    def _on_stem_question_asked(self, question: str):
-        """Called when user types a question in the Ask Bar and submits."""
-        if not question or not question.strip():
-            return
-        center_pos = self.view.mapToScene(self.view.viewport().rect().center())
-        active_mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
-        self._on_auto_ai_requested(question.strip(), center_pos, mode=active_mode)
 
     def _show_or_update_tab(self, widget: QWidget, tab_title: str):
         idx = self.canvas_tabs.indexOf(widget)

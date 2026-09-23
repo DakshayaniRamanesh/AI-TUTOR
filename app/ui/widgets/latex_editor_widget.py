@@ -32,7 +32,7 @@ class LatexRecompileWorker(QThread):
 
     def run(self):
         try:
-            from ...backend.math_engine.latex_client import compile_custom_latex_pdf
+            from app.services.reasoning.latex_client import compile_custom_latex_pdf
             success, msg_or_path = compile_custom_latex_pdf(self.latex_code, self.target_pdf_path)
             self.compilation_finished.emit(success, msg_or_path)
         except Exception as e:
@@ -421,7 +421,7 @@ class LatexEditorWidget(QWidget):
         QApplication.processEvents()
 
         try:
-            from ...backend.math_engine.latex_client import compile_custom_latex_pdf
+            from app.services.reasoning.latex_client import compile_custom_latex_pdf
             success, msg_or_path = compile_custom_latex_pdf(code, file_path)
             if success:
                 self.is_dirty = False

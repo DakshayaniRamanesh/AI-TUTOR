@@ -90,7 +90,7 @@ def test_stroke_grouper_temporal():
 def test_vision_recognizer_success():
     client = MockProviderClient(response={"text": "2x = 4"})
     recognizer = VisionRecognizer(client)
-    request = RecognitionRequest(request_id="req1", board_id="b1", learning_session_id="ls1", stroke_group_id="g1", image_b64="data")
+    request = RecognitionRequest(request_id="req1", board_id="b1", learning_session_id="ls1", stroke_group_id="g1", source_stroke_ids=["g1"], image_b64="data")
     
     result = recognizer.recognize(request)
     assert isinstance(result, RecognitionResult)
@@ -101,7 +101,7 @@ def test_vision_recognizer_success():
 def test_vision_recognizer_timeout():
     client = MockProviderClient(error=TimeoutError("Connection dropped"))
     recognizer = VisionRecognizer(client)
-    request = RecognitionRequest(request_id="req1", board_id="b1", learning_session_id="ls1", stroke_group_id="g1", image_b64="data")
+    request = RecognitionRequest(request_id="req1", board_id="b1", learning_session_id="ls1", stroke_group_id="g1", source_stroke_ids=["g1"], image_b64="data")
     
     result = recognizer.recognize(request)
     assert isinstance(result, EngineFailure)

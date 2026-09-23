@@ -19,7 +19,7 @@ from .draft_layer import PenechoDraftLayerItem
 from .mixed_text import PenechoMixedTextItem
 from .animation_engine import PenechoAnimationItem
 from .unified_draw import PenechoDrawItem
-from ...backend.math_engine.stem_solver import solve_stem_question
+from app.services.reasoning.stem_solver import solve_stem_question
 
 
 def create_draft_from_payload(payload: Dict[str, Any]) -> PenechoDraftLayerItem:

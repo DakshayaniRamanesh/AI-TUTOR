@@ -15,7 +15,15 @@ class RecognitionWorker(QThread):
 
     def run(self):
         # Executes outside GUI thread
-        result = self.recognizer.recognize(self.request)
+        try:
+            result = self.recognizer.recognize(self.request)
+        except Exception as e:
+            result = EngineFailure(
+                request_id=self.request.request_id,
+                provider_name="unknown",
+                user_message="Recognition crashed unexpectedly.",
+                technical_details=str(e)
+            )
         
         # Emits structured payloads
         if isinstance(result, RecognitionResult):

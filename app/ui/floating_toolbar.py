@@ -94,6 +94,12 @@ class FloatingToolbar(QWidget):
         layout.addWidget(self.btn_lasso)
 
         self._add_separator(layout)
+        
+        self.btn_feather = self._make_btn('ri.quill-pen-line', "Feather AI (F)", checkable=False)
+        self.btn_feather.clicked.connect(lambda: self.action_triggered.emit("feather"))
+        layout.addWidget(self.btn_feather)
+
+        self._add_separator(layout)
 
         # ── 4. Annotation & Extension Tools ──
         self.btn_text = self._make_btn('ri.text', "Text (T)", checkable=False)

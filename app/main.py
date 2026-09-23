@@ -19,8 +19,6 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", "backend", ".env"))
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
-from app.ui.main_window import MainWindow
-from app.ui.splash_screen import SplashScreen
 
 def main():
     try:
@@ -29,22 +27,43 @@ def main():
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
         
-        app = QApplication(sys.argv)
-        app.setApplicationName("Kestrel")
-        app.setStyle("Fusion")
+        q_app = QApplication(sys.argv)
+        q_app.setApplicationName("Kestrel")
+        q_app.setStyle("Fusion")
 
+        # ── Database Setup (Safe to run now that QApplication exists) ──
+        try:
+            from app.storage.database import Base, engine
+            import app.storage.models.learning  # register learning tables on Base
+            Base.metadata.create_all(bind=engine)
+        except Exception as e:
+            print(f"[DB] Table creation: {e}")
+
+        # ── Now safe to import UI ──
+        from app.ui.splash_screen import SplashScreen
+        
+        from app.ui.main_window import MainWindow
+
+        print("[MAIN] Displaying splash screen", flush=True)
         # Display animated intro splash screen with Kestrel logo animation
         splash = SplashScreen(duration_ms=2200)
         splash.show()
-        app.processEvents()
+        q_app.processEvents()
 
+        print("[MAIN] Instantiating MainWindow", flush=True)
         # Initialize main window in background while splash animates
         window = MainWindow()
 
+        print("[MAIN] Connecting signals", flush=True)
         # When splash finishes fade-out, reveal the main window
         splash.finished.connect(window.show)
         
-        sys.exit(app.exec())
+        q_app.setQuitOnLastWindowClosed(False)
+
+        print("[MAIN] Calling q_app.exec()", flush=True)
+        ret = q_app.exec()
+        print(f"[MAIN] q_app.exec() returned {ret}", flush=True)
+        sys.exit(ret)
     except Exception as e:
         import traceback
         err_msg = traceback.format_exc()

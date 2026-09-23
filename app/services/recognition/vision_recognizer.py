@@ -17,7 +17,7 @@ class LegacyProviderClient(ProviderClient):
         
     def execute(self, image_b64: str) -> dict:
         # We don't actually use the image right now in the legacy mock
-        from app.backend.ocr.handwriting_ocr import recognize_handwriting
+        from app.services.recognition.handwriting_ocr import recognize_handwriting
         text = recognize_handwriting(stroke_count=self.stroke_count)
         return {"text": text}
 
@@ -25,7 +25,7 @@ class RealProviderClient(ProviderClient):
     """Bridge to the real handwriting OCR module (Groq/Gemini)."""
     def execute(self, image_b64: str) -> dict:
         import requests
-        from app.backend.ocr.handwriting_ocr import recognize_handwriting
+        from app.services.recognition.handwriting_ocr import recognize_handwriting
         try:
             # Pass the actual base64 image to the backend
             text = recognize_handwriting(b64_image=image_b64)
@@ -96,7 +96,7 @@ class VisionRecognizer(Recognizer):
             plain_text=text,
             latex=text,
             confidence=1.0, # Placeholder, legacy didn't provide confidence
-            source_stroke_ids=[request.stroke_group_id], # Placeholder, should be resolved to actual stroke IDs if possible
+            source_stroke_ids=request.source_stroke_ids, # Resolved to actual stroke IDs
             provider_name="vision_provider",
             alternatives=[RecognitionAlternative(text=text, confidence=1.0)]
         )

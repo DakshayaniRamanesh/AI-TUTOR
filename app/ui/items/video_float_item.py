@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, QUrl, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QImage, QPixmap, QPainter
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QVideoSink, QVideoFrame
 from .base_item import BaseGraphicsItemMixin
-from ...backend.video_generation.video_gen_client import ManimVideoPollWorker, request_video_generation
+from app.services.tutoring.video_gen_client import ManimVideoPollWorker, request_video_generation
 from ...storage.downloads_manager import DownloadsManager
 
 

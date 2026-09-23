@@ -85,7 +85,10 @@ class CollabClient(QObject):
                 future.result(timeout=2.0)
             except Exception:
                 pass
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            try:
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            except RuntimeError:
+                pass  # Loop already closed
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
 

@@ -374,7 +374,7 @@ class PenechoMixedTextItem(QGraphicsItem):
         return QRectF(4.0, doc_height + 8.0, 184.0, 28.0)
 
     def _update_document(self):
-        from ...backend.math_engine.latex_formatter import format_math_to_html
+        from app.services.reasoning.latex_formatter import format_math_to_html
         html_body = format_math_to_html(self._raw_text)
         html = f"""
         <div style='font-family: "Segoe Print", "Ink Free", "Caveat", "Segoe Script", "Comic Sans MS", cursive, sans-serif;

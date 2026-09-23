@@ -869,9 +869,7 @@ class CanvasScene(QGraphicsScene):
         if active_tool == "pen":
             self._recent_ink_strokes.append(final_item)
             if self.auto_ai_enabled and not getattr(self, "_ocr_in_flight", False):
-                self._ocr_in_flight = True
-                self.recognition_requested.emit()
-                
+                self._auto_ai_timer.start(int(getattr(self, "auto_ai_delay_sec", 2.0) * 1000))
         # 4. Emit Signals ONCE
         self.scene_changed.emit()
         if not self._is_remote_event and hasattr(final_item, "to_dict"):
@@ -1245,6 +1243,7 @@ class CanvasScene(QGraphicsScene):
             board_id="canvas_board",
             learning_session_id="dummy",
             stroke_group_id=str(uuid.uuid4()),
+            source_stroke_ids=[s.item_id for s in valid_strokes if hasattr(s, 'item_id')],
             image_b64=b64_img,
         )
 

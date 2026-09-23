@@ -1,6 +1,6 @@
 import sympy
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, Any
 
 class ParsedMath(BaseModel):
@@ -12,8 +12,7 @@ class ParsedMath(BaseModel):
     raw_text: str
     error_message: Optional[str] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 def parse_math(text: str) -> ParsedMath:
     if not text or not text.strip():

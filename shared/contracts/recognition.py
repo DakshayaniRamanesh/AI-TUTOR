@@ -25,6 +25,7 @@ class RecognitionRequest(ContractModel):
     board_id: StableId
     learning_session_id: StableId
     stroke_group_id: StableId
+    source_stroke_ids: List[StableId] = Field(default_factory=list)
     image_b64: Optional[str] = None
     expected_type: Optional[ContentType] = None
 

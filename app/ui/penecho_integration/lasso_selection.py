@@ -213,11 +213,11 @@ class PenechoLassoOverlay(QGraphicsItem):
             return
         self._video_request_in_flight = True
         try:
-            from ...backend.video_generation.selection_payload import (
+            from app.services.tutoring.selection_payload import (
                 build_board_selection_payload,
                 infer_prompt_from_selection,
             )
-            from ...backend.video_generation.video_gen_client import request_video_generation
+            from app.services.tutoring.video_gen_client import request_video_generation
             from ..items.video_float_item import VideoFloatItem
 
             board_id = ""
