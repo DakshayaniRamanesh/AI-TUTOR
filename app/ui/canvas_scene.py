@@ -7,6 +7,7 @@ import time
 from PyQt6.QtWidgets import QGraphicsScene, QGraphicsPathItem, QGraphicsProxyWidget
 from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QPainter
 from PyQt6.QtCore import Qt, QRectF, QPointF, QTimer, QThread, pyqtSignal
+from shared.contracts.tutoring import FeedbackSeverity
 
 from .theme_manager import ThemeManager
 from .items.ink_stroke import InkStroke
@@ -1253,3 +1254,94 @@ class CanvasScene(QGraphicsScene):
         
         self.recognition_requested.emit(req, target_pos)
         return True
+
+    def clear_tutor_feedback(self):
+        if getattr(self, "_tutor_chalk", None) and self._tutor_chalk.scene() == self:
+            self._tutor_chalk.stop_animation()
+            self.removeItem(self._tutor_chalk)
+        
+        if getattr(self, "_tutor_laser", None) and self._tutor_laser.scene() == self:
+            self._tutor_laser.stop()
+            self.removeItem(self._tutor_laser)
+            
+        if getattr(self, "_tutor_bubble_proxy", None) and self._tutor_bubble_proxy.scene() == self:
+            self.removeItem(self._tutor_bubble_proxy)
+            
+        self._tutor_chalk = None
+        self._tutor_laser = None
+        self._tutor_bubble_proxy = None
+
+    def present_tutor_feedback(self, feedback, pos: QPointF, source_stroke_ids: list):
+        """Displays visual and audio feedback from the reasoning layer."""
+        self.clear_tutor_feedback()
+        
+        # 1. Determine anchor rect
+        target_rect = None
+        if feedback.anchors and feedback.anchors[0].bbox_snapshot:
+            bbox = feedback.anchors[0].bbox_snapshot
+            target_rect = QRectF(bbox.x, bbox.y, bbox.w, bbox.h)
+        elif source_stroke_ids:
+            # Fall back to bounding box of source strokes
+            strokes = [s for s in self.items() if getattr(s, "item_id", None) in source_stroke_ids]
+            if strokes:
+                target_rect = strokes[0].sceneBoundingRect()
+                for s in strokes[1:]:
+                    target_rect = target_rect.united(s.sceneBoundingRect())
+                    
+        if not target_rect:
+            if pos:
+                target_rect = QRectF(pos.x() - 10, pos.y() - 10, 20, 20)
+            else:
+                target_rect = QRectF(0, 0, 50, 50)
+                
+        # 2. Determine Feedback Type
+        from .items.ghost_chalk_item import GhostChalkItem, GhostChalkMode
+        from .items.laser_pointer_item import LaserPointerItem
+        from .widgets.socratic_hint_bubble import SocraticHintBubble
+        from .audio.voice_speaker import VoiceSpeaker
+        from PyQt6.QtWidgets import QGraphicsProxyWidget
+        
+        is_error = feedback.severity in [FeedbackSeverity.WARNING, FeedbackSeverity.CRITICAL]
+        is_valid = "correct" in feedback.feedback_text.lower() or "valid" in feedback.feedback_text.lower()
+        
+        if is_error:
+            self._tutor_chalk = GhostChalkItem(target_rect, mode=GhostChalkMode.ERROR)
+            self.addItem(self._tutor_chalk)
+        elif is_valid:
+            self._tutor_chalk = GhostChalkItem(target_rect, mode=GhostChalkMode.VERIFIED)
+            self.addItem(self._tutor_chalk)
+            
+        # 3. Add Laser Pointer
+        self._tutor_laser = LaserPointerItem()
+        self.addItem(self._tutor_laser)
+        start_pt = target_rect.center() + QPointF(100, 100)
+        self._tutor_laser.setPos(start_pt)
+        
+        bubble = SocraticHintBubble()
+        bubble.set_feedback(feedback.feedback_text, "", feedback.socratic_hints)
+        
+        self._tutor_bubble_proxy = QGraphicsProxyWidget()
+        self._tutor_bubble_proxy.setWidget(bubble)
+        self._tutor_bubble_proxy.setZValue(1005)
+        self.addItem(self._tutor_bubble_proxy)
+        
+        bubble.closed.connect(self.clear_tutor_feedback)
+        
+        bubble_x = target_rect.right() + 40
+        bubble_y = target_rect.top()
+        
+        if self.views():
+            view = self.views()[0]
+            view_rect = view.mapToScene(view.viewport().rect()).boundingRect()
+            if bubble_x + 330 > view_rect.right():
+                bubble_x = target_rect.left() - 370
+                
+        self._tutor_bubble_proxy.setPos(bubble_x, bubble_y)
+        
+        laser_target = QPointF(target_rect.right() + 10, target_rect.top() + 10)
+        self._tutor_laser.move_to(laser_target, 800)
+        
+        speaker = VoiceSpeaker.instance()
+        if speaker.is_available():
+            speaker.speak(feedback.feedback_text)
+

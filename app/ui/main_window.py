@@ -1044,6 +1044,7 @@ class MainWindow(QMainWindow):
         self.ask_bar.mode_changed.connect(self._update_mode_button_text)
         self.ask_bar.question_with_context_submitted.connect(self._on_question_with_context_asked)
         self.ask_bar.pdf_requested.connect(self._open_pdf_dialog)
+        self.ask_bar.check_work_requested.connect(self._on_check_work_requested)
         pl.addWidget(self.ask_bar, stretch=1)
 
         # ── PenEcho Magic Orb HUD ──
@@ -1102,6 +1103,7 @@ class MainWindow(QMainWindow):
             self.scene.clear_ocr_in_flight()
             self._active_ocr_worker = None
             self._on_auto_ai_failed(failure.user_message)
+            self._reset_check_work_btn()
             worker.deleteLater()
             
         worker.success_emitted.connect(_on_success)
@@ -1155,26 +1157,39 @@ class MainWindow(QMainWindow):
                 print("[TutorWorker] Discarding stale result from a different session/notebook.")
                 return
                 
-            from .items.answer_bubble import AnswerBubble
-            bubble = AnswerBubble(title="Tutor Feedback", full_text=feedback.feedback_text, hints="\n".join(feedback.socratic_hints) if feedback.socratic_hints else "")
-            bubble.setPos(pos)
-            self.scene.addItem(bubble)
-            
-            # Transactional ink replacement
-            if stroke_ids and hasattr(self.scene, 'remove_strokes_by_id'):
-                self.scene.remove_strokes_by_id(stroke_ids)
+            if hasattr(self.scene, "present_tutor_feedback"):
+                self.scene.present_tutor_feedback(feedback, pos, stroke_ids)
+            else:
+                from .items.answer_bubble import AnswerBubble
+                bubble = AnswerBubble(title="Tutor Feedback", full_text=feedback.feedback_text, hints="\n".join(feedback.socratic_hints) if feedback.socratic_hints else "")
+                bubble.setPos(pos)
+                self.scene.addItem(bubble)
                 
             self.magic_orb.set_state("idle", "")
+            self._reset_check_work_btn()
 
         def _on_error(err):
             self.magic_orb.set_state("error")
             if worker in self._solver_workers:
                 self._solver_workers.remove(worker)
+            self._reset_check_work_btn()
 
         worker.finished.connect(_on_finished)
         worker.error.connect(_on_error)
         self._solver_workers.append(worker)
         worker.start()
+
+    def _on_check_work_requested(self):
+        self.ask_bar.btn_check_work.setEnabled(False)
+        self.ask_bar.btn_check_work.setText("CHECKING...")
+        started = self.scene.trigger_ai_on_dirty_ink()
+        if not started:
+            self.magic_orb.set_state("idle")
+            self._reset_check_work_btn()
+
+    def _reset_check_work_btn(self):
+        self.ask_bar.btn_check_work.setEnabled(True)
+        self.ask_bar.btn_check_work.setText("CHECK WORK")
 
     def _on_magic_orb_triggered(self):
         started = self.scene.trigger_ai_on_dirty_ink()
@@ -1184,6 +1199,7 @@ class MainWindow(QMainWindow):
     def _on_auto_ai_failed(self, error_msg: str):
         self.magic_orb.set_state("error")
         QTimer.singleShot(1500, lambda: self.magic_orb.set_state("idle"))
+        self._reset_check_work_btn()
 
     def _on_auto_ai_toggled(self, enabled: bool):
         self.scene.auto_ai_enabled = enabled

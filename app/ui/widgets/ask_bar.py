@@ -31,6 +31,7 @@ class AskBar(QWidget):
     mode_changed = pyqtSignal(str)  # Emits "classroom" or "study"
     question_with_context_submitted = pyqtSignal(str, str, int, str)
     pdf_requested = pyqtSignal()
+    check_work_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,12 +102,18 @@ class AskBar(QWidget):
         self.btn_ask = QPushButton("ASK AI", container)
         self.btn_ask.setObjectName("BtnAsk")
         self.btn_ask.clicked.connect(self._submit)
+        
+        self.btn_check_work = QPushButton("CHECK WORK", container)
+        self.btn_check_work.setObjectName("BtnCheckWork")
+        self.btn_check_work.setToolTip("Evaluate your ink on the canvas")
+        self.btn_check_work.clicked.connect(self.check_work_requested.emit)
 
         c_layout.addWidget(self.btn_pdf)
         c_layout.addWidget(self.input_field, stretch=1)
         c_layout.addWidget(self.btn_mic)
         c_layout.addWidget(self.mode_combo)
         c_layout.addWidget(self.btn_ask)
+        c_layout.addWidget(self.btn_check_work)
 
         main_layout.addWidget(container)
 
@@ -518,7 +525,7 @@ class AskBar(QWidget):
                 background-color: {c['border_color'] if not ThemeManager.instance().is_dark() else '#282830'};
                 border-color: {c['accent']};
             }}
-            QPushButton#BtnAsk {{
+            QPushButton#BtnAsk, QPushButton#BtnCheckWork {{
                 background-color: {c['accent']};
                 color: {c['accent_text']};
                 border: 1px solid {c['accent']};
@@ -529,8 +536,13 @@ class AskBar(QWidget):
                 font-weight: 700;
                 letter-spacing: 0.5px;
             }}
-            QPushButton#BtnAsk:hover {{
+            QPushButton#BtnAsk:hover, QPushButton#BtnCheckWork:hover {{
                 background-color: {c['accent_hover']};
+            }}
+            QPushButton#BtnCheckWork:disabled {{
+                background-color: {c['panel_card_bg']};
+                color: {c['text_secondary']};
+                border: 1px solid {c['border_color']};
             }}
         """)
         # Re-apply mic button style for current state

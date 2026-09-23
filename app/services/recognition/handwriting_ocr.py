@@ -18,7 +18,7 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
     """
     Recognizes handwritten text, equations, or chemical structures from canvas.
     Supports direct text or base64 rendered ink images.
-    Uses Groq Vision (qwen/qwen3.8-27b, qwen/qwen3.6-27b) as the primary fast engine,
+    Uses Groq Vision (qwen/qwen3.8-27b) as the primary fast engine,
     with Google Gemini Vision as fallback.
     """
     last_error = None
@@ -41,7 +41,7 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
         os.getenv("GROQ_API_KEY", "").strip()
     )
     if groq_key and not groq_key.startswith("your_"):
-        for model in ["qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]:
+        for model in ["qwen/qwen3.8-27b"]:
             try:
                 resp = requests.post(
                     "https://api.groq.com/openai/v1/chat/completions",
