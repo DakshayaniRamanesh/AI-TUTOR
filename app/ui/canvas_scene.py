@@ -681,7 +681,7 @@ class CanvasScene(QGraphicsScene):
                 QCheckBox, QRadioButton, QComboBox, QSpinBox, QFrame, QScrollArea
             )
             from PyQt6.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QRectF
-            from PyQt6.QtGui import QColor, QFont, QPen, QBrush, QPainter, QPainterPath
+            from PyQt6.QtGui import QFont
             import random, math, time
             from .kestrel_theme import MONO_FONT
 

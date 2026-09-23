@@ -377,8 +377,15 @@ class TestTTSService:
         mp3 = tmp_path / "test.mp3"
         mp3.write_bytes(b"\xff\xfb" + b"\x00" * 16000)  # 16 KB fake MP3
 
-        # Patch mutagen.mp3.MP3 at the point it is imported inside the function
-        with patch("mutagen.mp3.MP3", side_effect=Exception("parse error")):
+        import sys
+        import types
+        fake_mutagen = types.ModuleType("mutagen")
+        fake_mutagen.mp3 = types.ModuleType("mutagen.mp3")
+        def mock_MP3(*args, **kwargs):
+            raise Exception("parse error")
+        fake_mutagen.mp3.MP3 = mock_MP3
+
+        with patch.dict("sys.modules", {"mutagen": fake_mutagen, "mutagen.mp3": fake_mutagen.mp3}):
             dur = _measure_mp3_duration(str(mp3))
 
         assert dur > 0
