@@ -21,6 +21,7 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
     Uses Groq Vision (qwen/qwen3.8-27b, qwen/qwen3.6-27b) as the primary fast engine,
     with Google Gemini Vision as fallback.
     """
+    last_error = None
     if input_text_or_path and not input_text_or_path.startswith("Recognized"):
         return input_text_or_path.strip()
 
@@ -61,18 +62,23 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
                     },
                     timeout=8.0
                 )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    choices = data.get("choices", [])
-                    if choices:
-                        raw = choices[0].get("message", {}).get("content", "").strip()
-                        raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
-                        raw = raw.strip('"`\'')
-                        if raw:
-                            return raw
+                resp.raise_for_status()
+                data = resp.json()
+                choices = data.get("choices", [])
+                if choices:
+                    raw = choices[0].get("message", {}).get("content", "").strip()
+                    raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+                    raw = raw.strip('"`\'')
+                    if raw:
+                        return raw
+            except requests.exceptions.Timeout as e:
+                print(f"[Handwriting OCR Groq Vision] Timeout for model {model}: {e}")
+                last_error = e
+                continue # Try next model or fallback
             except Exception as e:
-                print(f"[Handwriting OCR Groq Vision] Error: {e}")
-                continue
+                print(f"[Handwriting OCR Groq Vision] Error for model {model}: {e}")
+                last_error = e
+                continue # Try next model or fallback
 
     # 2. SECONDARY / FALLBACK: Google Gemini Vision
     gemini_key = (
@@ -106,7 +112,13 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
                     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
                     if text:
                         return text
-            except Exception:
+            except requests.exceptions.Timeout as e:
+                last_error = e
+                continue
+            except Exception as e:
+                last_error = e
                 continue
 
-    return ""
+    if last_error:
+        raise last_error
+    raise RuntimeError("All OCR providers failed or no valid transcription was generated.")

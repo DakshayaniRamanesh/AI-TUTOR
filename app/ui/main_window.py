@@ -178,6 +178,9 @@ class MacTitleBar(QWidget):
             f"font-family: {MONO_FONT}; color: #888888; background: transparent;"
         )
         layout.addWidget(self.lbl_title)
+        # Background worker management
+        self._solver_workers = []
+        self._active_ocr_worker = None
 
         layout.addStretch()
 
@@ -230,6 +233,18 @@ class MainWindow(QMainWindow):
         self.reference_panel = ReferencePanel()
         self.reference_panel.insert_data_requested.connect(self._on_insert_reference_table)
         self._solver_workers = []
+
+        # ── Tutor Orchestrator & Memory (Phase 4) ──────────────────────────────
+        from app.services.memory.repositories import MemoryRepository
+        from app.services.reasoning.context_builder import ContextBuilder
+        from app.services.tutoring.orchestrator import TutorOrchestrator
+        self.memory_repo = MemoryRepository()
+        self.context_builder = ContextBuilder(self.memory_repo)
+        self.tutor_orchestrator = TutorOrchestrator(self.memory_repo, self.context_builder)
+        
+        # Start a dummy session/attempt for UI testing
+        self.current_learning_session_id = self.memory_repo.start_learning_session()
+        self.current_attempt_id = self.memory_repo.start_problem_attempt(self.current_learning_session_id)
 
         # ── Autosave State ─────────────────────────────────────────────────────
         # ID of the currently open notebook. None = demo/unsaved canvas.
@@ -350,7 +365,7 @@ class MainWindow(QMainWindow):
         # Scene and View
         self.scene = CanvasScene(self)
         self.scene.ink_written_detected.connect(self._on_ink_written_detected)
-        self.scene.auto_ai_requested.connect(self._on_auto_ai_requested)
+        self.scene.recognition_requested.connect(self._on_recognition_requested)
         self.scene.auto_ai_failed.connect(self._on_auto_ai_failed)
         # Connect scene_changed to the debounced autosave
         self.scene.scene_changed.connect(self._on_scene_changed)
@@ -1045,31 +1060,100 @@ class MainWindow(QMainWindow):
         outer.addWidget(pill)
         return hud
 
-    def _on_auto_ai_requested(self, query: str, target_pos: QPointF, mode: str = None):
+    def _on_recognition_requested(self, payload: object, target_pos: QPointF):
+        if isinstance(payload, str):
+            # Text-only bypass (no OCR needed)
+            self.scene.clear_ocr_in_flight()
+            self._on_auto_ai_requested(payload, target_pos=target_pos)
+            return
+
+        # It's a RecognitionRequest
+        self.magic_orb.set_state("thinking", "Recognizing handwriting...")
+        
+        from app.services.recognition.vision_recognizer import VisionRecognizer, RealProviderClient
+        from app.workers.recognition_worker import RecognitionWorker
+        
+        client = RealProviderClient()
+        recognizer = VisionRecognizer(client)
+        worker = RecognitionWorker(recognizer, payload, parent=self)
+        
+        self._active_ocr_worker = worker
+        
+        def _on_success(result):
+            self.scene.clear_ocr_in_flight()
+            if self._active_ocr_worker == worker:
+                self._active_ocr_worker = None
+            self._on_auto_ai_requested(result, target_pos)
+            worker.deleteLater()
+            
+        def _on_failure(failure):
+            self.scene.clear_ocr_in_flight()
+            if self._active_ocr_worker == worker:
+                self._active_ocr_worker = None
+            self._on_auto_ai_failed(failure.user_message)
+            worker.deleteLater()
+            
+        worker.success_emitted.connect(_on_success)
+        worker.failure_emitted.connect(_on_failure)
+        worker.start()
+
+    def _on_auto_ai_requested(self, query: object, target_pos: QPointF, mode: str = None):
+        query_text = query if isinstance(query, str) else query.plain_text
+        if not query_text:
+            return
+            
         from .items.interactive_widgets.dynamic_builder import (
             match_instant_interactive_preset, is_interactive_build_request
         )
-        if match_instant_interactive_preset(query) or is_interactive_build_request(query):
-            self._on_stem_question_asked(query, target_pos=target_pos, mode=mode)
+        if match_instant_interactive_preset(query_text) or is_interactive_build_request(query_text):
+            self._on_stem_question_asked(query_text, target_pos=target_pos, mode=mode)
             return
 
-        from .penecho_integration.ai_canvas_bridge import AICanvasWorker, create_draft_from_payload
         self.magic_orb.set_state("thinking", "Analyzing...")
-
-        # Collision-free positioning
         clean_pos = self._find_non_overlapping_pos(target_pos, width=400.0, height=200.0)
-        active_mode = mode or (self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study")
 
-        worker = AICanvasWorker(query_text=query, target_pos=clean_pos, mode=active_mode, parent=self)
+        # Wire up the new Phase 4 Tutor Orchestrator!
+        class TutorWorker(QThread):
+            finished = pyqtSignal(object, QPointF, list) # emits TutorFeedback, pos, source_stroke_ids
+            error = pyqtSignal(str)
 
-        def _on_finished(payload_dict, pos, msg):
-            draft_item = create_draft_from_payload(payload_dict)
-            draft_item.setPos(pos)
-            if draft_item.scene() is None:
-                self.scene.addItem(draft_item)
-            self.magic_orb.set_state("draft", msg)
+            def __init__(self, query_text, pos, orchestrator, attempt_id, source_stroke_ids, parent=None):
+                super().__init__(parent)
+                self.query = query_text
+                self.pos = pos
+                self.orchestrator = orchestrator
+                self.attempt_id = attempt_id
+                self.source_stroke_ids = source_stroke_ids
+
+            def run(self):
+                try:
+                    feedback = self.orchestrator.process_student_input(self.attempt_id, self.query)
+                    self.finished.emit(feedback, self.pos, self.source_stroke_ids)
+                except Exception as e:
+                    self.error.emit(str(e))
+
+        source_stroke_ids = query.source_stroke_ids if hasattr(query, 'source_stroke_ids') else []
+        worker = TutorWorker(query_text, clean_pos, self.tutor_orchestrator, self.current_attempt_id, source_stroke_ids, parent=self)
+
+        def _on_finished(feedback, pos, stroke_ids):
             if worker in self._solver_workers:
                 self._solver_workers.remove(worker)
+                
+            # Stale-result identity protection across notebooks
+            if worker.attempt_id != self.current_attempt_id:
+                print("[TutorWorker] Discarding stale result from a different session/notebook.")
+                return
+                
+            from .items.answer_bubble import AnswerBubble
+            bubble = AnswerBubble(feedback.feedback_text, source="Tutor")
+            bubble.setPos(pos)
+            self.scene.addItem(bubble)
+            
+            # Transactional ink replacement
+            if stroke_ids and hasattr(self.scene, 'remove_strokes_by_id'):
+                self.scene.remove_strokes_by_id(stroke_ids)
+                
+            self.magic_orb.set_state("idle", "")
 
         def _on_error(err):
             self.magic_orb.set_state("error")
@@ -1724,6 +1808,8 @@ class MainWindow(QMainWindow):
             self.current_board.board_id = payload.get("board_id", notebook_id)
             self.current_board.title = payload.get("title", "Notebook")
             self.title_edit.setText(self.current_board.title)
+            self.current_learning_session_id = self.memory_repo.get_or_create_active_session(notebook_id=self._current_notebook_id)
+            self.current_attempt_id = self.memory_repo.get_or_create_active_attempt(self.current_learning_session_id)
             
             self.scene.load_from_dict_list(
                 payload.get("items", []),

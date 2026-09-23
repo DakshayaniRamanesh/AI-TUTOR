@@ -5,7 +5,7 @@ from .common import ContractModel, StableId, CanvasBBox, CoordinateSpace
 
 class CanvasAnchor(ContractModel):
     """Links a semantic reasoning concept back to physical UI items on the whiteboard."""
-    item_ids: List[StableId] = Field(default_factory=list)
+    item_ids: List[StableId] = Field(default_factory=list, min_length=1)
     board_id: StableId
     board_revision: Optional[str] = None
     bbox_snapshot: Optional[CanvasBBox] = None
@@ -26,5 +26,5 @@ class ValidationVerdict(str, Enum):
 class ValidationResult(ContractModel):
     """The output of the engine after evaluating a step."""
     step_id: StableId
-    verdict: ValidationVerdict = Field(default=ValidationVerdict.UNKNOWN)
+    verdict: ValidationVerdict
     explanation: Optional[str] = None

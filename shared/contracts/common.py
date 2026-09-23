@@ -14,10 +14,16 @@ class ContractModel(BaseModel):
     """
     model_config = ConfigDict(
         extra="forbid",
-        validate_assignment=True,
-        use_enum_values=True
+        validate_assignment=True
     )
     schema_version: str = Field(default=CURRENT_SCHEMA_VERSION)
+
+    @field_validator("schema_version", mode="after")
+    @classmethod
+    def validate_schema_version(cls, v: str) -> str:
+        if not v.startswith("1."):
+            raise ValueError(f"Unsupported schema version: {v}. Expected 1.x.x.")
+        return v
 
 StableId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 

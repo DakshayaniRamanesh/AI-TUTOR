@@ -20,14 +20,12 @@ def test_canvas_anchor_preserves_data():
     assert anchor.bbox_snapshot.width == 50
     assert anchor.coordinate_space == "SCENE"
 
-def test_parser_failure_maps_to_unknown():
-    # If the engine fails to parse, it must instantiate with UNKNOWN.
-    # We verify that omitting the verdict defaults safely to UNKNOWN.
-    result = ValidationResult(
-        step_id="step_1",
-        explanation="Failed to parse student handwriting."
-    )
-    assert result.verdict == ValidationVerdict.UNKNOWN
+def test_verdict_is_required():
+    with pytest.raises(ValidationError):
+        ValidationResult(
+            step_id="step_1",
+            explanation="Failed to parse student handwriting."
+        )
 
 def test_verdict_enum_rejection():
     with pytest.raises(ValidationError):

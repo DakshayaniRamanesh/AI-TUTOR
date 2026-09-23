@@ -1,7 +1,7 @@
-from typing import List
+from typing import List, Optional
 from enum import Enum
 from pydantic import Field
-from .common import ContractModel
+from .common import ContractModel, StableId
 from .reasoning import CanvasAnchor
 
 class FeedbackSeverity(str, Enum):
@@ -25,6 +25,9 @@ class ErrorCode(str, Enum):
 
 class EngineFailure(ContractModel):
     """System failure indicating the engine could not process the request."""
+    request_id: StableId
+    provider_name: str
     error_code: ErrorCode = Field(default=ErrorCode.UNKNOWN)
     user_message: str
+    technical_details: Optional[str] = Field(default=None, repr=False)
     is_retryable: bool = Field(default=False)

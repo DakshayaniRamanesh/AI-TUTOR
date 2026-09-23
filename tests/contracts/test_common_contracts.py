@@ -76,6 +76,20 @@ def test_stable_id_validation():
         TestModel(id="   ")
 
 def test_no_forbidden_imports():
-    import shared.contracts.common
-    assert "PyQt6" not in sys.modules, "PyQt6 leaked into shared contracts!"
-    assert "sqlalchemy" not in sys.modules, "SQLAlchemy leaked into shared contracts!"
+    import subprocess
+    import sys
+    
+    script = (
+        "import sys\n"
+        "import shared.contracts.common\n"
+        "if 'PyQt6' in sys.modules:\n"
+        "    sys.exit(1)\n"
+        "if 'sqlalchemy' in sys.modules:\n"
+        "    sys.exit(2)\n"
+        "sys.exit(0)\n"
+    )
+    
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert result.returncode != 1, "PyQt6 leaked into shared contracts!"
+    assert result.returncode != 2, "SQLAlchemy leaked into shared contracts!"
+    assert result.returncode == 0, f"Unexpected error during import check: {result.stderr}"

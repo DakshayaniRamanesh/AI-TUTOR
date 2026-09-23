@@ -83,7 +83,12 @@ class CollabServer(QObject):
             return
         self._is_running = False
         if self._loop and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(self._shutdown_coroutine(), self._loop)
+            future = asyncio.run_coroutine_threadsafe(self._shutdown_coroutine(), self._loop)
+            try:
+                future.result(timeout=2.0)
+            except Exception:
+                pass
+            self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         self.server_stopped.emit()
@@ -140,8 +145,6 @@ class CollabServer(QObject):
         if self._server:
             self._server.close()
             await self._server.wait_closed()
-        if self._loop:
-            self._loop.stop()
 
     async def _handler(self, websocket):
         client_id = uuid.uuid4().hex[:8]

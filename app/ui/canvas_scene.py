@@ -33,7 +33,7 @@ from .penecho_integration import (
 
 class CanvasScene(QGraphicsScene):
     ink_written_detected = pyqtSignal(str, QPointF)
-    auto_ai_requested = pyqtSignal(str, QPointF)
+    recognition_requested = pyqtSignal(object, QPointF) # Emits RecognitionRequest
     auto_ai_failed = pyqtSignal(str)
     # Emitted whenever the scene content changes (stroke, erase, shape add/remove).
     # MainWindow connects this to the debounced autosave timer.
@@ -470,9 +470,21 @@ class CanvasScene(QGraphicsScene):
         cursor.set_position(x, y)
 
     def remove_remote_cursor(self, client_id: str):
-        cursor = self._remote_cursors.pop(client_id, None)
-        if cursor and cursor.scene() == self:
+        if client_id in self._remote_cursors:
+            cursor = self._remote_cursors.pop(client_id)
             self.removeItem(cursor)
+
+    def remove_strokes_by_id(self, stroke_ids: list[str]):
+        """Remove specific strokes from the scene, usually after successful transactional replacement."""
+        if not stroke_ids:
+            return
+            
+        target_ids = set(stroke_ids)
+        for item in list(self.items()):
+            if isinstance(item, InkStroke) and hasattr(item, "item_id") and item.item_id in target_ids:
+                self.removeItem(item)
+                if item in self._recent_ink_strokes:
+                    self._recent_ink_strokes.remove(item)
 
     def clear_remote_cursors(self):
         for cursor in list(self._remote_cursors.values()):
@@ -552,6 +564,15 @@ class CanvasScene(QGraphicsScene):
                 color=data.get("color", "#1c1c1e"),
                 width=data.get("width", 3.0)
             )
+            
+            if "raw_points" in data:
+                item.raw_stroke = data["raw_points"]
+            if "processed_points" in data:
+                item.processed_stroke = data["processed_points"]
+            if "classification" in data:
+                item.stroke_type = data["classification"]
+            if "classification_confidence" in data:
+                item.classification_confidence = data["classification_confidence"]
 
         elif itype == "TextBoxItem":
             from .items.text_box_item import TextBoxItem
@@ -818,9 +839,8 @@ class CanvasScene(QGraphicsScene):
                 width=self.pen_width,
                 tool_mode=tool_name
             )
-            if final_item:
-                self.removeItem(self._current_path_item)
-                self.addItem(final_item)
+            
+            self._finalize_ink_stroke(final_item, tool_name)
 
             self._current_path_item = None
             self._current_painter_path = None
@@ -828,6 +848,34 @@ class CanvasScene(QGraphicsScene):
             return True
 
         return False
+
+    def _finalize_ink_stroke(self, final_item, active_tool: str):
+        """Shared finalization for both mouse and tablet paths."""
+        if not final_item:
+            if self._current_path_item:
+                self.scene_changed.emit()
+                if not self._is_remote_event and hasattr(self._current_path_item, "to_dict"):
+                    self.item_collaborated_add.emit(self._current_path_item.to_dict())
+            return
+
+        # 1. Clean up temporary drawing path
+        if self._current_path_item and self._current_path_item.scene() == self:
+            self.removeItem(self._current_path_item)
+        
+        # 2. Add the real stroke
+        self.addItem(final_item)
+        
+        # 3. Add to mathematical tracking (ignore highlighters/erasers)
+        if active_tool == "pen":
+            self._recent_ink_strokes.append(final_item)
+            if self.auto_ai_enabled and not getattr(self, "_ocr_in_flight", False):
+                self._ocr_in_flight = True
+                self.recognition_requested.emit()
+                
+        # 4. Emit Signals ONCE
+        self.scene_changed.emit()
+        if not self._is_remote_event and hasattr(final_item, "to_dict"):
+            self.item_collaborated_add.emit(final_item.to_dict())
 
     def mousePressEvent(self, event):
         pos = event.scenePos()
@@ -1074,20 +1122,7 @@ class CanvasScene(QGraphicsScene):
                 tool_mode=tool_name
             )
             
-            if final_item:
-                self.removeItem(self._current_path_item)
-                self.addItem(final_item)
-                if self.active_tool == "pen":
-                    self._recent_ink_strokes.append(final_item)
-                    if self.auto_ai_enabled:
-                        self._auto_ai_timer.start(int(self.auto_ai_delay_sec * 1000))
-                self.scene_changed.emit()
-                if not self._is_remote_event and hasattr(final_item, "to_dict"):
-                    self.item_collaborated_add.emit(final_item.to_dict())
-            elif self._current_path_item:  # Highlighter or very short stroke — keep it
-                self.scene_changed.emit()
-                if not self._is_remote_event and hasattr(self._current_path_item, "to_dict"):
-                    self.item_collaborated_add.emit(self._current_path_item.to_dict())
+            self._finalize_ink_stroke(final_item, tool_name)
 
             self._current_path_item = None
             self._current_painter_path = None
@@ -1105,30 +1140,12 @@ class CanvasScene(QGraphicsScene):
                                 self.item_collaborated_update.emit(item.to_dict())
                 self._item_pos_before_drag.clear()
 
+    def clear_ocr_in_flight(self):
+        self._ocr_in_flight = False
+
     def _on_auto_convert_ink(self):
-        if not self._recent_ink_strokes:
-            return
-
-        from ..backend.ocr.handwriting_ocr import recognize_handwriting
-
-        valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
-        if not valid_strokes:
-            self._recent_ink_strokes.clear()
-            return
-
-        min_x = min(s.sceneBoundingRect().x() for s in valid_strokes)
-        min_y = min(s.sceneBoundingRect().y() for s in valid_strokes)
-        pos = QPointF(min_x, min_y)
-
-        text = recognize_handwriting(stroke_count=len(valid_strokes))
-
-        for s in valid_strokes:
-            self.removeItem(s)
-
-        self._recent_ink_strokes.clear()
-
-        if text:
-            self.ink_written_detected.emit(text, pos)
+        # Delegate manual trigger to the same canonical path
+        self.trigger_ai_on_dirty_ink()
 
     def _render_strokes_base64(self, strokes: list) -> str:
         import base64
@@ -1176,62 +1193,8 @@ class CanvasScene(QGraphicsScene):
         return base64.b64encode(buffer.data().data()).decode("utf-8")
 
     def _on_auto_ai_timeout(self):
-        """Fires in PenEcho Auto-AI mode after post-stroke delay.
-
-        The Groq/Gemini OCR call (recognize_handwriting) is a blocking network request
-        and MUST NOT run on the main thread — doing so freezes the canvas.
-        This method spawns a background QThread to do the OCR work and emits
-        auto_ai_requested only from the thread-finished callback on the main thread.
-        """
-        valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
-        if not valid_strokes:
-            return
-
-        min_y = min(s.sceneBoundingRect().y() for s in valid_strokes)
-        max_x = max(s.sceneBoundingRect().right() for s in valid_strokes)
-        target_pos = QPointF(max_x + 35, min_y)
-        b64_img = self._render_strokes_base64(valid_strokes)
-        stroke_count = len(valid_strokes)
-
-        class _OCRWorker(QThread):
-            ocr_done = pyqtSignal(str)
-            ocr_failed = pyqtSignal(str)
-
-            def __init__(self, b64, count, parent=None):
-                super().__init__(parent)
-                self._b64 = b64
-                self._count = count
-
-            def run(self):
-                try:
-                    from ..backend.ocr.handwriting_ocr import recognize_handwriting
-                    text = recognize_handwriting(b64_image=self._b64, stroke_count=self._count)
-                    if text and text.strip():
-                        self.ocr_done.emit(text.strip())
-                    else:
-                        self.ocr_failed.emit("Could not transcribe ink.")
-                except Exception as exc:
-                    print(f"[AutoAI OCR] Error: {exc}")
-                    self.ocr_failed.emit(str(exc))
-
-        worker = _OCRWorker(b64_img, stroke_count, parent=self)
-        self._ocr_workers.append(worker)
-
-        def _on_done(text):
-            self._recent_ink_strokes.clear()
-            self.auto_ai_requested.emit(text, target_pos)
-            if worker in self._ocr_workers:
-                self._ocr_workers.remove(worker)
-
-        def _on_fail(err):
-            self.auto_ai_failed.emit(err)
-            if worker in self._ocr_workers:
-                self._ocr_workers.remove(worker)
-
-        worker.ocr_done.connect(_on_done)
-        worker.ocr_failed.connect(_on_fail)
-        worker.finished.connect(lambda: self._ocr_workers.remove(worker) if worker in self._ocr_workers else None)
-        worker.start()
+        """Fires in PenEcho Auto-AI mode after post-stroke delay."""
+        self.trigger_ai_on_dirty_ink()
 
     def trigger_ai_on_dirty_ink(self, prompt: str = "") -> bool:
         """Explicitly triggers PenEcho Feather AI on the latest ink strokes or selection.
@@ -1260,9 +1223,12 @@ class CanvasScene(QGraphicsScene):
         else:
             target_pos = QPointF(200, 200)
 
-        # If a prompt is already provided, fire immediately without OCR
+        if self._ocr_in_flight:
+            return False
+
         if prompt:
-            self.auto_ai_requested.emit(prompt, target_pos)
+            # We treat prompt as a raw string bypass (not OCR)
+            self.recognition_requested.emit(prompt, target_pos)
             return True
 
         if not valid_strokes:
@@ -1272,43 +1238,18 @@ class CanvasScene(QGraphicsScene):
         b64_img = self._render_strokes_base64(valid_strokes)
         stroke_count = len(valid_strokes)
 
-        class _OCRWorker(QThread):
-            ocr_done = pyqtSignal(str)
-            ocr_failed = pyqtSignal(str)
+        import uuid
+        from shared.contracts.recognition import RecognitionRequest
+        req = RecognitionRequest(
+            request_id=str(uuid.uuid4()),
+            board_id="canvas_board",
+            learning_session_id="dummy",
+            stroke_group_id=str(uuid.uuid4()),
+            image_b64=b64_img,
+        )
 
-            def __init__(self, b64, count, parent=None):
-                super().__init__(parent)
-                self._b64 = b64
-                self._count = count
-
-            def run(self):
-                try:
-                    from ..backend.ocr.handwriting_ocr import recognize_handwriting
-                    text = recognize_handwriting(b64_image=self._b64, stroke_count=self._count)
-                    if text and text.strip():
-                        self.ocr_done.emit(text.strip())
-                    else:
-                        self.ocr_failed.emit("Could not transcribe ink. Try writing more clearly.")
-                except Exception as exc:
-                    print(f"[TriggerAI OCR] Error: {exc}")
-                    self.ocr_failed.emit(str(exc))
-
-        worker = _OCRWorker(b64_img, stroke_count, parent=self)
-        self._ocr_workers.append(worker)
-
-        def _on_done(text):
-            self._recent_ink_strokes.clear()
-            self.auto_ai_requested.emit(text, target_pos)
-            if worker in self._ocr_workers:
-                self._ocr_workers.remove(worker)
-
-        def _on_fail(err):
-            self.auto_ai_failed.emit(err)
-            if worker in self._ocr_workers:
-                self._ocr_workers.remove(worker)
-
-        worker.ocr_done.connect(_on_done)
-        worker.ocr_failed.connect(_on_fail)
-        worker.finished.connect(lambda: self._ocr_workers.remove(worker) if worker in self._ocr_workers else None)
-        worker.start()
+        self._ocr_in_flight = True
+        self._recent_ink_strokes.clear()
+        
+        self.recognition_requested.emit(req, target_pos)
         return True

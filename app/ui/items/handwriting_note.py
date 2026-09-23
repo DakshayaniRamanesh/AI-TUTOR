@@ -7,7 +7,9 @@ from PyQt6.QtCore import Qt, pyqtSignal, QPointF
 from .base_item import BaseGraphicsItemMixin
 from ..widgets.streaming_text import get_handwritten_font
 from ..widgets.floating_toolbar import FloatingSelectionToolbar
-from ...backend.ocr.handwriting_ocr import recognize_handwriting
+from ...workers.recognition_worker import RecognitionWorker
+from ...services.recognition.recognizer import Recognizer
+from shared.contracts.recognition import RecognitionRequest, RecognitionResult, RecognitionStatus
 
 class HeaderDragBar(QWidget):
     """
@@ -179,8 +181,46 @@ class HandwritingNoteWidget(QWidget):
 
     def _on_ocr_clicked(self):
         current_text = self.text_edit.toPlainText().strip()
-        text = recognize_handwriting(current_text)
-        self.text_edit.setPlainText(text)
+        if not current_text:
+            return
+
+        # Use the standard RecognitionWorker pattern to avoid freezing,
+        # even for simple text formatting/cleanup
+        class _TextCleanupRecognizer(Recognizer):
+            def recognize(self, request: RecognitionRequest):
+                # Placeholder for local LLM cleanup. For now, it strips.
+                cleaned = current_text.strip()
+                return RecognitionResult(
+                    request_id=request.request_id,
+                    status=RecognitionStatus.SUCCESS,
+                    provider_name="local_text",
+                    plain_text=cleaned,
+                    source_stroke_ids=["note_text"]
+                )
+
+        req = RecognitionRequest(
+            request_id="local",
+            board_id="local",
+            learning_session_id="local",
+            stroke_group_id="local"
+        )
+        
+        self.btn_ocr.setEnabled(False)
+        self.btn_ocr.setText("...")
+        
+        self._worker = RecognitionWorker(_TextCleanupRecognizer(), req, parent=self)
+        self._worker.success_emitted.connect(self._on_ocr_success)
+        self._worker.failure_emitted.connect(self._on_ocr_error)
+        self._worker.finished.connect(lambda: self.btn_ocr.setEnabled(True))
+        self._worker.finished.connect(lambda: self.btn_ocr.setText("OCR"))
+        self._worker.start()
+        
+    def _on_ocr_success(self, result: RecognitionResult):
+        if result.plain_text:
+            self.text_edit.setPlainText(result.plain_text)
+
+    def _on_ocr_error(self, failure):
+        print(f"Text cleanup failed: {failure.technical_details}")
 
     def _on_ask_clicked(self):
         text = self.text_edit.toPlainText().strip()

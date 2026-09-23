@@ -85,5 +85,16 @@ class ConceptEdge(Base):
     target_name = Column(String, nullable=False)
     relationship_desc = Column(String)
 
-# 3. Create tables if they don't exist
-Base.metadata.create_all(bind=engine)
+from sqlalchemy import event
+
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.close()
+
+# 3. Tables are now created/migrated via Alembic.
+# Base.metadata.create_all(bind=engine) is REMOVED to prevent import-time side effects.

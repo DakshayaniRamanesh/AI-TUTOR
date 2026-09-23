@@ -62,7 +62,8 @@ class InkStroke(QGraphicsPathItem, BaseGraphicsItemMixin):
             el = path.elementAt(i)
             el_type = int(el.type.value) if hasattr(el.type, "value") else int(el.type)
             element_list.append({"x": el.x, "y": el.y, "type": el_type})
-        return {
+            
+        data = {
             "item_id": getattr(self, "item_id", ""),
             "type": "InkStroke",
             "x": self.x(),
@@ -71,5 +72,17 @@ class InkStroke(QGraphicsPathItem, BaseGraphicsItemMixin):
             "color": self.stroke_color.name(QColor.NameFormat.HexArgb),
             "width": self.stroke_width,
             "z_value": self.zValue(),
-            "elements": element_list
+            "elements": element_list,
+            "metadata_version": 2
         }
+        
+        if hasattr(self, "raw_stroke"):
+            data["raw_points"] = self.raw_stroke
+        if hasattr(self, "processed_stroke"):
+            data["processed_points"] = self.processed_stroke
+        if hasattr(self, "stroke_type"):
+            data["classification"] = self.stroke_type
+        if hasattr(self, "classification_confidence"):
+            data["classification_confidence"] = self.classification_confidence
+            
+        return data
