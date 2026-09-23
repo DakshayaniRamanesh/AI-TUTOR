@@ -130,3 +130,26 @@ def test_canvas_scene_tutor_feedback_lifecycle():
     scene.clear_tutor_feedback()
     assert not scene._laser_pointer_item.isVisible()
     assert not scene._ghost_chalk_item.isVisible()
+
+
+def test_render_canvas_to_b64():
+    from app.ui.penecho_integration.export_utils import render_canvas_to_b64
+    from PyQt6.QtWidgets import QGraphicsTextItem
+
+    scene = CanvasScene()
+    # Empty canvas returns empty string
+    assert render_canvas_to_b64(scene) == ""
+
+    # Canvas with content renders valid base64 PNG
+    text_item = QGraphicsTextItem("x + 5 = 10")
+    text_item.setPos(50, 50)
+    scene.addItem(text_item)
+
+    b64 = render_canvas_to_b64(scene)
+    assert b64 != ""
+    assert isinstance(b64, str)
+    # Validate base64 decode
+    import base64
+    raw_bytes = base64.b64decode(b64)
+    # Check PNG signature: \x89PNG\r\n\x1a\n
+    assert raw_bytes.startswith(b"\x89PNG\r\n\x1a\n")

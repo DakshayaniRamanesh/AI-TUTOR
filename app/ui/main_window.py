@@ -3,6 +3,7 @@ Main Application Window (Apple Freeform Shell Layout)
 Frameless macOS Window Design with Traffic Light Controls, Sidebar (~260px), Top Toolbar, Infinite Canvas, Zoom HUD, Floating Tool Palette, AskBar, Notebooks Panel & PDF Split-Screen Study Mode
 """
 
+from PyQt6.QtCore import QThread
 import os
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QListWidget,
@@ -845,9 +846,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_video)
 
         # Developer 1: Check My Work Action
-        btn_check_work = self._make_toolbar_btn('ri.checkbox-circle-line', "Check Work", tb, '#2563eb', "Check My Work (Spacebar)")
-        btn_check_work.clicked.connect(self._on_check_my_work)
-        layout.addWidget(btn_check_work)
+        self._correction_running = False
+        self._btn_check_work = self._make_toolbar_btn('ri.checkbox-circle-line', "Check Work", tb, '#2563eb', "Check My Work (Spacebar)")
+        self._btn_check_work.clicked.connect(self._on_check_my_work)
+        layout.addWidget(self._btn_check_work)
 
         layout.addWidget(self._make_toolbar_separator(tb))
 
@@ -975,75 +977,200 @@ class MainWindow(QMainWindow):
                 return
         super().keyPressEvent(event)
 
+
+    # ── Developer 1: Work Correction QThread Worker ───────────────────────────
+
+    class _WorkCorrectionWorker(QThread):
+        """
+        Background worker that sends the canvas image to the AI vision backend
+        and emits the structured feedback result. Runs off the main thread so
+        the UI stays completely responsive during the API call.
+        """
+        result_ready = pyqtSignal(dict)
+        error_occurred = pyqtSignal(str)
+
+        def __init__(self, b64_image: str, parent=None, **kwargs):
+            super().__init__(parent)
+            self._b64 = b64_image
+            self._session_id = kwargs.get("session_id")
+            self._hints_given = kwargs.get("hints_given", [])
+
+        def run(self):
+            try:
+                from ..backend.ocr.work_corrector import analyse_student_work
+                result = analyse_student_work(self._b64)
+                self.result_ready.emit(result)
+            except Exception as exc:
+                print(f"[WorkCorrectionWorker] Error: {exc}")
+                self.error_occurred.emit(str(exc))
+
+    # ── Developer 1: Check My Work (Real AI-Powered) ──────────────────────────
+
     def _on_check_my_work(self):
         """
-        Developer 1: Demonstrates the complete Socratic tutor visual feedback chain.
-        1. Moves laser pointer with idle breathing pulse.
-        2. Draws ghost chalk oval around target math step in ~600ms.
-        3. Speaks tutor feedback via local VoiceSpeaker.
-        4. Displays SocraticHintBubble with citation & 3-level progressive hints.
+        Captures the canvas, sends it to an AI vision model (Groq/Gemini), and
+        drives the full Socratic feedback chain — laser pointer, ghost chalk,
+        hint bubble, and voice — with real analysis of what the student wrote.
         """
         scene = getattr(self, 'scene', None)
         view = getattr(self, 'view', None)
         if not scene:
             return
 
-        # Ensure the canvas view is active and visible if user was on another screen
+        # Prevent double-trigger while analysis is in flight
+        if getattr(self, '_correction_running', False):
+            return
+
+        # Switch to canvas view if needed
         if hasattr(self, 'main_stack') and hasattr(self, '_canvas_wrapper'):
             self.main_stack.setCurrentWidget(self._canvas_wrapper)
             self._set_sidebar_active_button("canvas")
 
-        target_rect = None
-        # 1. First priority: Check if student has selected items
-        selected = scene.selectedItems()
-        if selected:
-            target_rect = selected[0].sceneBoundingRect()
-            for it in selected[1:]:
-                target_rect = target_rect.united(it.sceneBoundingRect())
+        # ── Loading State ──────────────────────────────────────────────────────
+        self._correction_running = True
+        if hasattr(self, '_btn_check_work') and self._btn_check_work:
+            self._btn_check_work.setEnabled(False)
+            self._btn_check_work.setText("Analysing…")
+            try:
+                import qtawesome as _qta
+                self._btn_check_work.setIcon(_qta.icon('ri.loader-4-line', color='#ffffff'))
+            except Exception:
+                pass
 
-        # 2. Second priority: Find user's handwritten ink strokes or smart shapes
-        if not target_rect:
-            from .items.ink_stroke import InkStroke
-            from .items.smart_shape_item import SmartShapeItem
-            ink_items = [i for i in scene.items() if isinstance(i, (InkStroke, SmartShapeItem))]
-            if ink_items:
-                target_rect = ink_items[0].sceneBoundingRect()
-                for it in ink_items[1:min(4, len(ink_items))]:
-                    if target_rect.intersects(it.sceneBoundingRect().adjusted(-80, -80, 80, 80)):
-                        target_rect = target_rect.united(it.sceneBoundingRect())
+        # ── Render canvas to base64 (main thread — Qt graphics must stay on main thread) ──
+        from .penecho_integration import render_canvas_to_b64
+        b64_img = render_canvas_to_b64(scene)
 
-        # 3. Third priority: Other text or card items on canvas
-        if not target_rect:
-            items = [item for item in scene.items() if hasattr(item, 'sceneBoundingRect') and item.zValue() < 900]
-            if items:
-                target_rect = items[0].sceneBoundingRect()
+        # ── Handle empty canvas ────────────────────────────────────────────────
+        if not b64_img:
+            self._correction_running = False
+            self._restore_check_work_button()
+            # Show a gentle prompt on the canvas centre
+            center_pos = (
+                view.mapToScene(view.viewport().rect().center())
+                if view else QPointF(200, 150)
+            )
+            empty_rect = QRectF(center_pos.x() - 10, center_pos.y() - 10, 20, 20)
+            scene.show_tutor_feedback(
+                target_rect=empty_rect,
+                pointer_pos=QPointF(center_pos.x() + 40, center_pos.y()),
+                spoken_message="Your canvas is empty. Write out your working and click Check Work again!",
+                citation="",
+                hints=[],
+                mode="verified"
+            )
+            return
 
-        # 4. Fallback if canvas is blank: place a sample student math problem to demonstrate
-        if not target_rect or target_rect.width() < 10 or target_rect.height() < 10:
-            center_pos = view.mapToScene(view.viewport().rect().center()) if view else QPointF(200, 150)
-            sample_item = scene.addText("Step 1:  3x - (2x - 5) = 14\nStep 2:  3x - 2x - 5 = 14\nStep 3:  x - 5 = 14")
-            sample_item.setDefaultTextColor(QColor("#0f172a"))
-            sample_item.setFont(QFont("Consolas", 14))
-            sample_item.setPos(center_pos.x() - 120, center_pos.y() - 40)
-            target_rect = QRectF(center_pos.x() - 110, center_pos.y() - 10, 190, 35)
+        # ── Compute content bounding box before spawning thread ────────────────
+        # (used later to map error_region → QRectF; safe to do on main thread)
+        content_items = [
+            it for it in scene.items()
+            if it.isVisible() and it.zValue() < 900.0
+        ]
+        if content_items:
+            cx_min = min(it.sceneBoundingRect().left() for it in content_items)
+            cy_min = min(it.sceneBoundingRect().top() for it in content_items)
+            cx_max = max(it.sceneBoundingRect().right() for it in content_items)
+            cy_max = max(it.sceneBoundingRect().bottom() for it in content_items)
+            self._content_bounds = QRectF(cx_min, cy_min, cx_max - cx_min, cy_max - cy_min)
+        else:
+            self._content_bounds = QRectF(0, 0, 400, 300)
 
-        # Smoothly pan/center viewport if needed so the student sees the action
+        # ── Spawn background AI worker ─────────────────────────────────────────
+        import uuid as _uuid
+        session_id = str(_uuid.uuid4())
+        hints_given = getattr(self, '_hints_given_this_session', [])
+        worker = self._WorkCorrectionWorker(
+            b64_img,
+            session_id=session_id,
+            hints_given=hints_given,
+            parent=self,
+        )
+        self._active_correction_worker = worker  # keep reference to prevent GC
+
+        def _on_result(feedback: dict):
+            self._correction_running = False
+            self._restore_check_work_button()
+            self._apply_correction_feedback(feedback, scene, view)
+
+        def _on_error(msg: str):
+            self._correction_running = False
+            self._restore_check_work_button()
+            print(f"[CheckWork] AI error: {msg}")
+            # Show a non-intrusive status message
+            if hasattr(self, 'lbl_save_status'):
+                self.lbl_save_status.setText("AI tutor unavailable — check API keys")
+                self.lbl_save_status.setVisible(True)
+                QTimer.singleShot(4000, lambda: self.lbl_save_status.setVisible(False))
+
+        worker.result_ready.connect(_on_result)
+        worker.error_occurred.connect(_on_error)
+        worker.start()
+
+    def _restore_check_work_button(self):
+        """Restores the Check Work button to its normal state."""
+        if hasattr(self, '_btn_check_work') and self._btn_check_work:
+            self._btn_check_work.setEnabled(True)
+            self._btn_check_work.setText("Check Work")
+            try:
+                import qtawesome as _qta
+                self._btn_check_work.setIcon(_qta.icon('ri.checkbox-circle-line', color='#ffffff'))
+            except Exception:
+                pass
+
+    def _apply_correction_feedback(self, feedback: dict, scene, view):
+        """
+        Maps the AI feedback dict to canvas coordinates and drives the
+        visual/audio Socratic feedback chain.
+        """
+        mode = feedback.get("mode", "error")
+        error_region = feedback.get("error_region", "full")
+        spoken_message = feedback.get("spoken_message", "")
+        hints = feedback.get("hints", [])
+
+        # ── Map error_region → QRectF on canvas ───────────────────────────────
+        bounds = getattr(self, '_content_bounds', QRectF(0, 0, 400, 300))
+        total_h = bounds.height()
+        third_h = total_h / 3.0
+
+        region_map = {
+            "top_third":    QRectF(bounds.left(), bounds.top(),            bounds.width(), third_h),
+            "middle":       QRectF(bounds.left(), bounds.top() + third_h,  bounds.width(), third_h),
+            "bottom_third": QRectF(bounds.left(), bounds.top() + third_h * 2, bounds.width(), third_h),
+            "full":         QRectF(bounds),
+        }
+        target_rect = region_map.get(error_region, QRectF(bounds))
+
+        # Add a small vertical margin so the chalk oval doesn't clip item borders
+        target_rect = target_rect.adjusted(4, 4, -4, -4)
+        if target_rect.width() < 20:
+            target_rect.setWidth(20)
+        if target_rect.height() < 20:
+            target_rect.setHeight(20)
+
+        # Laser pointer appears to the right of the error region
+        pointer_pos = QPointF(target_rect.right() + 24, target_rect.center().y())
+
+        # Ensure the error region is visible in the viewport
         if view:
-            view.ensureVisible(target_rect.adjusted(-120, -120, 120, 120))
+            view.ensureVisible(target_rect.adjusted(-80, -80, 80, 80))
 
-        pointer_pos = QPointF(target_rect.right() + 20, target_rect.center().y())
-
+        # ── Drive the full visual + audio feedback layer ───────────────────────
         scene.show_tutor_feedback(
             target_rect=target_rect,
             pointer_pos=pointer_pos,
-            spoken_message="Take a look at your second step. The signs do not match the previous line.",
-            citation="Calculus: Early Transcendentals, §3.4, p.142",
-            hints=[
-                "Check the signs when applying the distributive property.",
-                "Recall: -(a - b) = -a + b or factor out (-1).",
-                "In line 2, -(2x - 5) should become -2x + 5, not -2x - 5."
-            ],
-            mode="error"
+            spoken_message=spoken_message,
+            citation=f"{feedback.get('subject', '')} — {feedback.get('method', '')}".strip(" —"),
+            hints=hints if hints else None,
+            mode=mode
+        )
+
+        # Log analysis result for debugging
+        print(
+            f"[CheckWork] Subject: {feedback.get('subject')} | "
+            f"Method: {feedback.get('method')} | "
+            f"Region: {error_region} | Mode: {mode}\n"
+            f"  Error: {feedback.get('error_description', '')}"
         )
 
     def _create_hud_overlay(self) -> QWidget:

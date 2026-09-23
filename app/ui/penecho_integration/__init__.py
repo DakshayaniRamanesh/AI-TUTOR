@@ -9,7 +9,7 @@ from .mixed_text import PenechoMixedTextItem, parse_mixed_text, mixed_tokens_to_
 from .animation_engine import PenechoAnimationItem, normalize_animation_scene, evaluate_scene_state
 from .lasso_selection import PenechoLassoOverlay, point_in_polygon, polygon_bounds
 from .summon_widgets import PenechoSummonItem, generate_curve_points
-from .export_utils import export_canvas_to_image
+from .export_utils import export_canvas_to_image, render_canvas_to_b64
 from .draft_layer import PenechoDraftLayerItem
 from .ai_canvas_bridge import AICanvasWorker, create_draft_from_payload
 
@@ -28,6 +28,7 @@ __all__ = [
     "PenechoSummonItem",
     "generate_curve_points",
     "export_canvas_to_image",
+    "render_canvas_to_b64",
     "PenechoDraftLayerItem",
     "AICanvasWorker",
     "create_draft_from_payload",
