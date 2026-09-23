@@ -18,3 +18,4 @@ pytest>=8.0.0
 python-multipart
 edge-tts>=6.1.9
 mutagen>=1.47.0
+pymupdf>=1.24.0
