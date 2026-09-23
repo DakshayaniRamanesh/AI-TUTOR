@@ -11,8 +11,8 @@ def db_setup():
     # Setup test DB schema
     Base.metadata.create_all(bind=engine)
     yield
-    # Teardown test DB schema
-    Base.metadata.drop_all(bind=engine)
+    # Keep schema intact for application use
+    Base.metadata.create_all(bind=engine)
 
 def test_integration_flow(db_setup):
     repo = MemoryRepository()

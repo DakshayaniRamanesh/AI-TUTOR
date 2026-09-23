@@ -96,5 +96,15 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.execute("PRAGMA busy_timeout=5000")
     cursor.close()
 
-# 3. Tables are now created/migrated via Alembic.
-# Base.metadata.create_all(bind=engine) is REMOVED to prevent import-time side effects.
+# 3. Schema Initialization
+def init_db():
+    """Initializes all database tables if they do not already exist."""
+    try:
+        import app.storage.models.learning  # registers learning tables on Base.metadata
+    except ImportError:
+        pass
+    Base.metadata.create_all(bind=engine)
+
+# Auto-ensure tables exist on import
+init_db()
+
