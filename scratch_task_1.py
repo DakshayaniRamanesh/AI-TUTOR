@@ -1,0 +1,7 @@
+content = open('C:/Users/shami/.gemini/antigravity-ide/brain/87ebf563-a354-4a1b-a89d-9316a149a9de/task.md').read()
+content = content.replace('- `[ ]` 1.1 Verify Backend Status (Completed)', '- `[x]` 1.1 Verify Backend Status (Completed)')
+content = content.replace('- `[ ]` 1.2 Decouple External Model Calls', '- `[x]` 1.2 Decouple External Model Calls')
+content = content.replace('- `[ ]` Search `app/` directory for direct `Groq` client instantiations', '- `[x]` Search `app/` directory for direct `Groq` client instantiations')
+content = content.replace('- `[ ]` Search `app/` directory for direct `google.generativeai` client instantiations', '- `[x]` Search `app/` directory for direct `google.generativeai` client instantiations')
+content = content.replace('- `[ ]` Route all generation (LaTeX, AI Q&A) through `requests` calls to local server endpoints', '- `[x]` Route all generation (LaTeX, AI Q&A) through `requests` calls to local server endpoints')
+open('C:/Users/shami/.gemini/antigravity-ide/brain/87ebf563-a354-4a1b-a89d-9316a149a9de/task.md', 'w').write(content)

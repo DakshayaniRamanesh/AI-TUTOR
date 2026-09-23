@@ -1,0 +1,5 @@
+content = open('C:/Users/shami/.gemini/antigravity-ide/brain/87ebf563-a354-4a1b-a89d-9316a149a9de/task.md').read()
+content = content.replace('- `[ ]` 3.3. Add Schema Invariants', '- `[x]` 3.3. Add Schema Invariants')
+content = content.replace('- `[ ]` Add `UniqueConstraint("attempt_id", "sequence_number")` to `ReasoningStep`', '- `[x]` Add `UniqueConstraint("attempt_id", "sequence_number")` to `ReasoningStep`')
+content = content.replace('- `[ ]` Add explicit indexes to `ReasoningStep`, `LearningSession`, and `ProblemAttempt` in `models/learning.py`', '- `[x]` Add explicit indexes to `ReasoningStep`, `LearningSession`, and `ProblemAttempt` in `models/learning.py`')
+open('C:/Users/shami/.gemini/antigravity-ide/brain/87ebf563-a354-4a1b-a89d-9316a149a9de/task.md', 'w').write(content)

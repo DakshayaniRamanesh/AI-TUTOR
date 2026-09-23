@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, Text
+from sqlalchemy import Column, Index, UniqueConstraint, String, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, Text
 from sqlalchemy.orm import relationship
 from app.storage.database import Base
 
@@ -31,6 +31,10 @@ class LearningSession(Base):
 
     attempts = relationship("ProblemAttempt", back_populates="session", cascade="all, delete-orphan")
 
+    __table_args__ = (
+        Index("ix_learning_sessions_notebook_status", "notebook_id", "status"),
+    )
+
 class ProblemAttempt(Base):
     __tablename__ = "problem_attempts"
     id = Column(String, primary_key=True)
@@ -47,6 +51,10 @@ class ProblemAttempt(Base):
 
     session = relationship("LearningSession", back_populates="attempts")
     steps = relationship("ReasoningStep", back_populates="attempt", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_problem_attempts_session_status", "learning_session_id", "status"),
+    )
 
 class ReasoningStep(Base):
     __tablename__ = "reasoning_steps"
@@ -69,6 +77,11 @@ class ReasoningStep(Base):
     attempt = relationship("ProblemAttempt", back_populates="steps")
     anchors = relationship("CanvasAnchorRecord", back_populates="step", cascade="all, delete-orphan")
     validation_events = relationship("ValidationEvent", back_populates="step", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "sequence_number", name="uq_reasoning_step_attempt_seq"),
+        Index("ix_reasoning_steps_attempt_seq", "attempt_id", "sequence_number"),
+    )
 
 class CanvasAnchorRecord(Base):
     __tablename__ = "canvas_anchor_records"

@@ -21,8 +21,11 @@ class ReasoningStepDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class MemoryRepository:
+    def __init__(self, session_factory=None):
+        self.Session = session_factory or SessionLocal
+
     def get_or_create_active_session(self, notebook_id: Optional[str] = None, user_id: Optional[str] = None) -> str:
-        with SessionLocal() as db:
+        with self.Session() as db:
             session = db.query(LearningSession).filter(
                 LearningSession.notebook_id == notebook_id,
                 LearningSession.status == SessionStatus.ACTIVE
@@ -42,7 +45,7 @@ class MemoryRepository:
             return new_session.id
 
     def start_learning_session(self, notebook_id: Optional[str] = None, user_id: Optional[str] = None) -> str:
-        with SessionLocal() as db:
+        with self.Session() as db:
             session = LearningSession(
                 id=str(uuid.uuid4()),
                 notebook_id=notebook_id,
@@ -54,7 +57,7 @@ class MemoryRepository:
             return session.id
 
     def get_or_create_active_attempt(self, session_id: str, problem_text: Optional[str] = None) -> str:
-        with SessionLocal() as db:
+        with self.Session() as db:
             attempt = db.query(ProblemAttempt).filter(
                 ProblemAttempt.learning_session_id == session_id,
                 ProblemAttempt.status == AttemptStatus.IN_PROGRESS
@@ -73,7 +76,7 @@ class MemoryRepository:
             return new_attempt.id
 
     def start_problem_attempt(self, session_id: str, problem_text: Optional[str] = None) -> str:
-        with SessionLocal() as db:
+        with self.Session() as db:
             attempt = ProblemAttempt(
                 id=str(uuid.uuid4()),
                 learning_session_id=session_id,
@@ -92,7 +95,7 @@ class MemoryRepository:
         content_type: Optional[str] = None,
         anchors: Optional[List[Dict[str, Any]]] = None
     ) -> str:
-        with SessionLocal() as db:
+        with self.Session() as db:
             # Lock the attempt row to safely calculate the next sequence number (if this was Postgres we'd FOR UPDATE)
             # In SQLite with WAL, transactions are serialized appropriately.
             
@@ -124,7 +127,7 @@ class MemoryRepository:
             return step.id
 
     def update_step_validation(self, step_id: str, verdict: str, explanation: Optional[str] = None):
-        with SessionLocal() as db:
+        with self.Session() as db:
             step = db.query(ReasoningStep).filter(ReasoningStep.id == step_id).first()
             if step:
                 step.validation_verdict = verdict
@@ -139,7 +142,7 @@ class MemoryRepository:
                 db.commit()
 
     def get_recent_steps(self, attempt_id: str, limit: int = 5) -> List[ReasoningStepDTO]:
-        with SessionLocal() as db:
+        with self.Session() as db:
             steps = db.query(ReasoningStep).filter(
                 ReasoningStep.attempt_id == attempt_id
             ).order_by(ReasoningStep.sequence_number.desc()).limit(limit).all()

@@ -33,11 +33,10 @@ def main():
 
         # ── Database Setup (Safe to run now that QApplication exists) ──
         try:
-            from app.storage.database import Base, engine
-            import app.storage.models.learning  # register learning tables on Base
-            Base.metadata.create_all(bind=engine)
+            from app.storage.database_ops import bootstrap_db
+            bootstrap_db()
         except Exception as e:
-            print(f"[DB] Table creation: {e}")
+            print(f"[DB] Migration failed: {e}")
 
         # ── Now safe to import UI ──
         from app.ui.splash_screen import SplashScreen

@@ -491,112 +491,53 @@ def get_local_stem_answer(question: str, mode: str = "study") -> Optional[dict]:
 
 def get_gemini_ai_answer(question: str, mode: str = "study") -> dict:
     """
-    Calls Groq or Google Gemini AI LLM model to get answer based on active mode (Classroom vs Study).
-    - Classroom Mode: Direct straight answer only.
-    - Ask AI (Study Mode): Concise Question + Answer by default, with step-by-step explanation available on expand.
+    Calls the local backend /api/ask endpoint to get an AI answer.
     """
     local_ans = get_local_stem_answer(question, mode=mode)
     if local_ans:
         return local_ans
 
-    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
-    gemini_key = (
-        os.environ.get("GEMINI_API_KEY", "").strip() or
-        os.environ.get("GOOGLE_API_KEY", "").strip()
-    )
-
-    asked_explain = user_asked_for_explanation(question)
-
-    if mode == "classroom":
-        prompt = (
-            "You are a concise STEM solver for a classroom blackboard.\n"
-            "CRITICAL: Do NOT output any thinking process, reasoning steps, or analysis.\n"
-            "Output ONLY the direct answer.\n\n"
-            f"Question: {question}\n\n"
-            "Format strictly as:\n"
-            "Answer: <direct answer>"
+    try:
+        backend_url = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('PORT', '8000')}").rstrip("/")
+        resp = requests.post(
+            f"{backend_url}/api/ask",
+            json={"question": question, "mode": mode},
+            timeout=15.0
         )
-    else:
-        prompt = (
-            "You are a helpful AI tutor in ASK AI.\n"
-            "CRITICAL: Do NOT output any internal thinking process, reasoning steps, analysis, or monologue.\n"
-            "Provide the question, direct answer, and then a clear, concise explanation with 2-3 bullet points.\n\n"
-            f"Question: {question}\n\n"
-            "Format strictly as:\n"
-            f"Question: {question}\n"
-            "Answer: <direct answer with clean math notation>\n\n"
-            "Explanation:\n"
-            "• <concise step or key point 1>\n"
-            "• <concise step or key point 2>"
-        )
+        if resp.status_code == 200:
+            data = resp.json()
+            raw_output = data.get("raw_output", "")
+            asked_explain = data.get("asked_explain", False)
+            
+            text_clean = clean_ai_response(raw_output)
+            text_pretty = to_pretty_math(text_clean)
+            
+            if mode == "classroom":
+                return {
+                    "hints": text_pretty,
+                    "short_solution": text_pretty,
+                    "full_solution": text_pretty,
+                    "solution": text_pretty,
+                    "is_direct_math": True
+                }
+            if "Explanation:" in text_pretty:
+                parts = text_pretty.split("Explanation:", 1)
+                short_sol = parts[0].strip()
+                full_sol = text_pretty.strip()
+            else:
+                short_sol = text_pretty.strip()
+                full_sol = text_pretty.strip()
 
-    def _parse_ai_output(raw_output: str) -> dict:
-        text_clean = clean_ai_response(raw_output)
-        text_pretty = to_pretty_math(text_clean)
-        if mode == "classroom":
             return {
-                "hints": text_pretty,
-                "short_solution": text_pretty,
-                "full_solution": text_pretty,
-                "solution": text_pretty,
-                "is_direct_math": True
+                "hints": short_sol,
+                "short_solution": short_sol,
+                "full_solution": full_sol,
+                "solution": full_sol if asked_explain else short_sol,
+                "is_direct_math": not asked_explain
             }
-        if "Explanation:" in text_pretty:
-            parts = text_pretty.split("Explanation:", 1)
-            short_sol = parts[0].strip()
-            full_sol = text_pretty.strip()
-        else:
-            short_sol = text_pretty.strip()
-            full_sol = text_pretty.strip()
-
-        return {
-            "hints": short_sol,
-            "short_solution": short_sol,
-            "full_solution": full_sol,
-            "solution": full_sol if asked_explain else short_sol,
-            "is_direct_math": not asked_explain
-        }
-
-    # 1. Primary: Groq (Fast sub-second response)
-    if groq_key:
-        for model in ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]:
-            try:
-                resp = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {groq_key}"},
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.2,
-                        "max_tokens": 500
-                    },
-                    timeout=3.0
-                )
-                if resp.status_code == 200:
-                    text = resp.json()["choices"][0]["message"]["content"].strip()
-                    parsed = _parse_ai_output(text)
-                    if parsed.get("hints"):
-                        return parsed
-            except Exception:
-                continue
-
-    # 2. Secondary: Google Gemini models
-    if gemini_key:
-        models = ["gemini-flash-latest", "gemini-flash-lite-latest"]
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        for model in models:
-            try:
-                api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
-                resp = requests.post(api_url, json=payload, timeout=6.0)
-                if resp.status_code == 200:
-                    result_json = resp.json()
-                    text = result_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    parsed = _parse_ai_output(text)
-                    if parsed.get("hints"):
-                        return parsed
-            except Exception:
-                continue
-
+    except Exception as e:
+        print(f"[STEM Solver] Error connecting to local backend AI: {e}")
+    
     return {}
 
 def solve_stem_question(question: str, mode: str = "study") -> dict:

@@ -6,16 +6,8 @@ from app.services.reasoning.math_validator import validate_transition
 from app.services.reasoning.context_builder import ContextBuilder
 from shared.contracts.reasoning import ValidationVerdict
 
-@pytest.fixture(scope="function")
-def db_setup():
-    # Setup test DB schema
-    Base.metadata.create_all(bind=engine)
-    yield
-    # Teardown test DB schema
-    Base.metadata.drop_all(bind=engine)
-
-def test_integration_flow(db_setup):
-    repo = MemoryRepository()
+def test_integration_flow(db_session_factory):
+    repo = MemoryRepository(session_factory=db_session_factory)
     builder = ContextBuilder(repo)
 
     # 1. Start a session

@@ -179,3 +179,21 @@ def update_subject_knowledge_graph(subject_id: str, nodes: List[dict], edges: Li
             
         db.commit()
 
+
+
+def bootstrap_db():
+    """Run Alembic migrations programmatically to ensure schema is up-to-date."""
+    from alembic.config import Config
+    from alembic import command
+    import os
+    
+    # Locate alembic.ini from the project root
+    _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    alembic_cfg = Config(os.path.join(_BASE_DIR, 'alembic.ini'))
+    
+    try:
+        command.upgrade(alembic_cfg, 'head')
+        print("[DB] Alembic upgrade head successful.", flush=True)
+    except Exception as e:
+        print(f"[DB] Alembic migration failed: {e}", flush=True)
+        raise e

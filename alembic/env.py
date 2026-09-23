@@ -18,7 +18,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.storage.database import Base, DB_PATH
+from app.storage.database import Base, get_engine
 import app.storage.models.learning # Ensure new models are loaded
 
 # add your model's MetaData object here
@@ -26,7 +26,8 @@ import app.storage.models.learning # Ensure new models are loaded
 target_metadata = Base.metadata
 
 # Set the SQLAlchemy URL dynamically
-config.set_main_option("sqlalchemy.url", f"sqlite:///{DB_PATH}")
+engine = get_engine()
+config.set_main_option("sqlalchemy.url", str(engine.url))
 
 
 def run_migrations_offline() -> None:

@@ -5,12 +5,25 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 # 1. Setup SQLite Engine and Session
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DB_PATH = os.path.join(_BASE_DIR, "storage_data", "kestrel.db")
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
+# Allow tests or environment to override the database URL
+_ENV_DB_URL = os.getenv("KESTREL_DATABASE_URL")
+if _ENV_DB_URL:
+    _resolved_db_url = _ENV_DB_URL
+else:
+    DB_PATH = os.path.join(_BASE_DIR, "storage_data", "kestrel.db")
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    _resolved_db_url = f"sqlite:///{DB_PATH}"
+
+engine = create_engine(_resolved_db_url, echo=False)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
+
+def get_engine():
+    return engine
+
+def get_session_factory():
+    return SessionLocal
 
 # 2. Define Models
 class User(Base):
