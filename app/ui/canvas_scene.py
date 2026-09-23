@@ -107,6 +107,7 @@ class CanvasScene(QGraphicsScene):
         self._auto_ai_timer.timeout.connect(self._on_auto_ai_timeout)
         # Keep references to background OCR workers to prevent premature GC
         self._ocr_workers: list = []
+        self._ocr_in_flight = False
 
         # Collaboration state
         self._is_remote_event = False
