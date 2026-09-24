@@ -4,8 +4,7 @@ from backend.video_generation.models import VideoJob, JobStatus
 
 class NotesGeneratorAgent:
     def __init__(self):
-        # Assumes GOOGLE_API_KEY is already set in your environment
-        self.model = genai.GenerativeModel('gemini-3.5-flash-lite')
+        pass
 
     def run(self, job: VideoJob) -> VideoJob:
         job.step = "notes_generator"
@@ -29,8 +28,8 @@ class NotesGeneratorAgent:
         """
 
         try:
-            response = self.model.generate_content(prompt)
-            markdown_content = response.text
+            from shared.ai_client import ai_client
+            markdown_content = ai_client.generate_content(prompt)
             
             # Save the notes to the local filesystem
             output_filename = f"Notes_{job.job_id}.md"

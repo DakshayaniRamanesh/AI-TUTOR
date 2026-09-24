@@ -173,8 +173,8 @@ def test_canvas_revision_mismatch_rejects_result(qapp):
 
     win._register_active_request("check_step", req)
     class FakeScene:
-        def get_revision(self):
-            return 2
+        def __init__(self):
+            self.revision = 2
     win.scene = FakeScene()
 
     assert win._is_request_stale("check_step", req) is True

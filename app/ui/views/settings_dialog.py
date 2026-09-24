@@ -1,18 +1,18 @@
 import os
-import requests
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from ..theme_manager import ThemeManager
 from ..kestrel_theme import MONO_FONT, ghost_button_qss, primary_button_qss
-
+from app.workers.model_readiness_worker import ModelReadinessWorker
+from shared.ai_client import ai_client
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Settings & Diagnostics")
-        self.resize(420, 320)
+        self.setWindowTitle("Unified Model Readiness")
+        self.resize(500, 450)
         c = ThemeManager.instance().get_colors()
 
         self.setStyleSheet(f"""
@@ -24,19 +24,45 @@ class SettingsDialog(QDialog):
                 color: {c['text_primary']};
                 font-family: {MONO_FONT};
             }}
+            QTableWidget {{
+                background-color: {c['bg_card']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border_color']};
+                gridline-color: {c['border_color']};
+                font-family: {MONO_FONT};
+                font-size: 11px;
+            }}
+            QHeaderView::section {{
+                background-color: {c['panel_card_bg']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border_color']};
+                font-weight: bold;
+            }}
         """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
         
-        title = QLabel("SYSTEM DIAGNOSTICS & APIS")
-        title.setStyleSheet(f"font-size: 13px; font-weight: 800; letter-spacing: 1px; color: {c['text_primary']}; font-family: {MONO_FONT};")
+        title = QLabel(f"UNIFIED MODEL READINESS - Provider: {ai_client.config.provider} | Model: {ai_client.config.model_id}")
+        title.setStyleSheet(f"font-size: 12px; font-weight: 800; letter-spacing: 1px; color: {c['text_primary']}; font-family: {MONO_FONT};")
         layout.addWidget(title)
+        
+        self.btn_run_tests = QPushButton("RUN READINESS TESTS")
+        self.btn_run_tests.setStyleSheet(primary_button_qss(c))
+        self.btn_run_tests.clicked.connect(self._run_tests)
+        layout.addWidget(self.btn_run_tests)
 
-        self._add_diagnostic_row(layout, "Groq API (Structure Agent)", "/api/diagnostics/groq")
-        self._add_diagnostic_row(layout, "Gemini API (Vision/RAG)", "/api/diagnostics/gemini")
-        self._add_diagnostic_row(layout, "Tectonic Engine (LaTeX Compiler)", "/api/diagnostics/tectonic")
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Capability", "Status", "Latency"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(self.table)
+        
+        self.lbl_overall = QLabel("Overall: NOT RUN")
+        self.lbl_overall.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {c['text_secondary']};")
+        layout.addWidget(self.lbl_overall)
 
         layout.addStretch()
 
@@ -45,67 +71,58 @@ class SettingsDialog(QDialog):
         btn_close.clicked.connect(self.close)
         layout.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignRight)
 
-    def _add_diagnostic_row(self, layout: QVBoxLayout, label_text: str, endpoint: str):
+        self.worker = None
+
+    def _run_tests(self):
+        self.btn_run_tests.setEnabled(False)
+        self.btn_run_tests.setText("RUNNING...")
+        self.table.setRowCount(0)
+        self.lbl_overall.setText("Overall: RUNNING")
+
+        self.worker = ModelReadinessWorker(self)
+        self.worker.finished.connect(self._on_tests_finished)
+        self.worker.start()
+
+    def _on_tests_finished(self, results):
+        self.btn_run_tests.setEnabled(True)
+        self.btn_run_tests.setText("RUN READINESS TESTS")
+        
+        tests = results.get("tests", {})
+        self.table.setRowCount(len(tests))
+        
         c = ThemeManager.instance().get_colors()
-        row = QFrame()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(8)
         
-        lbl = QLabel(label_text)
-        lbl.setStyleSheet(f"font-size: 12px; font-family: {MONO_FONT}; color: {c['text_primary']};")
-        
-        btn_test = QPushButton("TEST")
-        btn_test.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {c['bg_card']};
-                color: {c['text_primary']};
-                border: 1px solid {c['border_color']};
-                border-radius: 2px;
-                font-family: {MONO_FONT};
-                font-size: 11px;
-                font-weight: 600;
-                padding: 4px 10px;
-            }}
-            QPushButton:hover {{
-                border-color: {c['accent']};
-                background-color: {c['panel_card_bg']};
-            }}
-        """)
-        status_lbl = QLabel("")
-        status_lbl.setFixedWidth(24)
-
-        btn_test.clicked.connect(lambda: self._run_test(btn_test, status_lbl, endpoint))
-        
-        row_layout.addWidget(lbl)
-        row_layout.addStretch()
-        row_layout.addWidget(status_lbl)
-        row_layout.addWidget(btn_test)
-        
-        layout.addWidget(row)
-
-    def _run_test(self, button: QPushButton, status_lbl: QLabel, endpoint: str):
-        button.setText("...")
-        button.setEnabled(False)
-        status_lbl.setText("")
-        
-        from PyQt6.QtWidgets import QApplication
-        QApplication.processEvents()
-        
-        backend_url = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('PORT', '8000')}").rstrip("/")
-        try:
-            resp = requests.get(f"{backend_url}{endpoint}", timeout=10)
-            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            if resp.status_code == 200 and data.get("status") == "ok":
-                status_lbl.setText("✓")
-                status_lbl.setToolTip(data.get("message", "Connected successfully"))
+        row = 0
+        for name, data in tests.items():
+            item_name = QTableWidgetItem(name)
+            
+            passed = data.get("pass", False)
+            status_text = "PASS" if passed else "FAIL"
+            item_status = QTableWidgetItem(status_text)
+            
+            if passed:
+                item_status.setForeground(Qt.GlobalColor.green)
             else:
-                msg = data.get("message", f"HTTP {resp.status_code}: {resp.text}")
-                status_lbl.setText("✕")
-                status_lbl.setToolTip(msg)
-        except Exception as e:
-            status_lbl.setText("✕")
-            status_lbl.setToolTip(f"Connection failed: {str(e)}")
-        finally:
-            button.setText("TEST")
-            button.setEnabled(True)
+                item_status.setForeground(Qt.GlobalColor.red)
+                item_status.setToolTip(data.get("error", "Unknown error"))
+                
+            latency_text = f"{data.get('latency', 0):.2f}s"
+            item_latency = QTableWidgetItem(latency_text)
+            
+            self.table.setItem(row, 0, item_name)
+            self.table.setItem(row, 1, item_status)
+            self.table.setItem(row, 2, item_latency)
+            row += 1
+            
+        is_ready = results.get("overall_ready", False)
+        if is_ready:
+            self.lbl_overall.setText("Overall: READY")
+            self.lbl_overall.setStyleSheet("font-size: 14px; font-weight: bold; color: #16a34a;")
+            # Tell main window about readiness
+            if hasattr(self.parent(), "ai_ready"):
+                self.parent().ai_ready = True
+        else:
+            self.lbl_overall.setText("Overall: FAILED")
+            self.lbl_overall.setStyleSheet("font-size: 14px; font-weight: bold; color: #ef4444;")
+            if hasattr(self.parent(), "ai_ready"):
+                self.parent().ai_ready = False

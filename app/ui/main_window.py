@@ -1178,7 +1178,7 @@ class MainWindow(QMainWindow):
             return True
         if hasattr(req, "semantic_block_id") and req.semantic_block_id and hasattr(self, "scene") and hasattr(self.scene, "active_block_id") and req.semantic_block_id != getattr(self.scene, "active_block_id", None):
             return True
-        if hasattr(req, "canvas_revision") and req.canvas_revision and hasattr(self, "scene") and hasattr(self.scene, "get_revision") and req.canvas_revision != self.scene.get_revision():
+        if hasattr(req, "canvas_revision") and req.canvas_revision and hasattr(self, "scene") and hasattr(self.scene, "revision") and req.canvas_revision != self.scene.revision:
             return True
         return False
 

@@ -2,9 +2,6 @@ import os
 import json
 import uuid
 import warnings
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", category=FutureWarning)
-    import google.generativeai as genai
 from pypdf import PdfReader
 from backend.video_generation.models import VideoJob, JobStatus
 from backend.workspace.qdrant_store import QdrantRAGStore
@@ -62,9 +59,8 @@ TEXT:
 {combined_text}
 """
         try:
-            model = genai.GenerativeModel('gemini-3.5-flash-lite')
-            response = model.generate_content(prompt)
-            raw_json = response.text.strip()
+            from shared.ai_client import ai_client
+            raw_json = ai_client.generate_content(prompt)
             if raw_json.startswith("```json"):
                 raw_json = raw_json[7:-3]
             elif raw_json.startswith("```"):

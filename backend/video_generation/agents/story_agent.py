@@ -92,65 +92,18 @@ def classify_subject(user_prompt: str, story_script: str = "") -> str:
 class StoryAgent:
     def __init__(self, rag_store):
         self.rag_store = rag_store
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.google_api_key = os.getenv("GOOGLE_API_KEY")
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=FutureWarning)
-            try:
-                import google.generativeai as genai
-                if self.google_api_key:
-                    genai.configure(api_key=self.google_api_key)
-                    # Try preferred model, fall back to stable alternative
-                    for model_name in ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-1.5-flash", "gemini-3.5-flash"]:
-                        try:
-                            self.gemini_model = genai.GenerativeModel(model_name)
-                            self._gemini_model_name = model_name
-                            break
-                        except Exception:
-                            self.gemini_model = None
-                            self._gemini_model_name = ""
-                else:
-                    self.gemini_model = None
-                    self._gemini_model_name = ""
-            except ImportError:
-                self.gemini_model = None
-                self._gemini_model_name = ""
-
-        self._groq_client = None
-        if self.groq_api_key:
-            try:
-                from groq import Groq
-                self._groq_client = Groq(api_key=self.groq_api_key)
-            except ImportError:
-                pass
 
     def _generate(self, prompt: str) -> tuple[str, str]:
-        """Returns (generated_text, model_name_used)."""
-        if self.gemini_model:
-            try:
-                response = self.gemini_model.generate_content(prompt)
-                if response and response.text:
-                    return response.text, self._gemini_model_name
-            except Exception as e:
-                print(f"[StoryAgent] Gemini error: {e}. Falling back to Groq...")
+        from shared.ai_client import ai_client
+        try:
+            resp = ai_client.generate_content(prompt)
+            import re as _re
+            resp = _re.sub(r'<think>.*?</think>', '', resp, flags=_re.DOTALL).strip()
+            return resp, ai_client.config.model_id
+        except Exception as e:
+            print(f"[StoryAgent] error: {e}")
+            return "", ""
 
-        if self._groq_client:
-            try:
-                response = self._groq_client.chat.completions.create(
-                    model="qwen/qwen3.8-27b",
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=2048,
-                )
-                if response.choices and response.choices[0].message.content:
-                    raw = response.choices[0].message.content
-                    # Strip <think>...</think> tokens from reasoning models
-                    import re as _re
-                    raw = _re.sub(r'<think>.*?</think>', '', raw, flags=_re.DOTALL).strip()
-                    return raw, "groq/qwen3.8-27b"
-            except Exception as e:
-                print(f"[StoryAgent] Groq error: {e}")
-        return "", ""
 
     def run(self, job: VideoJob) -> VideoJob:
         job.step = "story_agent"

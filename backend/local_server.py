@@ -543,32 +543,13 @@ async def ask_ai(req: AskRequest):
         )
 
     raw_output = ""
-    if groq_key and not groq_key.startswith("your_"):
-        try:
-            from groq import Groq
-            client = Groq(api_key=groq_key)
-            resp = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=600
-            )
-            raw_output = resp.choices[0].message.content
-        except Exception as e:
-            print(f"[Backend] Groq failed: {e}")
-            raw_output = ""
-
-    if not raw_output and gemini_key and not gemini_key.startswith("your_"):
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel('gemini-2.5-flash')
-            resp = model.generate_content(prompt)
-            raw_output = resp.text
-        except Exception as e:
-            print(f"[Backend] Gemini failed: {e}")
-            from fastapi.responses import JSONResponse
-            return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+    try:
+        from shared.ai_client import ai_client
+        raw_output = ai_client.generate_content(prompt, temperature=0.3)
+    except Exception as e:
+        print(f"[Backend] AI failed: {e}")
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
     if not raw_output:
         from fastapi.responses import JSONResponse

@@ -15,28 +15,17 @@ def test_latex_selection_exact_transcribe_intent():
     job = LatexJob(job_id="test", mode="selection_exact", raw_transcription="2x = 4")
     
     # In LatexStructureAgent.run, we check intent
-    with patch("backend.video_generation.agents.latex_agents.Groq") as mock_groq:
-        mock_groq.return_value = None  # Force fallback
-        with patch("google.generativeai.GenerativeModel") as mock_genai_model, patch("google.generativeai.configure") as mock_configure:
-            mock_model = MagicMock()
-            mock_genai_model.return_value = mock_model
-            
-            mock_resp = MagicMock()
-            mock_resp.text = r"\[ 2x = 4 \]"
-            mock_model.generate_content.return_value = mock_resp
-            
-            agent = LatexStructureAgent()
-            agent.google_api_key = "test_key"
-            agent.groq_api_key = None
-            
-            result = agent.run(job)
-            assert result.status != JobStatus.ERROR
-            
-            # Check what was passed to generate_content
-            # The prompt should contain TRANSCRIBE instructions because of mode="selection_exact"
-            call_args = mock_model.generate_content.call_args[0][0]
-            assert "strictly to TRANSCRIBE" in call_args
-            assert "DO NOT solve any equations" in call_args
+    with patch("shared.ai_client.ai_client.generate_content") as mock_generate:
+        mock_generate.return_value = r"\[ 2x = 4 \]"
+        
+        agent = LatexStructureAgent()
+        result = agent.run(job)
+        assert result.status != JobStatus.ERROR
+        
+        # Check what was passed to generate_content
+        call_args = mock_generate.call_args[0][0]
+        assert "strictly to TRANSCRIBE" in call_args
+        assert "DO NOT solve any equations" in call_args
 
 def test_video_poll_worker_stops_on_cancel():
     worker = ManimVideoPollWorker(job_id="test", prompt="test")

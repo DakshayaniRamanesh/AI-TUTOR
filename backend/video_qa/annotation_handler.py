@@ -118,26 +118,14 @@ class AnnotationHandler:
     def _describe_frame(self, frame_image_b64: str, comment: str) -> str:
         if not frame_image_b64:
             return comment
-        api_key = os.getenv("GROQ_API_KEY")
-        if not api_key:
-            return comment
         try:
-            from groq import Groq
-            client = Groq(api_key=api_key)
+            from shared.ai_client import ai_client
+            prompt = f"Describe only what is highlighted/circled in this video frame. User question: {comment}"
             image_url = frame_image_b64 if frame_image_b64.startswith("data:image") else f"data:image/png;base64,{frame_image_b64}"
-            response = client.chat.completions.create(
-                model="llama-3.2-11b-vision-preview",
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"Describe only what is highlighted/circled in this video frame. User question: {comment}"},
-                        {"type": "image_url", "image_url": {"url": image_url}},
-                    ],
-                }],
-            )
-            return response.choices[0].message.content or comment
+            response = ai_client.generate_content(prompt, image_b64=image_url)
+            return response or comment
         except Exception as e:
-            print(f"[AnnotationHandler] Groq Vision description failed: {e}")
+            print(f"[AnnotationHandler] Vision description failed: {e}")
             return comment
 
     def _stitch(

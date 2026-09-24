@@ -249,46 +249,19 @@ class BoardUnderstandingAgent:
         except Exception:
             return ""
 
-        google_key = os.getenv("GOOGLE_API_KEY")
-        if google_key:
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=google_key)
-                model = genai.GenerativeModel("gemini-3.5-flash-lite")
-                prompt = (
-                    "Analyze this selected smart-whiteboard region for a tutoring system. "
-                    "Identify visible handwriting, equations, diagrams, arrows, labels, and the likely concept. "
-                    "Be concise and factual; do not invent unreadable text. "
-                    f"User instruction: {instruction or 'Explain this selection.'}"
-                )
-                response = model.generate_content([
-                    prompt,
-                    {"mime_type": "image/png", "data": image_bytes},
-                ])
-                if response and getattr(response, "text", None):
-                    return response.text.strip()[:3500]
-            except Exception as exc:
-                print(f"[BoardUnderstandingAgent] Gemini vision unavailable: {exc}")
-
-        groq_key = os.getenv("GROQ_API_KEY")
-        if groq_key:
-            try:
-                from groq import Groq
-                client = Groq(api_key=groq_key)
-                data_url = f"data:image/png;base64,{base64.b64encode(image_bytes).decode('ascii')}"
-                response = client.chat.completions.create(
-                    model="llama-3.2-11b-vision-preview",
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "Describe the selected whiteboard content, equations and diagram accurately. Do not guess unreadable text."},
-                            {"type": "image_url", "image_url": {"url": data_url}},
-                        ],
-                    }],
-                )
-                return (response.choices[0].message.content or "").strip()[:3500]
-            except Exception as exc:
-                print(f"[BoardUnderstandingAgent] Groq vision unavailable: {exc}")
+        try:
+            from shared.ai_client import ai_client
+            prompt = (
+                "Analyze this selected smart-whiteboard region for a tutoring system. "
+                "Identify visible handwriting, equations, diagrams, arrows, labels, and the likely concept. "
+                "Be concise and factual; do not invent unreadable text. "
+                f"User instruction: {instruction or 'Explain this selection.'}"
+            )
+            data_url = f"data:image/png;base64,{base64.b64encode(image_bytes).decode('ascii')}"
+            response_text = ai_client.generate_content(prompt, image_b64=data_url)
+            return (response_text or "").strip()[:3500]
+        except Exception as exc:
+            print(f"[BoardUnderstandingAgent] Vision API unavailable: {exc}")
         return ""
 
     @staticmethod

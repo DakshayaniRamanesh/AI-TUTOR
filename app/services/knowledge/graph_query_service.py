@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from app.storage.database import get_session_factory, Subject, ConceptNode, ConceptEdge, GraphEvidence, GraphLayout
+from app.storage.database import get_session_factory, Subject, ConceptNode, ConceptEdge, GraphEvidence, GraphLayoutState
 from shared.contracts.graph_contracts import GraphSnapshot, GraphNodeDTO, GraphEdgeDTO, GraphEvidenceDTO, NodeType, RelationType, GraphLayoutStateDTO
 
 GLOBAL_NODE_CAP = 100
@@ -56,7 +56,7 @@ class GraphQueryService:
                     extraction_mode=e.extraction_method,
                 ))
 
-            layouts = session.query(GraphLayout).filter(GraphLayout.scope_type == "SUBJECT", GraphLayout.scope_id == subject_id).all()
+            layouts = session.query(GraphLayoutState).filter(GraphLayoutState.scope_type == "SUBJECT", GraphLayoutState.scope_id == subject_id).all()
             layout_dict = {
                 l.node_id: GraphLayoutStateDTO(node_id=l.node_id, x=l.x, y=l.y, pinned=l.pinned)
                 for l in layouts
@@ -139,7 +139,7 @@ class GraphQueryService:
                     extraction_mode="OFFLINE_STRUCTURAL"
                 ))
 
-            layouts = session.query(GraphLayout).filter(GraphLayout.scope_type == "GLOBAL").all()
+            layouts = session.query(GraphLayoutState).filter(GraphLayoutState.scope_type == "GLOBAL").all()
             layout_dict = {
                 l.node_id: GraphLayoutStateDTO(node_id=l.node_id, x=l.x, y=l.y, pinned=l.pinned)
                 for l in layouts

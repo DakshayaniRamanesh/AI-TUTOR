@@ -21,9 +21,8 @@ class StoryboardPlannerAgent:
     """Turn a teaching plan into a compact declarative storyboard."""
 
     def __init__(self):
-        self.google_api_key = os.getenv("GOOGLE_API_KEY")
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-
+        pass
+                
     def run(self, job: VideoJob) -> VideoJob:
         job.step = "storyboard_planner"
         job.progress_percentage = 46
@@ -206,46 +205,18 @@ Return ONLY JSON in this exact structure:
         ]
 
     def _generate_json(self, prompt: str) -> Dict[str, Any]:
-        text = ""
-        # Groq first — fastest for structured JSON output (0.2s vs 2-3s for Gemini)
-        if self.groq_api_key:
-            try:
-                from groq import Groq
-                response = Groq(api_key=self.groq_api_key).chat.completions.create(
-                    model="qwen/qwen3.8-27b",
-                    messages=[{"role": "user", "content": prompt}],
-                    timeout=30.0,
-                )
-                text = response.choices[0].message.content or ""
-                if text:
-                    print("[StoryboardPlannerAgent] Groq JSON generation succeeded")
-            except Exception as exc:
-                print(f"[StoryboardPlannerAgent] Groq error: {exc}")
-
-        # Gemini fallback
-        if not text and self.google_api_key:
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=self.google_api_key)
-                response = genai.GenerativeModel("gemini-3.5-flash-lite").generate_content(prompt)
-                text = response.text if response else ""
-                if text:
-                    print("[StoryboardPlannerAgent] Gemini JSON generation succeeded")
-            except Exception as exc:
-                print(f"[StoryboardPlannerAgent] Gemini error: {exc}")
-
-        if not text:
-            return {}
-        match = re.search(r"\{.*\}", text, flags=re.S)
-        if not match:
-            return {}
+        from shared.ai_client import ai_client
+        import json
+        import re as _re
         try:
-            data = json.loads(match.group(0))
-            return data if isinstance(data, dict) else {}
-        except json.JSONDecodeError:
+            resp = ai_client.generate_content(prompt, json_schema={'type': 'object'})
+            match = _re.search(r'\{.*\}', resp, flags=_re.S)
+            if match:
+                return json.loads(match.group(0))
+            return json.loads(resp)
+        except Exception as e:
+            print(f'[Agent] error: {e}')
             return {}
-
-    @staticmethod
     def _as_script(storyboard: Storyboard) -> str:
         lines = [f"# {storyboard.title}"]
         for idx, scene in enumerate(storyboard.scenes, start=1):

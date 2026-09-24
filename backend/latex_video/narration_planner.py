@@ -270,9 +270,7 @@ class LLMNarrationPlanner:
     """
 
     def __init__(self):
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.google_api_key = os.getenv("GOOGLE_API_KEY")
-
+        pass
     def build_prompt(self, descriptors: List[Dict[str, Any]], lesson_title: str = "") -> str:
         """Constructs a structured pedagogical prompt with all frame information."""
         frames_text = []
@@ -400,76 +398,20 @@ Respond ONLY with a JSON object in this exact schema (no markdown fences, no oth
             return {}
 
         prompt = self.build_prompt(descriptors, lesson_title=lesson_title)
-        response_text = ""
-
-        # 1. Primary: Groq for fast structured output
-        if self.groq_api_key:
-            response_text = self._call_groq(prompt)
-
-        # 2. Secondary: Google Gemini fallback
-        if not response_text and self.google_api_key:
-            response_text = self._call_gemini(prompt)
+        try:
+            from shared.ai_client import ai_client
+            response_text = ai_client.generate_content(
+                prompt,
+                system_instruction="You are an expert educational scriptwriter."
+            )
+        except Exception as e:
+            print(f"[NarrationPlanner] Generation failed: {e}")
+            response_text = ""
 
         if not response_text:
             return {}
 
         return self.parse_narration_json(response_text)
-
-    def _call_groq(self, prompt: str) -> str:
-        try:
-            from groq import Groq
-            client = Groq(api_key=self.groq_api_key)
-            pref_model = getattr(config, "NARRATION_MODEL_GROQ", "qwen/qwen3.8-27b")
-            models_to_try = [pref_model]
-            for alt in ["qwen/qwen3.8-27b", "openai/gpt-oss-120b"]:
-                if alt not in models_to_try:
-                    models_to_try.append(alt)
-
-            for model in models_to_try:
-                try:
-                    response = client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": "You are an expert STEM educator and expressive video narrator. Output only valid JSON matching the requested schema.",
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=0.6,
-                        timeout=30.0,
-                    )
-                    content = response.choices[0].message.content or ""
-                    if content:
-                        print(f"[LLMNarration] Groq generation succeeded with {model}")
-                        return content
-                except Exception as m_err:
-                    print(f"[LLMNarration] Groq attempt with {model} failed: {m_err}")
-                    continue
-        except Exception as exc:
-            print(f"[LLMNarration] Groq call error: {exc}")
-        return ""
-
-    def _call_gemini(self, prompt: str) -> str:
-        import warnings
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", category=FutureWarning)
-                import google.generativeai as genai
-            genai.configure(api_key=self.google_api_key)
-            pref_model = getattr(config, "NARRATION_MODEL_GEMINI", "gemini-2.5-flash")
-            for m in [pref_model, "gemini-2.5-flash", "gemini-1.5-flash", "gemini-3.5-flash-lite"]:
-                try:
-                    model = genai.GenerativeModel(m)
-                    res = model.generate_content(prompt)
-                    if res and res.text:
-                        print(f"[LLMNarration] Gemini generation succeeded with {m}")
-                        return res.text
-                except Exception:
-                    continue
-        except Exception as exc:
-            print(f"[LLMNarration] Gemini call error: {exc}")
-        return ""
 
     def parse_narration_json(self, raw_text: str) -> Dict[int, str]:
         """Parses LLM JSON response and maps frame numbers to narration strings."""

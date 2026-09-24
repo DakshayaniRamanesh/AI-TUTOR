@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, String, DateTime, ForeignKey, Integer
+from sqlalchemy import create_engine, Column, String, DateTime, ForeignKey, Integer, Index
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 # 1. Setup SQLite Engine and Session
@@ -95,6 +95,12 @@ class Material(Base):
 
 class SubjectChunk(Base):
     __tablename__ = "subject_chunks"
+    __table_args__ = (
+        Index('ix_subject_chunks_content_hash', 'content_hash'),
+        Index('ix_subject_chunks_material_id', 'material_id'),
+        Index('ix_subject_chunks_subject_id', 'subject_id'),
+        Index('ix_subject_chunks_subject_content_type', 'subject_id', 'content_type'),
+    )
     id = Column(String, primary_key=True)
     subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
     material_id = Column(String, ForeignKey("materials.id"), nullable=False)

@@ -199,9 +199,8 @@ class LatexTranscribeAgent:
     """Uses Groq Vision (primary) or Google Gemini Vision (fallback) to extract raw LaTeX and math from handwriting."""
     
     def __init__(self):
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.google_api_key = os.getenv("GOOGLE_API_KEY")
-
+        pass
+                
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Transcribing Handwriting"
         job.progress_percentage = 10
@@ -224,69 +223,17 @@ class LatexTranscribeAgent:
             "Output ONLY the transcribed LaTeX and text without markdown wrapping or chat preamble."
         )
 
-        response_text = ""
-
-        # 1. PRIMARY: Groq Vision (fast, high quality, no Gemini quota limits)
-        if self.groq_api_key and Groq and not self.groq_api_key.startswith("your_"):
-            try:
-                client = Groq(api_key=self.groq_api_key)
-                groq_vision_models = ["qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]
-                for gvm in groq_vision_models:
-                    try:
-                        g_resp = client.chat.completions.create(
-                            model=gvm,
-                            messages=[{
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": prompt},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_str}"}}
-                                ]
-                            }],
-                            temperature=0.1,
-                            max_tokens=1000,
-                            timeout=25.0
-                        )
-                        if g_resp.choices and g_resp.choices[0].message.content:
-                            txt = g_resp.choices[0].message.content.strip()
-                            # Strip think tags if model is reasoning-based
-                            txt = re.sub(r'<think>.*?</think>', '', txt, flags=re.DOTALL).strip()
-                            if txt:
-                                response_text = txt
-                                print(f"[{job.job_id}] Groq Vision ({gvm}) transcription OK ({len(response_text)} chars)")
-                                break
-                    except Exception as gv_err:
-                        print(f"[{job.job_id}] Groq Vision {gvm} notice: {gv_err}")
-                        continue
-            except Exception as ex:
-                print(f"[{job.job_id}] Groq Vision init notice: {ex}")
-
-        # 2. FALLBACK: Gemini Vision (only if Groq vision failed or is unconfigured)
-        if not response_text and self.google_api_key and not self.google_api_key.startswith("your_"):
-            try:
-                import warnings
-                import google.generativeai as genai
-                from PIL import Image
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    genai.configure(api_key=self.google_api_key)
-
-                image_bytes = base64.b64decode(b64_str)
-                image = Image.open(io.BytesIO(image_bytes))
-
-                gemini_models = ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-pro"]
-                for m in gemini_models:
-                    try:
-                        model = genai.GenerativeModel(m)
-                        resp = model.generate_content([prompt, image])
-                        if resp and resp.text:
-                            response_text = resp.text.strip()
-                            print(f"[{job.job_id}] Gemini {m} vision fallback OK")
-                            break
-                    except Exception as ex:
-                        print(f"[{job.job_id}] Gemini {m} transcribe notice: {ex}")
-                        continue
-            except Exception as e:
-                print(f"[{job.job_id}] Gemini transcribe notice: {e}")
+        try:
+            from shared.ai_client import ai_client
+            # Construct data URL for the image
+            data_url = f"data:image/png;base64,{b64_str}"
+            response_text = ai_client.generate_content(prompt, image_b64=data_url)
+            import re as _re
+            response_text = _re.sub(r'<think>.*?</think>', '', response_text, flags=_re.DOTALL).strip()
+            print(f"[{job.job_id}] Vision transcription OK ({len(response_text)} chars)")
+        except Exception as e:
+            print(f"[{job.job_id}] AI transcription error: {e}")
+            response_text = ""
 
         if not response_text:
             job.status = JobStatus.ERROR
@@ -302,9 +249,8 @@ class LatexStructureAgent:
     """Uses Groq (default) or Gemini (fallback) text LLM to structure, format, and solve math problems into clean LaTeX."""
 
     def __init__(self):
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.google_api_key = os.getenv("GOOGLE_API_KEY")
-
+        pass
+                
     def run(self, job: LatexJob) -> LatexJob:
         job.step = "Structuring & Solving Math"
         job.progress_percentage = 35
@@ -349,59 +295,14 @@ class LatexStructureAgent:
 
         content = ""
 
-        # 1. PRIMARY: Groq (ultra-fast, using high-performance models for LaTeX & STEM math)
-        if self.groq_api_key and Groq and not self.groq_api_key.startswith("your_"):
-            try:
-                client = Groq(api_key=self.groq_api_key)
-                groq_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]
-                for gm in groq_models:
-                    try:
-                        response = client.chat.completions.create(
-                            model=gm,
-                            messages=[
-                                {"role": "system", "content": "You are an expert STEM mathematician and LaTeX typesetter. Output only clean valid LaTeX document body without preamble."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            temperature=0.2,
-                            max_tokens=1500,
-                            timeout=25.0
-                        )
-                        if response.choices and response.choices[0].message.content:
-                            raw_resp = response.choices[0].message.content.strip()
-                            # Strip think tags if model is reasoning-based
-                            raw_resp = re.sub(r'<think>.*?</think>', '', raw_resp, flags=re.DOTALL).strip()
-                            if raw_resp:
-                                content = raw_resp
-                                print(f"[{job.job_id}] Groq {gm} structuring OK ({len(content)} chars)")
-                                break
-                    except Exception as g_ex:
-                        print(f"[{job.job_id}] Groq model {gm} error: {g_ex}")
-                        continue
-            except Exception as e:
-                print(f"[{job.job_id}] Groq structuring failed: {e}")
-
-        # 2. FALLBACK: Gemini (if Groq is unavailable or hits rate limits)
-        if not content and self.google_api_key and not self.google_api_key.startswith("your_"):
-            try:
-                import warnings
-                import google.generativeai as genai
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    genai.configure(api_key=self.google_api_key)
-                gemini_models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"]
-                for gm in gemini_models:
-                    try:
-                        g_model = genai.GenerativeModel(gm)
-                        g_resp = g_model.generate_content(prompt)
-                        if g_resp and g_resp.text:
-                            content = g_resp.text.strip()
-                            print(f"[{job.job_id}] Gemini {gm} structuring fallback OK ({len(content)} chars)")
-                            break
-                    except Exception as gem_ex:
-                        print(f"[{job.job_id}] Gemini {gm} structuring error: {gem_ex}")
-                        continue
-            except Exception as e:
-                print(f"[{job.job_id}] Gemini structuring error: {e}")
+        content = ""
+        try:
+            from shared.ai_client import ai_client
+            system_instruction = "You are an expert STEM mathematician and LaTeX typesetter. Output only clean valid LaTeX document body without preamble."
+            content = ai_client.generate_content(prompt, system_instruction=system_instruction)
+            print(f"[{job.job_id}] LaTeX structure generated via unified AI model")
+        except Exception as e:
+            print(f"[{job.job_id}] AI structuring error: {e}")
 
         if not content:
             # Fallback to raw transcription if all LLMs failed

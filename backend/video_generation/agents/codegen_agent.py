@@ -150,65 +150,27 @@ _SUBJECT_VISUAL_HINTS = {
 
 class CodeGenAgent:
     def __init__(self):
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.google_api_key = os.getenv("GOOGLE_API_KEY")
-        self.api_key = self.google_api_key or self.groq_api_key
         self._template_lib = SceneTemplateLibrary()
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=FutureWarning)
-            try:
-                import google.generativeai as genai
-                if self.google_api_key:
-                    genai.configure(api_key=self.google_api_key)
-                    for model_name in ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-1.5-flash", "gemini-3.5-flash"]:
-                        try:
-                            self.gemini_model = genai.GenerativeModel(model_name)
-                            self._gemini_model_name = model_name
-                            break
-                        except Exception:
-                            self.gemini_model = None
-                            self._gemini_model_name = ""
-                else:
-                    self.gemini_model = None
-                    self._gemini_model_name = ""
-            except ImportError:
-                self.gemini_model = None
-                self._gemini_model_name = ""
-
-        self._groq_client = None
-        if self.groq_api_key:
-            try:
-                from groq import Groq
-                self._groq_client = Groq(api_key=self.groq_api_key)
-            except ImportError:
-                pass
 
     def _generate(self, prompt: str) -> tuple[str, str]:
         """Returns (generated_text, model_name_used)."""
-        if self.gemini_model:
-            try:
-                response = self.gemini_model.generate_content(prompt)
-                if response and response.text:
-                    return response.text, self._gemini_model_name
-            except Exception as e:
-                print(f"[CodeGenAgent] Gemini error: {e}. Falling back to Groq...")
-
-        if self._groq_client:
-            try:
-                response = self._groq_client.chat.completions.create(
-                    model="openai/gpt-oss-120b",
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=4096,
-                )
-                if response.choices and response.choices[0].message.content:
-                    raw = response.choices[0].message.content
-                    import re as _re
-                    raw = _re.sub(r'<think>.*?</think>', '', raw, flags=_re.DOTALL).strip()
-                    return raw, "groq/openai/gpt-oss-120b"
-            except Exception as e:
-                print(f"[CodeGenAgent] Groq error: {e}")
-        return "", ""
+        try:
+            from shared.ai_client import ai_client
+            # CodeGen needs large output, so we don't truncate or anything
+            response_text = ai_client.generate_content(
+                prompt,
+                system_instruction="You are an expert Manim CE Python code developer."
+            )
+            # Find which model was configured
+            from shared.ai_config import get_model_config
+            model_used = get_model_config.model_id
+            
+            import re as _re
+            raw = _re.sub(r'<think>.*?</think>', '', response_text, flags=_re.DOTALL).strip()
+            return raw, model_used
+        except Exception as e:
+            print(f"[CodeGenAgent] AI generation error: {e}")
+            return "", ""
 
     # ── Post-generation code cleanup ─────────────────────────────────────────
 
