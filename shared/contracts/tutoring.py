@@ -11,6 +11,7 @@ class FeedbackSeverity(str, Enum):
 
 class TutorMode(str, Enum):
     CHECK_STEP = "CHECK_STEP"
+    AUTO_CHECK = "AUTO_CHECK"
     HINT = "HINT"
     EXPLAIN = "EXPLAIN"
     ASK = "ASK"

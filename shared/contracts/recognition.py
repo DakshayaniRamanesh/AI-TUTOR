@@ -25,6 +25,7 @@ class RecognitionRequest(ContractModel):
     board_id: StableId
     notebook_id: Optional[StableId] = None
     attempt_id: Optional[StableId] = None
+    canvas_revision: int = 1
     group_id: StableId
     group_revision: int
     source_stroke_ids: List[StableId] = Field(default_factory=list, min_length=1)
@@ -39,6 +40,7 @@ class RecognitionResult(ContractModel):
     board_id: StableId
     notebook_id: Optional[StableId] = None
     attempt_id: Optional[StableId] = None
+    canvas_revision: int = 1
     group_id: StableId
     group_revision: int
     source_stroke_ids: List[StableId] = Field(default_factory=list, min_length=1)

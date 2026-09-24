@@ -1117,7 +1117,12 @@ class MainWindow(QMainWindow):
                 return
             self.scene.clear_ocr_in_flight()
             self._active_ocr_worker = None
-            self._on_auto_ai_failed(failure.user_message)
+            
+            error_msg = getattr(failure, 'user_message', "Recognition failed")
+            if getattr(failure, 'is_retryable', False):
+                error_msg = "Network timeout... switching to backup provider"
+                
+            self._on_auto_ai_failed(error_msg)
             worker.deleteLater()
             
         worker.success_emitted.connect(_on_success)
@@ -1233,7 +1238,13 @@ class MainWindow(QMainWindow):
                     self.error.emit(str(e))
 
         source_stroke_ids = query.source_stroke_ids if hasattr(query, 'source_stroke_ids') else []
-        req_mode = mode or "CHECK_STEP"
+        is_auto_check_query = getattr(query, 'is_auto_check', False)
+        if mode:
+            req_mode = mode
+        elif is_auto_check_query:
+            req_mode = "AUTO_CHECK"
+        else:
+            req_mode = "CHECK_STEP"
         
         canvas_context = None
         if hasattr(query, 'group_id') and hasattr(query, 'group_bbox'):
@@ -1342,8 +1353,8 @@ class MainWindow(QMainWindow):
             self.magic_orb.set_state("idle")
 
     def _on_auto_ai_failed(self, error_msg: str):
-        self.magic_orb.set_state("error")
-        QTimer.singleShot(1500, lambda: self.magic_orb.set_state("idle"))
+        self.magic_orb.set_state("error", error_msg)
+        QTimer.singleShot(2500, lambda: self.magic_orb.set_state("idle", ""))
 
     def _on_auto_ai_toggled(self, enabled: bool):
         self.scene.auto_ai_enabled = enabled

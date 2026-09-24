@@ -930,13 +930,13 @@ class StrokeProcessor:
     def start_stroke(self, pos: QPointF, pressure: float = 1.0, timestamp: float = None):
         """Starts capturing a new stroke."""
         if timestamp is None:
-            timestamp = time.time()
+            timestamp = time.time() * 1000.0
         self.raw_points = [(float(pos.x()), float(pos.y()), float(pressure), float(timestamp))]
 
     def add_point(self, pos: QPointF, pressure: float = 1.0, timestamp: float = None):
         """Appends a new point to the active stroke."""
         if timestamp is None:
-            timestamp = time.time()
+            timestamp = time.time() * 1000.0
         self.raw_points.append((float(pos.x()), float(pos.y()), float(pressure), float(timestamp)))
 
     def make_handwriting_item(self, pen: QPen, tool_mode: str = "pen"):

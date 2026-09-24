@@ -108,8 +108,6 @@ class CanvasScene(QGraphicsScene):
         self._auto_ai_timer = QTimer(self)
         self._auto_ai_timer.setSingleShot(True)
         self._auto_ai_timer.timeout.connect(self._on_auto_ai_timeout)
-        # Keep references to background OCR workers to prevent premature GC
-        self._ocr_workers: list = []
         self._ocr_in_flight = False
 
         # Collaboration state
@@ -118,6 +116,20 @@ class CanvasScene(QGraphicsScene):
         self._last_cursor_emit_time = 0.0
         self._item_pos_before_drag: dict = {}
         self.notebook_id = None
+
+        import uuid
+        self._stable_board_id = str(uuid.uuid4())
+        self.revision = 1
+        self.scene_changed.connect(self._increment_revision)
+
+    def _increment_revision(self):
+        self.revision += 1
+
+    def get_revision(self) -> int:
+        return self.revision
+
+    def get_active_board_id(self) -> str:
+        return self.notebook_id or self._stable_board_id
 
     def set_notebook_id(self, notebook_id: str):
         self.notebook_id = notebook_id
@@ -776,7 +788,7 @@ class CanvasScene(QGraphicsScene):
             return False
 
         pressure = event.pressure() if hasattr(event, "pressure") else 1.0
-        timestamp = event.timestamp() if hasattr(event, "timestamp") else time.time()
+        timestamp = event.timestamp() if hasattr(event, "timestamp") else time.time() * 1000.0
 
         event_type = event.type()
         if event_type == event.Type.TabletPress:
@@ -896,7 +908,7 @@ class CanvasScene(QGraphicsScene):
                 x=rect.x(), y=rect.y(), w=rect.width(), h=rect.height(),
                 start_ts=start_ts, end_ts=end_ts
             )
-            self.stroke_grouper.add_stroke(stroke_data, board_id="canvas_board")
+            self.stroke_grouper.add_stroke(stroke_data, board_id=self.get_active_board_id())
             
             self._recent_ink_strokes.append(final_item)
             if self.auto_ai_enabled and not getattr(self, "_ocr_in_flight", False):
@@ -1267,7 +1279,7 @@ class CanvasScene(QGraphicsScene):
                     stroke_id=s.item_id, x=rect.x(), y=rect.y(), w=rect.width(), h=rect.height(),
                     start_ts=now_ms, end_ts=now_ms
                 ))
-            group = self.stroke_grouper.create_explicit_group(stroke_datas, board_id="canvas_board")
+            group = self.stroke_grouper.create_explicit_group(stroke_datas, board_id=self.get_active_board_id())
         else:
             group_id = self.stroke_grouper.active_group_id
             if group_id and group_id in self.stroke_grouper.groups:
@@ -1292,9 +1304,10 @@ class CanvasScene(QGraphicsScene):
 
         req = RecognitionRequest(
             request_id=str(uuid.uuid4()),
-            board_id="canvas_board",
-            notebook_id=None,
-            attempt_id=None,
+            board_id=self.get_active_board_id(),
+            notebook_id=self.notebook_id,
+            attempt_id=getattr(self.parent(), "current_attempt_id", None) if hasattr(self, "parent") and self.parent() else None,
+            canvas_revision=self.revision,
             group_id=group.id,
             group_revision=group.revision,
             source_stroke_ids=group.stroke_ids,
@@ -1333,6 +1346,13 @@ class CanvasScene(QGraphicsScene):
             from PyQt6.QtWidgets import QGraphicsItem
             from PyQt6.QtGui import QPainter, QBrush
             from PyQt6.QtCore import QRectF, Qt
+
+            # Remove old markers that overlap the bounding box
+            check_rect = bounding_rect.adjusted(-50, -50, 50, 50)
+            for item in self.items():
+                if item.__class__.__name__ == "IssueMarkerItem":
+                    if item.sceneBoundingRect().intersects(check_rect):
+                        self.removeItem(item)
             
             class IssueMarkerItem(QGraphicsItem):
                 def __init__(self, is_error: bool):

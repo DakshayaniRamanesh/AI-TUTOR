@@ -101,6 +101,9 @@ class VisionRecognizer(Recognizer):
         return RecognitionResult(
             request_id=request.request_id,
             board_id=request.board_id,
+            notebook_id=request.notebook_id,
+            attempt_id=request.attempt_id,
+            canvas_revision=request.canvas_revision,
             status=RecognitionStatus.SUCCESS,
             content_type=content_type,
             plain_text=text,
