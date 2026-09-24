@@ -167,11 +167,9 @@ class SplashScreen(QWidget):
         painter.translate(center_x, pivot_y)
         painter.scale(scale_factor, scale_factor)
 
-        # ── 1. Falcon Logo ────────────────────────────────────────────────────
+        # ── 1. Falcon Logo (actual kestrel_logo.png) ──────────────────────────
         if icon_opacity > 0:
-            c = QColor(fg_color)
-            c.setAlphaF(icon_opacity)
-            self._draw_falcon_logo(painter, 0, -52, c)
+            self._draw_logo_pixmap(painter, 0, -60, icon_opacity, theme_t)
 
         # ── 2. Wordmark ───────────────────────────────────────────────────────
         if wordmark_opacity > 0:
@@ -265,66 +263,55 @@ class SplashScreen(QWidget):
                              Qt.AlignmentFlag.AlignCenter,
                              self._status_text)
 
-    # ── Falcon Logo Drawing ───────────────────────────────────────────────────
-    def _draw_falcon_logo(self, painter: QPainter, cx: float, cy: float, color: QColor):
+    # ── Logo rendering (uses actual kestrel_logo.png asset) ──────────────────
+    def _draw_logo_pixmap(self, painter: QPainter, cx: float, cy: float,
+                          opacity: float, theme_t: float):
         """
-        Draws the Kestrel falcon-head logo that matches the in-whiteboard icon:
-        a stylised falcon head facing right, line-art style inside an implicit
-        rounded square frame — identical geometry to the canvas watermark.
+        Renders the real kestrel_logo.png at the given canvas-relative centre.
+        - Dark mode (theme_t=0): white logo on dark background
+          → invert the black-on-white PNG so it appears white
+        - Light mode (theme_t=1): original black logo on light background
+        Opacity fades the logo in; theme_t crossfades the tint.
         """
+        import os
+        from PyQt6.QtGui import QPixmap, QImage, QColor as _QC
+        from PyQt6.QtCore import Qt as _Qt
+
+        LOGO_SIZE = 96   # px, rendered square
+
+        if not hasattr(self, "_logo_px_dark") or not hasattr(self, "_logo_px_light"):
+            asset = os.path.join(os.path.dirname(__file__), "assets", "kestrel_logo.png")
+            base = QPixmap(asset).scaled(
+                LOGO_SIZE, LOGO_SIZE,
+                _Qt.AspectRatioMode.KeepAspectRatio,
+                _Qt.TransformationMode.SmoothTransformation
+            )
+
+            # Light variant — original (black on transparent)
+            self._logo_px_light = base
+
+            # Dark variant — invert colours so it becomes white on transparent
+            img = base.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+            for y in range(img.height()):
+                for x in range(img.width()):
+                    px = img.pixel(x, y)
+                    a = (px >> 24) & 0xFF
+                    if a > 10:          # non-transparent pixel
+                        r = 255 - ((px >> 16) & 0xFF)
+                        g = 255 - ((px >>  8) & 0xFF)
+                        b = 255 - ( px        & 0xFF)
+                        img.setPixel(x, y, (a << 24) | (r << 16) | (g << 8) | b)
+            self._logo_px_dark = QPixmap.fromImage(img)
+
+        # Interpolate opacity between dark and light pixmaps via painter alpha
+        px = self._logo_px_dark if theme_t < 0.5 else self._logo_px_light
+
+        w, h = px.width(), px.height()
+        x = int(cx - w / 2)
+        y = int(cy - h / 2)
+
         painter.save()
-        painter.translate(cx, cy)
-
-        size = 72
-        rect = QRectF(-size / 2, -size / 2, size, size)
-
-        # Filled rounded square
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(color))
-        painter.drawRoundedRect(rect, 10, 10)
-
-        # Contrast colour for the line art cut-out
-        brightness = color.lightnessF()
-        line_c = QColor(0, 0, 0) if brightness > 0.5 else QColor(255, 255, 255)
-
-        pen = QPen(line_c, 2.8, Qt.PenStyle.SolidLine,
-                   Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-
-        # ── Falcon head silhouette ────────────────────────────────────────
-        # Outer head outline (counter-clockwise from crown)
-        path = QPainterPath()
-        path.moveTo(-14, -10)       # back of head / neck
-        path.cubicTo(-14, -26, -2, -30, 6, -26)   # crown curve
-        path.lineTo(20, -14)        # top beak ridge
-        path.lineTo(22, -6)         # beak tip upper
-        path.lineTo(17, 0)          # beak hook
-        path.lineTo(12, -2)         # mouth corner
-        path.lineTo(8, 8)           # lower jaw
-        path.lineTo(2, 18)          # throat
-        path.lineTo(-6, 20)         # chest
-        path.lineTo(-16, 10)        # lower neck
-        path.closeSubpath()
-        painter.drawPath(path)
-
-        # Beak hook (separate small detail)
-        beak = QPainterPath()
-        beak.moveTo(17, -4)
-        beak.lineTo(22, -6)
-        beak.lineTo(19, 2)
-        painter.drawPath(beak)
-
-        # Eye
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(line_c))
-        painter.drawEllipse(QPointF(6, -14), 3.2, 3.2)
-
-        # Inner geometric line — the cross-pattern inside the head
-        painter.setPen(QPen(line_c, 1.8, Qt.PenStyle.SolidLine,
-                            Qt.PenCapStyle.RoundCap))
-        painter.drawLine(QPointF(-14, -10), QPointF(4,  2))   # nape → centre
-        painter.drawLine(QPointF(4,   2),  QPointF(18, -8))   # centre → beak ridge
-        painter.drawLine(QPointF(4,   2),  QPointF(2,  18))   # centre → throat
-
+        painter.setOpacity(opacity)
+        painter.drawPixmap(x, y, px)
         painter.restore()
+

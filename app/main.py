@@ -84,14 +84,20 @@ def main():
 
         window_ref: list = []
 
+        _splash_ref = splash   # keep C++ object alive until we no longer need it
+
         def _on_imports_ready():
             """Called on the MAIN THREAD via Qt signal — safe to build widgets."""
             thread.quit()
-            from app.ui.main_window import MainWindow   # already imported; instant
+            from app.ui.main_window import MainWindow   # already cached; instant
             w = MainWindow()
             window_ref.append(w)
-            # If splash already finished, show immediately; otherwise wait for it.
-            if not splash.isVisible():
+            # Guard: splash may already be deleted (WA_DeleteOnClose)
+            try:
+                splash_gone = not _splash_ref.isVisible()
+            except RuntimeError:
+                splash_gone = True
+            if splash_gone:
                 w.show()
 
         def _on_failed(msg: str):

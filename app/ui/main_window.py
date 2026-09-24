@@ -4,6 +4,7 @@ Frameless macOS Window Design with Traffic Light Controls, Sidebar (~260px), Top
 """
 
 import os
+import uuid
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QListWidget,
     QListWidgetItem, QPushButton, QLineEdit, QLabel, QFrame,
