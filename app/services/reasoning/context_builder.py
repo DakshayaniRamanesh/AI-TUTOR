@@ -90,26 +90,33 @@ class ContextBuilder:
 
         # 3. Learner Observations (Layer 4 Memory)
         learner_obs_dtos: List[LearnerObservationDTO] = []
-        # If user_id can be resolved or default user
-        user_id = getattr(request, "user_id", None) or "default_user"
-        try:
-            obs_list = self.repo.get_learner_observations(
-                user_id=user_id, 
-                subject_id=request.subject_id, 
-                status="ACTIVE"
-            )
-            for o in obs_list:
-                learner_obs_dtos.append(LearnerObservationDTO(
-                    observation_type=o.observation_type,
-                    description=o.description,
-                    occurrence_count=o.occurrence_count,
-                    status=o.status,
-                    confidence=o.confidence
-                ))
-            if learner_obs_dtos:
-                diagnostic_reasons.append(f"Found {len(learner_obs_dtos)} active learner observations")
-        except Exception as e:
-            diagnostic_reasons.append(f"Learner observation query warning: {e}")
+        user_id = getattr(request, "user_id", None)
+        if not user_id and request.session_id:
+            user_id = self.repo.get_user_id_for_session(request.session_id)
+        if not user_id and request.attempt_id:
+            user_id = self.repo.get_user_id_for_attempt(request.attempt_id)
+
+        if user_id:
+            try:
+                obs_list = self.repo.get_learner_observations(
+                    user_id=user_id, 
+                    subject_id=request.subject_id, 
+                    status="ACTIVE"
+                )
+                for o in obs_list:
+                    learner_obs_dtos.append(LearnerObservationDTO(
+                        observation_type=o.observation_type,
+                        description=o.description,
+                        occurrence_count=o.occurrence_count,
+                        status=o.status,
+                        confidence=o.confidence
+                    ))
+                if learner_obs_dtos:
+                    diagnostic_reasons.append(f"Found {len(learner_obs_dtos)} active learner observations")
+            except Exception as e:
+                diagnostic_reasons.append(f"Learner observation query warning: {e}")
+        else:
+            diagnostic_reasons.append("No user_id resolved; learner observation retrieval skipped honestly")
 
         # 4. Canonical Subject Retrieval (Materials + Chunks + Hybrid Search)
         retrieved_evidence: List[RetrievedEvidence] = []

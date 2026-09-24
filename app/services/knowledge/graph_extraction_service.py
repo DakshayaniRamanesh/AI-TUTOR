@@ -48,7 +48,7 @@ class KnowledgeGraphExtractionService:
             ))
 
             # 2. Materials & Chunks
-                        if material_id:
+            if material_id:
                 materials = session.query(Material).filter(Material.id == material_id).all()
             else:
                 materials = session.query(Material).filter(Material.subject_id == subject_id).all()

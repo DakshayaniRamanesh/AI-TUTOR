@@ -24,10 +24,15 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from fastapi import FastAPI, BackgroundTasks, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+
+class LatexGenerationResponse(BaseModel):
+    job_id: str
+    backend: str
+    status_endpoint: str
+
 from backend.video_generation.models import (
     VideoJob, AnnotationEvent, PathData, LatexJob,
-    VideoGenerationRequest, VideoGenerationResponse, VideoJobStatusResponse,
-    LatexGenerationResponse, LatexJobStatusResponse,
     BoardSelection
 )
 from shared.contracts.latex import LatexGenerationRequest, LatexGenerationMode, LatexSourceAnchor

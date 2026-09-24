@@ -20,42 +20,60 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    conn = op.get_bind()
+    from sqlalchemy import inspect
+    inspector = inspect(conn)
+    existing_cols = []
+    tables = inspector.get_table_names()
+    if 'materials' in tables:
+        existing_cols = [c['name'] for c in inspector.get_columns('materials')]
+
     # 1. Add columns to materials
     with op.batch_alter_table('materials') as batch_op:
-        batch_op.add_column(sa.Column('resource_type', sa.String(), nullable=True, server_default='PDF'))
-        batch_op.add_column(sa.Column('mime_type', sa.String(), nullable=True))
-        batch_op.add_column(sa.Column('content_hash', sa.String(), nullable=True))
-        batch_op.add_column(sa.Column('file_size', sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column('ingestion_status', sa.String(), nullable=True, server_default='REGISTERED'))
-        batch_op.add_column(sa.Column('chunk_count', sa.Integer(), nullable=True, server_default='0'))
-        batch_op.add_column(sa.Column('ingestion_error', sa.String(), nullable=True))
-        batch_op.add_column(sa.Column('last_indexed_at', sa.DateTime(), nullable=True))
-        batch_op.add_column(sa.Column('metadata_json', sa.String(), nullable=True))
+        if 'resource_type' not in existing_cols:
+            batch_op.add_column(sa.Column('resource_type', sa.String(), nullable=True, server_default='PDF'))
+        if 'mime_type' not in existing_cols:
+            batch_op.add_column(sa.Column('mime_type', sa.String(), nullable=True))
+        if 'content_hash' not in existing_cols:
+            batch_op.add_column(sa.Column('content_hash', sa.String(), nullable=True))
+        if 'file_size' not in existing_cols:
+            batch_op.add_column(sa.Column('file_size', sa.Integer(), nullable=True))
+        if 'ingestion_status' not in existing_cols:
+            batch_op.add_column(sa.Column('ingestion_status', sa.String(), nullable=True, server_default='REGISTERED'))
+        if 'chunk_count' not in existing_cols:
+            batch_op.add_column(sa.Column('chunk_count', sa.Integer(), nullable=True, server_default='0'))
+        if 'ingestion_error' not in existing_cols:
+            batch_op.add_column(sa.Column('ingestion_error', sa.String(), nullable=True))
+        if 'last_indexed_at' not in existing_cols:
+            batch_op.add_column(sa.Column('last_indexed_at', sa.DateTime(), nullable=True))
+        if 'metadata_json' not in existing_cols:
+            batch_op.add_column(sa.Column('metadata_json', sa.String(), nullable=True))
 
     # 2. Create subject_chunks table
-    op.create_table(
-        'subject_chunks',
-        sa.Column('id', sa.String(), primary_key=True),
-        sa.Column('subject_id', sa.String(), sa.ForeignKey('subjects.id'), nullable=False),
-        sa.Column('material_id', sa.String(), sa.ForeignKey('materials.id'), nullable=False),
-        sa.Column('chunk_index', sa.Integer(), nullable=False),
-        sa.Column('document_title', sa.String(), nullable=True),
-        sa.Column('chapter', sa.String(), nullable=True),
-        sa.Column('section', sa.String(), nullable=True),
-        sa.Column('page_number', sa.Integer(), nullable=True),
-        sa.Column('content_type', sa.String(), nullable=True),
-        sa.Column('text', sa.String(), nullable=True),
-        sa.Column('token_count', sa.Integer(), nullable=True),
-        sa.Column('content_hash', sa.String(), nullable=True),
-        sa.Column('parent_path', sa.String(), nullable=True),
-        sa.Column('created_at', sa.DateTime(), nullable=True),
-        sa.Column('updated_at', sa.DateTime(), nullable=True),
-    )
-    
-    op.create_index('ix_subject_chunks_subject_id', 'subject_chunks', ['subject_id'])
-    op.create_index('ix_subject_chunks_material_id', 'subject_chunks', ['material_id'])
-    op.create_index('ix_subject_chunks_subject_content_type', 'subject_chunks', ['subject_id', 'content_type'])
-    op.create_index('ix_subject_chunks_content_hash', 'subject_chunks', ['content_hash'])
+    if 'subject_chunks' not in tables:
+        op.create_table(
+            'subject_chunks',
+            sa.Column('id', sa.String(), primary_key=True),
+            sa.Column('subject_id', sa.String(), sa.ForeignKey('subjects.id'), nullable=False),
+            sa.Column('material_id', sa.String(), sa.ForeignKey('materials.id'), nullable=False),
+            sa.Column('chunk_index', sa.Integer(), nullable=False),
+            sa.Column('document_title', sa.String(), nullable=True),
+            sa.Column('chapter', sa.String(), nullable=True),
+            sa.Column('section', sa.String(), nullable=True),
+            sa.Column('page_number', sa.Integer(), nullable=True),
+            sa.Column('content_type', sa.String(), nullable=True),
+            sa.Column('text', sa.String(), nullable=True),
+            sa.Column('token_count', sa.Integer(), nullable=True),
+            sa.Column('content_hash', sa.String(), nullable=True),
+            sa.Column('parent_path', sa.String(), nullable=True),
+            sa.Column('created_at', sa.DateTime(), nullable=True),
+            sa.Column('updated_at', sa.DateTime(), nullable=True),
+        )
+        
+        op.create_index('ix_subject_chunks_subject_id', 'subject_chunks', ['subject_id'])
+        op.create_index('ix_subject_chunks_material_id', 'subject_chunks', ['material_id'])
+        op.create_index('ix_subject_chunks_subject_content_type', 'subject_chunks', ['subject_id', 'content_type'])
+        op.create_index('ix_subject_chunks_content_hash', 'subject_chunks', ['content_hash'])
 
     # 3. Create FTS5 virtual table
     op.execute("""

@@ -248,9 +248,11 @@ class MainWindow(QMainWindow):
         
         from app.controllers.learning_controller import LearningController
         self.learning_controller = LearningController(self.memory_repo, parent=self)
-        self.learning_controller.ensure_active_attempt()
-        self.current_learning_session_id = self.learning_controller.current_session_id
-        self.current_attempt_id = self.learning_controller.current_attempt_id
+        self.current_learning_session_id: str | None = None
+        self.current_attempt_id: str | None = None
+
+        # Active background request tracking by channel (e.g., 'recognition', 'check_step', 'ask')
+        self._active_requests: dict = {}
 
         # ID of the currently open notebook and active subject. None = demo/unsaved canvas.
         self._current_notebook_id: str | None = None
@@ -506,6 +508,7 @@ class MainWindow(QMainWindow):
 
     def _on_open_subject_detail(self, subject_id: str):
         """Loads the requested subject from the DB and switches the view."""
+        self._clear_active_requests("subject_switch")
         self.current_subject_id = subject_id
         self.subject_detail_view.load_subject(subject_id)
         self.main_stack.setCurrentWidget(self.subject_detail_view)
@@ -1121,21 +1124,56 @@ class MainWindow(QMainWindow):
         worker.failure_emitted.connect(_on_failure)
         worker.start()
 
-    def _is_request_stale(self, request) -> bool:
+    def _register_active_request(self, channel: str, request: object):
+        """Registers an active request for a channel ('recognition', 'check_step', 'ask')."""
+        if not hasattr(self, "_active_requests") or self._active_requests is None:
+            self._active_requests = {}
+        self._active_requests[channel] = request
+
+    def _complete_active_request(self, channel: str, request_id: str = None):
+        """Removes active request registration upon completion or error."""
+        if hasattr(self, "_active_requests") and channel in self._active_requests:
+            if request_id is None or getattr(self._active_requests[channel], "request_id", None) == request_id:
+                del self._active_requests[channel]
+
+    def _clear_active_requests(self, reason: str = "switch"):
+        """Invalidates all active background requests when switching notebooks/subjects."""
+        if hasattr(self, "_active_requests") and self._active_requests:
+            self._active_requests.clear()
+
+    def _is_request_stale(self, channel_or_request: object, request: object = None) -> bool:
         """Determines if an async response belongs to a past notebook/attempt/subject/revision context."""
-        if not request:
+        if request is None:
+            req = channel_or_request
+            mode_str = str(getattr(req, "tutor_mode", "")).upper()
+            if mode_str in ("ASK", "EXPLAIN"):
+                channel = "ask"
+            else:
+                channel = "check_step"
+        else:
+            channel = channel_or_request
+            req = request
+
+        if not req:
             return True
-        if hasattr(request, "subject_id") and request.subject_id and request.subject_id != getattr(self, "current_subject_id", None):
+
+        if hasattr(self, "_active_requests") and self._active_requests:
+            active_req = self._active_requests.get(channel)
+            if active_req is not None:
+                active_id = getattr(active_req, "request_id", None)
+                req_id = getattr(req, "request_id", None)
+                if active_id and req_id and active_id != req_id:
+                    return True
+
+        if hasattr(req, "subject_id") and req.subject_id and req.subject_id != getattr(self, "current_subject_id", None):
             return True
-        if hasattr(request, "notebook_id") and request.notebook_id and request.notebook_id != getattr(self, "_current_notebook_id", None):
+        if hasattr(req, "notebook_id") and req.notebook_id and req.notebook_id != getattr(self, "_current_notebook_id", None):
             return True
-        if hasattr(request, "attempt_id") and request.attempt_id and request.attempt_id != getattr(self, "current_attempt_id", None):
+        if hasattr(req, "attempt_id") and req.attempt_id and req.attempt_id != getattr(self, "current_attempt_id", None):
             return True
-        if hasattr(request, "request_id") and request.request_id and request.request_id != getattr(self, "_current_request_id", None):
+        if hasattr(req, "semantic_block_id") and req.semantic_block_id and hasattr(self, "scene") and hasattr(self.scene, "active_block_id") and req.semantic_block_id != getattr(self.scene, "active_block_id", None):
             return True
-        if hasattr(request, "semantic_block_id") and request.semantic_block_id and request.semantic_block_id != getattr(self, "_current_semantic_block_id", None):
-            return True
-        if hasattr(request, "canvas_revision") and request.canvas_revision and hasattr(self, "scene") and request.canvas_revision != self.scene.get_revision():
+        if hasattr(req, "canvas_revision") and req.canvas_revision and hasattr(self, "scene") and hasattr(self.scene, "get_revision") and req.canvas_revision != self.scene.get_revision():
             return True
         return False
 
@@ -1241,6 +1279,8 @@ class MainWindow(QMainWindow):
             recognition_confidence=getattr(query, 'confidence', None)
         )
 
+        self._register_active_request("check_step", context_req)
+
         worker = TutorWorker(
             context_req, clean_pos, self.tutor_orchestrator, 
             source_stroke_ids, parent=self
@@ -1251,10 +1291,13 @@ class MainWindow(QMainWindow):
                 self._solver_workers.remove(worker)
                 
             # Stale-result identity protection across notebooks/attempts
-            if self._is_request_stale(worker.request):
+            if self._is_request_stale("check_step", worker.request):
                 print("[TutorWorker] Discarding stale result from a different session/notebook.")
                 self.magic_orb.set_state("idle", "")
+                self._complete_active_request("check_step", getattr(worker.request, "request_id", None))
                 return
+
+            self._complete_active_request("check_step", getattr(worker.request, "request_id", None))
 
             is_auto_check = getattr(query, 'is_auto_check', False)
             verdict_val = response.verdict.value if response.verdict else None
@@ -1282,6 +1325,7 @@ class MainWindow(QMainWindow):
 
         def _on_error(err):
             print(f"[TutorWorker] Error: {err}")
+            self._complete_active_request("check_step", getattr(worker.request, "request_id", None))
             self.magic_orb.set_state("error")
             QTimer.singleShot(1500, lambda: self.magic_orb.set_state("idle", ""))
             if worker in self._solver_workers:
@@ -1939,6 +1983,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'scene') and self.scene:
                 self.scene.clear_ocr_in_flight()
 
+            self._clear_active_requests("notebook_switch")
             payload = NotebookStorage.load_notebook(notebook_id)
             self._current_notebook_id = payload.get("board_id", notebook_id)
             self.current_board.board_id = payload.get("board_id", notebook_id)
@@ -1949,11 +1994,15 @@ class MainWindow(QMainWindow):
             if payload.get("subject_id"):
                 self.current_subject_id = payload.get("subject_id")
 
+            user_id = getattr(self, "current_user_id", None)
             self.current_learning_session_id = self.memory_repo.get_or_create_active_session(
                 notebook_id=self._current_notebook_id,
+                user_id=user_id,
                 subject_id=self.current_subject_id
             )
             self.current_attempt_id = self.memory_repo.get_or_create_active_attempt(self.current_learning_session_id)
+            self.learning_controller.current_session_id = self.current_learning_session_id
+            self.learning_controller.current_attempt_id = self.current_attempt_id
             self._update_context_indicator()
             
             self.scene.load_from_dict_list(
@@ -2326,10 +2375,13 @@ class MainWindow(QMainWindow):
                 tutor_mode=tutor_m
             )
 
+            place_pos = self._find_non_overlapping_pos(raw_pos, width=580.0, height=240.0)
             bubble = AnswerBubble(title="AI Tutor", full_text=f"Consulting subject material for: {q}...", question=q)
             bubble.setPos(place_pos)
             bubble.bubble.citation_clicked.connect(self._on_citation_clicked)
             self.scene.addItem(bubble)
+
+            self._register_active_request("ask", req)
 
             class TutorAskWorker(QThread):
                 finished = pyqtSignal(object)
@@ -2353,12 +2405,14 @@ class MainWindow(QMainWindow):
                 if ask_worker in self._solver_workers:
                     self._solver_workers.remove(ask_worker)
 
-                if self._is_request_stale(ask_worker.request):
+                if self._is_request_stale("ask", ask_worker.request):
                     print("[TutorAskWorker] Discarding stale result.")
                     if bubble.scene() == self.scene:
                         self.scene.removeItem(bubble)
+                    self._complete_active_request("ask", getattr(ask_worker.request, "request_id", None))
                     return
 
+                self._complete_active_request("ask", getattr(ask_worker.request, "request_id", None))
                 citations_data = [c.model_dump() for c in response.citations]
                 bubble.update_solution(q, {
                     "full_solution": response.feedback_text,
@@ -2371,6 +2425,7 @@ class MainWindow(QMainWindow):
             def _on_ask_error(err):
                 if ask_worker in self._solver_workers:
                     self._solver_workers.remove(ask_worker)
+                self._complete_active_request("ask", getattr(ask_worker.request, "request_id", None))
                 bubble.update_solution(q, f"Could not complete tutoring inquiry: {err}")
 
             ask_worker.finished.connect(_on_ask_finished)

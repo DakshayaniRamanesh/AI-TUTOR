@@ -1,0 +1,586 @@
+diff --git a/alembic/env.py b/alembic/env.py
+index 4b9095d..4439a77 100644
+--- a/alembic/env.py
++++ b/alembic/env.py
+@@ -25,9 +25,10 @@ import app.storage.models.learning # Ensure new models are loaded
+ # for 'autogenerate' support
+ target_metadata = Base.metadata
+ 
+-# Set the SQLAlchemy URL dynamically
+-engine = get_engine()
+-config.set_main_option("sqlalchemy.url", str(engine.url))
++# Set the SQLAlchemy URL dynamically if not already explicitly provided (e.g., in tests)
++if not config.get_main_option("sqlalchemy.url") or config.get_main_option("sqlalchemy.url") in ("driver://user:pass@localhost/dbname", ""):
++    engine = get_engine()
++    config.set_main_option("sqlalchemy.url", str(engine.url))
+ 
+ 
+ def run_migrations_offline() -> None:
+diff --git a/alembic/versions/2788c95f1c69_subject_brain_ingestion.py b/alembic/versions/2788c95f1c69_subject_brain_ingestion.py
+index 3faa7ac..26e0aae 100644
+--- a/alembic/versions/2788c95f1c69_subject_brain_ingestion.py
++++ b/alembic/versions/2788c95f1c69_subject_brain_ingestion.py
+@@ -20,42 +20,60 @@ depends_on: Union[str, Sequence[str], None] = None
+ 
+ def upgrade() -> None:
+     """Upgrade schema."""
++    conn = op.get_bind()
++    from sqlalchemy import inspect
++    inspector = inspect(conn)
++    existing_cols = []
++    tables = inspector.get_table_names()
++    if 'materials' in tables:
++        existing_cols = [c['name'] for c in inspector.get_columns('materials')]
++
+     # 1. Add columns to materials
+     with op.batch_alter_table('materials') as batch_op:
+-        batch_op.add_column(sa.Column('resource_type', sa.String(), nullable=True, server_default='PDF'))
+-        batch_op.add_column(sa.Column('mime_type', sa.String(), nullable=True))
+-        batch_op.add_column(sa.Column('content_hash', sa.String(), nullable=True))
+-        batch_op.add_column(sa.Column('file_size', sa.Integer(), nullable=True))
+-        batch_op.add_column(sa.Column('ingestion_status', sa.String(), nullable=True, server_default='REGISTERED'))
+-        batch_op.add_column(sa.Column('chunk_count', sa.Integer(), nullable=True, server_default='0'))
+-        batch_op.add_column(sa.Column('ingestion_error', sa.String(), nullable=True))
+-        batch_op.add_column(sa.Column('last_indexed_at', sa.DateTime(), nullable=True))
+-        batch_op.add_column(sa.Column('metadata_json', sa.String(), nullable=True))
++        if 'resource_type' not in existing_cols:
++            batch_op.add_column(sa.Column('resource_type', sa.String(), nullable=True, server_default='PDF'))
++        if 'mime_type' not in existing_cols:
++            batch_op.add_column(sa.Column('mime_type', sa.String(), nullable=True))
++        if 'content_hash' not in existing_cols:
++            batch_op.add_column(sa.Column('content_hash', sa.String(), nullable=True))
++        if 'file_size' not in existing_cols:
++            batch_op.add_column(sa.Column('file_size', sa.Integer(), nullable=True))
++        if 'ingestion_status' not in existing_cols:
++            batch_op.add_column(sa.Column('ingestion_status', sa.String(), nullable=True, server_default='REGISTERED'))
++        if 'chunk_count' not in existing_cols:
++            batch_op.add_column(sa.Column('chunk_count', sa.Integer(), nullable=True, server_default='0'))
++        if 'ingestion_error' not in existing_cols:
++            batch_op.add_column(sa.Column('ingestion_error', sa.String(), nullable=True))
++        if 'last_indexed_at' not in existing_cols:
++            batch_op.add_column(sa.Column('last_indexed_at', sa.DateTime(), nullable=True))
++        if 'metadata_json' not in existing_cols:
++            batch_op.add_column(sa.Column('metadata_json', sa.String(), nullable=True))
+ 
+     # 2. Create subject_chunks table
+-    op.create_table(
+-        'subject_chunks',
+-        sa.Column('id', sa.String(), primary_key=True),
+-        sa.Column('subject_id', sa.String(), sa.ForeignKey('subjects.id'), nullable=False),
+-        sa.Column('material_id', sa.String(), sa.ForeignKey('materials.id'), nullable=False),
+-        sa.Column('chunk_index', sa.Integer(), nullable=False),
+-        sa.Column('document_title', sa.String(), nullable=True),
+-        sa.Column('chapter', sa.String(), nullable=True),
+-        sa.Column('section', sa.String(), nullable=True),
+-        sa.Column('page_number', sa.Integer(), nullable=True),
+-        sa.Column('content_type', sa.String(), nullable=True),
+-        sa.Column('text', sa.String(), nullable=True),
+-        sa.Column('token_count', sa.Integer(), nullable=True),
+-        sa.Column('content_hash', sa.String(), nullable=True),
+-        sa.Column('parent_path', sa.String(), nullable=True),
+-        sa.Column('created_at', sa.DateTime(), nullable=True),
+-        sa.Column('updated_at', sa.DateTime(), nullable=True),
+-    )
+-    
+-    op.create_index('ix_subject_chunks_subject_id', 'subject_chunks', ['subject_id'])
+-    op.create_index('ix_subject_chunks_material_id', 'subject_chunks', ['material_id'])
+-    op.create_index('ix_subject_chunks_subject_content_type', 'subject_chunks', ['subject_id', 'content_type'])
+-    op.create_index('ix_subject_chunks_content_hash', 'subject_chunks', ['content_hash'])
++    if 'subject_chunks' not in tables:
++        op.create_table(
++            'subject_chunks',
++            sa.Column('id', sa.String(), primary_key=True),
++            sa.Column('subject_id', sa.String(), sa.ForeignKey('subjects.id'), nullable=False),
++            sa.Column('material_id', sa.String(), sa.ForeignKey('materials.id'), nullable=False),
++            sa.Column('chunk_index', sa.Integer(), nullable=False),
++            sa.Column('document_title', sa.String(), nullable=True),
++            sa.Column('chapter', sa.String(), nullable=True),
++            sa.Column('section', sa.String(), nullable=True),
++            sa.Column('page_number', sa.Integer(), nullable=True),
++            sa.Column('content_type', sa.String(), nullable=True),
++            sa.Column('text', sa.String(), nullable=True),
++            sa.Column('token_count', sa.Integer(), nullable=True),
++            sa.Column('content_hash', sa.String(), nullable=True),
++            sa.Column('parent_path', sa.String(), nullable=True),
++            sa.Column('created_at', sa.DateTime(), nullable=True),
++            sa.Column('updated_at', sa.DateTime(), nullable=True),
++        )
++        
++        op.create_index('ix_subject_chunks_subject_id', 'subject_chunks', ['subject_id'])
++        op.create_index('ix_subject_chunks_material_id', 'subject_chunks', ['material_id'])
++        op.create_index('ix_subject_chunks_subject_content_type', 'subject_chunks', ['subject_id', 'content_type'])
++        op.create_index('ix_subject_chunks_content_hash', 'subject_chunks', ['content_hash'])
+ 
+     # 3. Create FTS5 virtual table
+     op.execute("""
+diff --git a/alembic/versions/4996ac6ad613_add_group_id_and_group_revision_to_.py b/alembic/versions/4996ac6ad613_add_group_id_and_group_revision_to_.py
+index b305c74..8848f81 100644
+--- a/alembic/versions/4996ac6ad613_add_group_id_and_group_revision_to_.py
++++ b/alembic/versions/4996ac6ad613_add_group_id_and_group_revision_to_.py
+@@ -20,15 +20,31 @@ depends_on: Union[str, Sequence[str], None] = None
+ 
+ def upgrade() -> None:
+     """Upgrade schema."""
+-    # ### commands auto generated by Alembic - please adjust! ###
+-    op.add_column('reasoning_steps', sa.Column('group_id', sa.String(), nullable=True))
+-    op.add_column('reasoning_steps', sa.Column('group_revision', sa.Integer(), nullable=True))
+-    # ### end Alembic commands ###
++    conn = op.get_bind()
++    from sqlalchemy import inspect
++    inspector = inspect(conn)
++    existing_cols = []
++    if 'reasoning_steps' in inspector.get_table_names():
++        existing_cols = [c['name'] for c in inspector.get_columns('reasoning_steps')]
++
++    with op.batch_alter_table('reasoning_steps') as batch_op:
++        if 'group_id' not in existing_cols:
++            batch_op.add_column(sa.Column('group_id', sa.String(), nullable=True))
++        if 'group_revision' not in existing_cols:
++            batch_op.add_column(sa.Column('group_revision', sa.Integer(), nullable=True))
+ 
+ 
+ def downgrade() -> None:
+     """Downgrade schema."""
+-    # ### commands auto generated by Alembic - please adjust! ###
+-    op.drop_column('reasoning_steps', 'group_revision')
+-    op.drop_column('reasoning_steps', 'group_id')
+-    # ### end Alembic commands ###
++    conn = op.get_bind()
++    from sqlalchemy import inspect
++    inspector = inspect(conn)
++    existing_cols = []
++    if 'reasoning_steps' in inspector.get_table_names():
++        existing_cols = [c['name'] for c in inspector.get_columns('reasoning_steps')]
++
++    with op.batch_alter_table('reasoning_steps') as batch_op:
++        if 'group_revision' in existing_cols:
++            batch_op.drop_column('group_revision')
++        if 'group_id' in existing_cols:
++            batch_op.drop_column('group_id')
+diff --git a/alembic/versions/6f9fbf64e222_update_graph_models_for_phase_3_batch_.py b/alembic/versions/6f9fbf64e222_update_graph_models_for_phase_3_batch_.py
+index 272bca7..44d38f0 100644
+--- a/alembic/versions/6f9fbf64e222_update_graph_models_for_phase_3_batch_.py
++++ b/alembic/versions/6f9fbf64e222_update_graph_models_for_phase_3_batch_.py
+@@ -21,6 +21,14 @@ depends_on: Union[str, Sequence[str], None] = None
+ def upgrade() -> None:
+     """Upgrade schema."""
+     # ### commands auto generated by Alembic - please adjust! ###
++    op.execute("DROP TABLE IF EXISTS _alembic_tmp_concept_edges")
++    op.execute("DROP TABLE IF EXISTS _alembic_tmp_concept_nodes")
++
++    conn = op.get_bind()
++    from sqlalchemy import inspect
++    inspector = inspect(conn)
++    tables = inspector.get_table_names()
++
+     with op.batch_alter_table('concept_edges', schema=None) as batch_op:
+         batch_op.alter_column('source_name',
+                existing_type=sa.VARCHAR(),
+@@ -28,21 +36,31 @@ def upgrade() -> None:
+         batch_op.alter_column('target_name',
+                existing_type=sa.VARCHAR(),
+                nullable=True)
+-        batch_op.create_foreign_key('fk_concept_edges_target_node_id', 'concept_nodes', ['target_node_id'], ['id'])
+-        batch_op.create_foreign_key('fk_concept_edges_source_node_id', 'concept_nodes', ['source_node_id'], ['id'])
+ 
+-    with op.batch_alter_table('concept_nodes', schema=None) as batch_op:
+-        batch_op.add_column(sa.Column('canonical_key', sa.String(), nullable=False))
+-        batch_op.add_column(sa.Column('display_name', sa.String(), nullable=False))
+-        batch_op.add_column(sa.Column('node_type', sa.String(), nullable=False))
+-        batch_op.add_column(sa.Column('aliases_json', sa.String(), nullable=True))
+-        batch_op.add_column(sa.Column('evidence_count', sa.Integer(), nullable=True))
+-        batch_op.add_column(sa.Column('extraction_method', sa.String(), nullable=True))
+-        batch_op.add_column(sa.Column('confidence', sa.Float(), nullable=True))
+-        batch_op.add_column(sa.Column('created_at', sa.DateTime(), nullable=True))
+-        batch_op.add_column(sa.Column('updated_at', sa.DateTime(), nullable=True))
+-        batch_op.drop_column('category')
+-        batch_op.drop_column('name')
++    if 'concept_nodes' in tables:
++        existing_cols = [c['name'] for c in inspector.get_columns('concept_nodes')]
++        cols_to_add = [
++            ('canonical_key', sa.Column('canonical_key', sa.String(), nullable=False, server_default='')),
++            ('display_name', sa.Column('display_name', sa.String(), nullable=False, server_default='')),
++            ('node_type', sa.Column('node_type', sa.String(), nullable=False, server_default='CONCEPT')),
++            ('aliases_json', sa.Column('aliases_json', sa.String(), nullable=True)),
++            ('evidence_count', sa.Column('evidence_count', sa.Integer(), nullable=True)),
++            ('extraction_method', sa.Column('extraction_method', sa.String(), nullable=True)),
++            ('confidence', sa.Column('confidence', sa.Float(), nullable=True)),
++            ('created_at', sa.Column('created_at', sa.DateTime(), nullable=True)),
++            ('updated_at', sa.Column('updated_at', sa.DateTime(), nullable=True)),
++        ]
++        cols_to_drop = ['category', 'name']
++
++        needs_add = [col for name, col in cols_to_add if name not in existing_cols]
++        needs_drop = [name for name in cols_to_drop if name in existing_cols]
++
++        if needs_add or needs_drop:
++            with op.batch_alter_table('concept_nodes', schema=None) as batch_op:
++                for col in needs_add:
++                    batch_op.add_column(col)
++                for name in needs_drop:
++                    batch_op.drop_column(name)
+ 
+     # ### end Alembic commands ###
+ 
+diff --git a/alembic/versions/d694b2dbb8cf_add_graphlayout.py b/alembic/versions/d694b2dbb8cf_add_graphlayout.py
+index 3a08f0b..79f3939 100644
+--- a/alembic/versions/d694b2dbb8cf_add_graphlayout.py
++++ b/alembic/versions/d694b2dbb8cf_add_graphlayout.py
+@@ -20,18 +20,21 @@ depends_on: Union[str, Sequence[str], None] = None
+ 
+ def upgrade() -> None:
+     """Upgrade schema."""
+-    # ### commands auto generated by Alembic - please adjust! ###
+-    op.create_table('graph_layout',
+-    sa.Column('id', sa.String(), nullable=False),
+-    sa.Column('node_id', sa.String(), nullable=False),
+-    sa.Column('scope_type', sa.String(), nullable=False),
+-    sa.Column('scope_id', sa.String(), nullable=True),
+-    sa.Column('x', sa.Float(), nullable=False),
+-    sa.Column('y', sa.Float(), nullable=False),
+-    sa.Column('pinned', sa.Boolean(), nullable=True),
+-    sa.Column('updated_at', sa.DateTime(), nullable=True),
+-    sa.PrimaryKeyConstraint('id')
+-    )
++    conn = op.get_bind()
++    from sqlalchemy import inspect
++    inspector = inspect(conn)
++    if 'graph_layout' not in inspector.get_table_names():
++        op.create_table('graph_layout',
++        sa.Column('id', sa.String(), nullable=False),
++        sa.Column('node_id', sa.String(), nullable=False),
++        sa.Column('scope_type', sa.String(), nullable=False),
++        sa.Column('scope_id', sa.String(), nullable=True),
++        sa.Column('x', sa.Float(), nullable=False),
++        sa.Column('y', sa.Float(), nullable=False),
++        sa.Column('pinned', sa.Boolean(), nullable=True),
++        sa.Column('updated_at', sa.DateTime(), nullable=True),
++        sa.PrimaryKeyConstraint('id')
++        )
+ 
+     # ### end Alembic commands ###
+ 
+diff --git a/alembic/versions/febdd314c89e_add_reasoning_ancestry.py b/alembic/versions/febdd314c89e_add_reasoning_ancestry.py
+index d9c5974..df086f4 100644
+--- a/alembic/versions/febdd314c89e_add_reasoning_ancestry.py
++++ b/alembic/versions/febdd314c89e_add_reasoning_ancestry.py
+@@ -19,13 +19,31 @@ depends_on: Union[str, Sequence[str], None] = None
+ 
+ 
+ def upgrade() -> None:
+-    """Upgrade schema."""
++    """Upgrade schema safely checking existing columns."""
++    conn = op.get_bind()
++    from sqlalchemy import inspect
++    inspector = inspect(conn)
++    existing_cols = []
++    if 'reasoning_steps' in inspector.get_table_names():
++        existing_cols = [c['name'] for c in inspector.get_columns('reasoning_steps')]
++
+     with op.batch_alter_table('reasoning_steps') as batch_op:
+-        batch_op.add_column(sa.Column('previous_step_id', sa.String(), nullable=True))
+-        batch_op.add_column(sa.Column('replaces_step_id', sa.String(), nullable=True))
++        if 'previous_step_id' not in existing_cols:
++            batch_op.add_column(sa.Column('previous_step_id', sa.String(), nullable=True))
++        if 'replaces_step_id' not in existing_cols:
++            batch_op.add_column(sa.Column('replaces_step_id', sa.String(), nullable=True))
+ 
+ def downgrade() -> None:
+-    """Downgrade schema."""
++    """Downgrade schema safely."""
++    conn = op.get_bind()
++    from sqlalchemy import inspect
++    inspector = inspect(conn)
++    existing_cols = []
++    if 'reasoning_steps' in inspector.get_table_names():
++        existing_cols = [c['name'] for c in inspector.get_columns('reasoning_steps')]
++
+     with op.batch_alter_table('reasoning_steps') as batch_op:
+-        batch_op.drop_column('replaces_step_id')
+-        batch_op.drop_column('previous_step_id')
++        if 'replaces_step_id' in existing_cols:
++            batch_op.drop_column('replaces_step_id')
++        if 'previous_step_id' in existing_cols:
++            batch_op.drop_column('previous_step_id')
+diff --git a/app/services/knowledge/graph_extraction_service.py b/app/services/knowledge/graph_extraction_service.py
+index 67c87ff..4ac2231 100644
+--- a/app/services/knowledge/graph_extraction_service.py
++++ b/app/services/knowledge/graph_extraction_service.py
+@@ -48,7 +48,7 @@ class KnowledgeGraphExtractionService:
+             ))
+ 
+             # 2. Materials & Chunks
+-                        if material_id:
++            if material_id:
+                 materials = session.query(Material).filter(Material.id == material_id).all()
+             else:
+                 materials = session.query(Material).filter(Material.subject_id == subject_id).all()
+diff --git a/app/services/reasoning/context_builder.py b/app/services/reasoning/context_builder.py
+index ac166de..436e117 100644
+--- a/app/services/reasoning/context_builder.py
++++ b/app/services/reasoning/context_builder.py
+@@ -90,26 +90,33 @@ class ContextBuilder:
+ 
+         # 3. Learner Observations (Layer 4 Memory)
+         learner_obs_dtos: List[LearnerObservationDTO] = []
+-        # If user_id can be resolved or default user
+-        user_id = getattr(request, "user_id", None) or "default_user"
+-        try:
+-            obs_list = self.repo.get_learner_observations(
+-                user_id=user_id, 
+-                subject_id=request.subject_id, 
+-                status="ACTIVE"
+-            )
+-            for o in obs_list:
+-                learner_obs_dtos.append(LearnerObservationDTO(
+-                    observation_type=o.observation_type,
+-                    description=o.description,
+-                    occurrence_count=o.occurrence_count,
+-                    status=o.status,
+-                    confidence=o.confidence
+-                ))
+-            if learner_obs_dtos:
+-                diagnostic_reasons.append(f"Found {len(learner_obs_dtos)} active learner observations")
+-        except Exception as e:
+-            diagnostic_reasons.append(f"Learner observation query warning: {e}")
++        user_id = getattr(request, "user_id", None)
++        if not user_id and request.session_id:
++            user_id = self.repo.get_user_id_for_session(request.session_id)
++        if not user_id and request.attempt_id:
++            user_id = self.repo.get_user_id_for_attempt(request.attempt_id)
++
++        if user_id:
++            try:
++                obs_list = self.repo.get_learner_observations(
++                    user_id=user_id, 
++                    subject_id=request.subject_id, 
++                    status="ACTIVE"
++                )
++                for o in obs_list:
++                    learner_obs_dtos.append(LearnerObservationDTO(
++                        observation_type=o.observation_type,
++                        description=o.description,
++                        occurrence_count=o.occurrence_count,
++                        status=o.status,
++                        confidence=o.confidence
++                    ))
++                if learner_obs_dtos:
++                    diagnostic_reasons.append(f"Found {len(learner_obs_dtos)} active learner observations")
++            except Exception as e:
++                diagnostic_reasons.append(f"Learner observation query warning: {e}")
++        else:
++            diagnostic_reasons.append("No user_id resolved; learner observation retrieval skipped honestly")
+ 
+         # 4. Canonical Subject Retrieval (Materials + Chunks + Hybrid Search)
+         retrieved_evidence: List[RetrievedEvidence] = []
+diff --git a/app/ui/main_window.py b/app/ui/main_window.py
+index 431e55f..e1c3f3a 100644
+--- a/app/ui/main_window.py
++++ b/app/ui/main_window.py
+@@ -248,9 +248,11 @@ class MainWindow(QMainWindow):
+         
+         from app.controllers.learning_controller import LearningController
+         self.learning_controller = LearningController(self.memory_repo, parent=self)
+-        self.learning_controller.ensure_active_attempt()
+-        self.current_learning_session_id = self.learning_controller.current_session_id
+-        self.current_attempt_id = self.learning_controller.current_attempt_id
++        self.current_learning_session_id: str | None = None
++        self.current_attempt_id: str | None = None
++
++        # Active background request tracking by channel (e.g., 'recognition', 'check_step', 'ask')
++        self._active_requests: dict = {}
+ 
+         # ID of the currently open notebook and active subject. None = demo/unsaved canvas.
+         self._current_notebook_id: str | None = None
+@@ -506,6 +508,7 @@ class MainWindow(QMainWindow):
+ 
+     def _on_open_subject_detail(self, subject_id: str):
+         """Loads the requested subject from the DB and switches the view."""
++        self._clear_active_requests("subject_switch")
+         self.current_subject_id = subject_id
+         self.subject_detail_view.load_subject(subject_id)
+         self.main_stack.setCurrentWidget(self.subject_detail_view)
+@@ -1121,21 +1124,56 @@ class MainWindow(QMainWindow):
+         worker.failure_emitted.connect(_on_failure)
+         worker.start()
+ 
+-    def _is_request_stale(self, request) -> bool:
++    def _register_active_request(self, channel: str, request: object):
++        """Registers an active request for a channel ('recognition', 'check_step', 'ask')."""
++        if not hasattr(self, "_active_requests") or self._active_requests is None:
++            self._active_requests = {}
++        self._active_requests[channel] = request
++
++    def _complete_active_request(self, channel: str, request_id: str = None):
++        """Removes active request registration upon completion or error."""
++        if hasattr(self, "_active_requests") and channel in self._active_requests:
++            if request_id is None or getattr(self._active_requests[channel], "request_id", None) == request_id:
++                del self._active_requests[channel]
++
++    def _clear_active_requests(self, reason: str = "switch"):
++        """Invalidates all active background requests when switching notebooks/subjects."""
++        if hasattr(self, "_active_requests") and self._active_requests:
++            self._active_requests.clear()
++
++    def _is_request_stale(self, channel_or_request: object, request: object = None) -> bool:
+         """Determines if an async response belongs to a past notebook/attempt/subject/revision context."""
+-        if not request:
+-            return True
+-        if hasattr(request, "subject_id") and request.subject_id and request.subject_id != getattr(self, "current_subject_id", None):
++        if request is None:
++            req = channel_or_request
++            mode_str = str(getattr(req, "tutor_mode", "")).upper()
++            if mode_str in ("ASK", "EXPLAIN"):
++                channel = "ask"
++            else:
++                channel = "check_step"
++        else:
++            channel = channel_or_request
++            req = request
++
++        if not req:
+             return True
+-        if hasattr(request, "notebook_id") and request.notebook_id and request.notebook_id != getattr(self, "_current_notebook_id", None):
++
++        if hasattr(self, "_active_requests") and self._active_requests:
++            active_req = self._active_requests.get(channel)
++            if active_req is not None:
++                active_id = getattr(active_req, "request_id", None)
++                req_id = getattr(req, "request_id", None)
++                if active_id and req_id and active_id != req_id:
++                    return True
++
++        if hasattr(req, "subject_id") and req.subject_id and req.subject_id != getattr(self, "current_subject_id", None):
+             return True
+-        if hasattr(request, "attempt_id") and request.attempt_id and request.attempt_id != getattr(self, "current_attempt_id", None):
++        if hasattr(req, "notebook_id") and req.notebook_id and req.notebook_id != getattr(self, "_current_notebook_id", None):
+             return True
+-        if hasattr(request, "request_id") and request.request_id and request.request_id != getattr(self, "_current_request_id", None):
++        if hasattr(req, "attempt_id") and req.attempt_id and req.attempt_id != getattr(self, "current_attempt_id", None):
+             return True
+-        if hasattr(request, "semantic_block_id") and request.semantic_block_id and request.semantic_block_id != getattr(self, "_current_semantic_block_id", None):
++        if hasattr(req, "semantic_block_id") and req.semantic_block_id and hasattr(self, "scene") and hasattr(self.scene, "active_block_id") and req.semantic_block_id != getattr(self.scene, "active_block_id", None):
+             return True
+-        if hasattr(request, "canvas_revision") and request.canvas_revision and hasattr(self, "scene") and request.canvas_revision != self.scene.get_revision():
++        if hasattr(req, "canvas_revision") and req.canvas_revision and hasattr(self, "scene") and hasattr(self.scene, "get_revision") and req.canvas_revision != self.scene.get_revision():
+             return True
+         return False
+ 
+@@ -1241,6 +1279,8 @@ class MainWindow(QMainWindow):
+             recognition_confidence=getattr(query, 'confidence', None)
+         )
+ 
++        self._register_active_request("check_step", context_req)
++
+         worker = TutorWorker(
+             context_req, clean_pos, self.tutor_orchestrator, 
+             source_stroke_ids, parent=self
+@@ -1251,11 +1291,14 @@ class MainWindow(QMainWindow):
+                 self._solver_workers.remove(worker)
+                 
+             # Stale-result identity protection across notebooks/attempts
+-            if self._is_request_stale(worker.request):
++            if self._is_request_stale("check_step", worker.request):
+                 print("[TutorWorker] Discarding stale result from a different session/notebook.")
+                 self.magic_orb.set_state("idle", "")
++                self._complete_active_request("check_step", getattr(worker.request, "request_id", None))
+                 return
+ 
++            self._complete_active_request("check_step", getattr(worker.request, "request_id", None))
++
+             is_auto_check = getattr(query, 'is_auto_check', False)
+             verdict_val = response.verdict.value if response.verdict else None
+             is_error = response.severity in [FeedbackSeverity.WARNING, FeedbackSeverity.CRITICAL]
+@@ -1282,6 +1325,7 @@ class MainWindow(QMainWindow):
+ 
+         def _on_error(err):
+             print(f"[TutorWorker] Error: {err}")
++            self._complete_active_request("check_step", getattr(worker.request, "request_id", None))
+             self.magic_orb.set_state("error")
+             QTimer.singleShot(1500, lambda: self.magic_orb.set_state("idle", ""))
+             if worker in self._solver_workers:
+@@ -1939,6 +1983,7 @@ class MainWindow(QMainWindow):
+             if hasattr(self, 'scene') and self.scene:
+                 self.scene.clear_ocr_in_flight()
+ 
++            self._clear_active_requests("notebook_switch")
+             payload = NotebookStorage.load_notebook(notebook_id)
+             self._current_notebook_id = payload.get("board_id", notebook_id)
+             self.current_board.board_id = payload.get("board_id", notebook_id)
+@@ -1949,11 +1994,15 @@ class MainWindow(QMainWindow):
+             if payload.get("subject_id"):
+                 self.current_subject_id = payload.get("subject_id")
+ 
++            user_id = getattr(self, "current_user_id", None)
+             self.current_learning_session_id = self.memory_repo.get_or_create_active_session(
+                 notebook_id=self._current_notebook_id,
++                user_id=user_id,
+                 subject_id=self.current_subject_id
+             )
+             self.current_attempt_id = self.memory_repo.get_or_create_active_attempt(self.current_learning_session_id)
++            self.learning_controller.current_session_id = self.current_learning_session_id
++            self.learning_controller.current_attempt_id = self.current_attempt_id
+             self._update_context_indicator()
+             
+             self.scene.load_from_dict_list(
+@@ -2326,11 +2375,14 @@ class MainWindow(QMainWindow):
+                 tutor_mode=tutor_m
+             )
+ 
++            place_pos = self._find_non_overlapping_pos(raw_pos, width=580.0, height=240.0)
+             bubble = AnswerBubble(title="AI Tutor", full_text=f"Consulting subject material for: {q}...", question=q)
+             bubble.setPos(place_pos)
+             bubble.bubble.citation_clicked.connect(self._on_citation_clicked)
+             self.scene.addItem(bubble)
+ 
++            self._register_active_request("ask", req)
++
+             class TutorAskWorker(QThread):
+                 finished = pyqtSignal(object)
+                 error = pyqtSignal(str)
+@@ -2353,12 +2405,14 @@ class MainWindow(QMainWindow):
+                 if ask_worker in self._solver_workers:
+                     self._solver_workers.remove(ask_worker)
+ 
+-                if self._is_request_stale(ask_worker.request):
++                if self._is_request_stale("ask", ask_worker.request):
+                     print("[TutorAskWorker] Discarding stale result.")
+                     if bubble.scene() == self.scene:
+                         self.scene.removeItem(bubble)
++                    self._complete_active_request("ask", getattr(ask_worker.request, "request_id", None))
+                     return
+ 
++                self._complete_active_request("ask", getattr(ask_worker.request, "request_id", None))
+                 citations_data = [c.model_dump() for c in response.citations]
+                 bubble.update_solution(q, {
+                     "full_solution": response.feedback_text,
+@@ -2371,6 +2425,7 @@ class MainWindow(QMainWindow):
+             def _on_ask_error(err):
+                 if ask_worker in self._solver_workers:
+                     self._solver_workers.remove(ask_worker)
++                self._complete_active_request("ask", getattr(ask_worker.request, "request_id", None))
+                 bubble.update_solution(q, f"Could not complete tutoring inquiry: {err}")
+ 
+             ask_worker.finished.connect(_on_ask_finished)
+diff --git a/backend/local_server.py b/backend/local_server.py
+index b148ffe..175c6d6 100644
+--- a/backend/local_server.py
++++ b/backend/local_server.py
+@@ -24,10 +24,15 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
+ from fastapi import FastAPI, BackgroundTasks, Request, Body
+ from fastapi.middleware.cors import CORSMiddleware
+ from fastapi.responses import FileResponse, JSONResponse
++from pydantic import BaseModel
++
++class LatexGenerationResponse(BaseModel):
++    job_id: str
++    backend: str
++    status_endpoint: str
++
+ from backend.video_generation.models import (
+     VideoJob, AnnotationEvent, PathData, LatexJob,
+-    VideoGenerationRequest, VideoGenerationResponse, VideoJobStatusResponse,
+-    LatexGenerationResponse, LatexJobStatusResponse,
+     BoardSelection
+ )
+ from shared.contracts.latex import LatexGenerationRequest, LatexGenerationMode, LatexSourceAnchor

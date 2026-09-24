@@ -25,9 +25,10 @@ import app.storage.models.learning # Ensure new models are loaded
 # for 'autogenerate' support
 target_metadata = Base.metadata
 
-# Set the SQLAlchemy URL dynamically
-engine = get_engine()
-config.set_main_option("sqlalchemy.url", str(engine.url))
+# Set the SQLAlchemy URL dynamically if not already explicitly provided (e.g., in tests)
+if not config.get_main_option("sqlalchemy.url") or config.get_main_option("sqlalchemy.url") in ("driver://user:pass@localhost/dbname", ""):
+    engine = get_engine()
+    config.set_main_option("sqlalchemy.url", str(engine.url))
 
 
 def run_migrations_offline() -> None:
