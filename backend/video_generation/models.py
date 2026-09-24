@@ -295,41 +295,6 @@ class DocumentIR:
 
 # ── API Contracts (Phase 3) ────────────────────────────────────────────────
 
-class VideoGenerationRequest(BaseModel):
-    user_prompt: str
-    document_text: str = ""
-    pdf_path: str = ""
-    page_range: Optional[str] = None
-    emphasis_note: Optional[str] = None
-    output_type: str = "video"
-    subject_id: Optional[str] = None
-    board_selection: Optional[Dict[str, Any]] = None
-
-class VideoGenerationResponse(BaseModel):
-    job_id: str
-    backend: str
-    status_endpoint: str
-
-class VideoJobStatusResponse(BaseModel):
-    job_id: str
-    status: str
-    step: str
-    progress_percentage: int
-    video_url: Optional[str] = None
-    stitched_video_url: Optional[str] = None
-    error_message: Optional[str] = None
-    friendly_step: str = ""
-
-class LatexGenerationRequest(BaseModel):
-    image_b64: str
-    template_type: str
-    mode: str = "study"
-    classroom_action: str = "Solve Question"
-
-class LatexGenerationResponse(BaseModel):
-    job_id: str
-    backend: str
-    status_endpoint: str
 
 class LatexJobStatusResponse(BaseModel):
     job_id: str

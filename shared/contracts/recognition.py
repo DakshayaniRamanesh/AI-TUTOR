@@ -32,6 +32,7 @@ class RecognitionRequest(ContractModel):
     coordinate_space: CoordinateSpace = Field(default=CoordinateSpace.SCENE)
     image_b64: Optional[str] = None
     expected_type: Optional[ContentType] = None
+    is_auto_check: bool = False
 
 class RecognitionResult(ContractModel):
     request_id: StableId
@@ -43,6 +44,7 @@ class RecognitionResult(ContractModel):
     source_stroke_ids: List[StableId] = Field(default_factory=list, min_length=1)
     group_bbox: Optional[CanvasBBox] = None
     coordinate_space: CoordinateSpace = Field(default=CoordinateSpace.SCENE)
+    is_auto_check: bool = False
     
     status: RecognitionStatus
     content_type: ContentType = Field(default=ContentType.UNKNOWN)

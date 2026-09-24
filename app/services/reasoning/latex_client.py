@@ -20,24 +20,26 @@ LOCAL_SERVER_URL = os.getenv("BACKEND_URL", f"http://localhost:{os.getenv('PORT'
 MODAL_ENDPOINT_URL = os.getenv("MODAL_URL", "https://dakshayaniramanesh--manim-app-generate.modal.run")
 
 
-def request_latex_generation(image_b64: str, template_type: str, mode: str = "study", classroom_action: str = "Solve Question") -> tuple[str, bool]:
+from shared.contracts.latex import LatexGenerationRequest, LatexGenerationMode, LatexSourceAnchor
+
+def request_latex_generation(request: LatexGenerationRequest) -> tuple[str, bool]:
     """
     Submits a LaTeX generation request.
     Returns (job_id, is_local_direct).
     """
-    job_id = f"latex_{uuid.uuid4().hex[:8]}"
+    job_id = request.request_id
 
     # 1. Try local HTTP server first
     try:
         resp = requests.post(
             f"{LOCAL_SERVER_URL}/generate_latex",
-            data={"image_b64": image_b64, "template_type": template_type, "mode": mode, "classroom_action": classroom_action},
-            timeout=1.5
+            json=request.model_dump(mode='json'),
+            timeout=2.0
         )
         if resp.status_code == 200:
             data = resp.json()
             return data.get("job_id", job_id), False
-    except Exception:
+    except Exception as e:
         pass
 
     # 2. Try Modal web endpoint if local server is not running
@@ -45,8 +47,8 @@ def request_latex_generation(image_b64: str, template_type: str, mode: str = "st
         modal_url = MODAL_ENDPOINT_URL.replace("/generate", "/generate_latex")
         resp = requests.post(
             modal_url,
-            json={"job_id": job_id, "image_b64": image_b64, "template_type": template_type},
-            timeout=2.0
+            json=request.model_dump(mode='json'),
+            timeout=2.5
         )
         if resp.status_code in [200, 201, 202]:
             data = resp.json()
@@ -119,20 +121,13 @@ class LatexPollWorker(QThread):
 
     def __init__(
         self,
-        job_id: str,
-        image_b64: str = "",
-        template_type: str = "Homework",
-        mode: str = "study",
-        classroom_action: str = "Solve Question",
+        request: LatexGenerationRequest,
         is_local_direct: bool = False,
         parent=None
     ):
         super().__init__(parent)
-        self.job_id = job_id
-        self.image_b64 = image_b64
-        self.template_type = template_type
-        self.mode = mode
-        self.classroom_action = classroom_action
+        self.request = request
+        self.job_id = request.request_id
         self.is_local_direct = is_local_direct
         self._running = True
 
@@ -234,10 +229,10 @@ class LatexPollWorker(QThread):
 
             job = LatexJob(
                 job_id=self.job_id,
-                image_b64=self.image_b64,
-                template_type=self.template_type,
-                mode=self.mode,
-                classroom_action=self.classroom_action
+                image_b64=self.request.image_b64,
+                template_type="Document" if self.request.mode == LatexGenerationMode.VIEWPORT_DOCUMENT else "Selection",
+                mode=self.request.mode.value,
+                classroom_action="Export LaTeX"
             )
 
             pipeline = LatexGenerationPipeline()

@@ -27,9 +27,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from backend.video_generation.models import (
     VideoJob, AnnotationEvent, PathData, LatexJob,
     VideoGenerationRequest, VideoGenerationResponse, VideoJobStatusResponse,
-    LatexGenerationRequest, LatexGenerationResponse, LatexJobStatusResponse,
+    LatexGenerationResponse, LatexJobStatusResponse,
     BoardSelection
 )
+from shared.contracts.latex import LatexGenerationRequest, LatexGenerationMode, LatexSourceAnchor
 import backend.config as config
 from backend.video_generation.graph import VideoGenerationPipeline
 from backend.math_engine.latex_graph import LatexGenerationPipeline
@@ -110,90 +111,73 @@ def run_job_background(job: VideoJob):
         job.error_message = str(e)
         jobs_store[job.job_id] = job
 
-@app.post("/generate", response_model=VideoGenerationResponse)
+from shared.contracts.video import VideoGenerationRequest, VideoJobCreated
+
+@app.post("/generate", response_model=VideoJobCreated)
 async def generate(
     background_tasks: BackgroundTasks,
-    request: Request
+    request: VideoGenerationRequest = Body(...)
 ):
-    job_id = f"job_{uuid.uuid4().hex[:8]}"
-    content_type = request.headers.get("content-type", "").lower()
+    job_id = request.request_id
 
-    user_prompt = ""
-    pdf_path = ""
-    document_text = ""
-    page_range = None
-    emphasis_note = None
-    output_type = "video"
-    subject_id = None
-    board_selection_raw = None
-
-    if "application/json" in content_type:
-        body = await request.json()
-        user_prompt = body.get("user_prompt") or body.get("prompt") or ""
-        pdf_path = body.get("pdf_path") or ""
-        document_text = body.get("document_text") or ""
-        page_range = body.get("page_range")
-        emphasis_note = body.get("emphasis_note")
-        output_type = body.get("output_type", "video")
-        subject_id = body.get("subject_id")
-        board_selection_raw = body.get("board_selection") or body.get("selection_json")
-    else:
-        # Handle multipart/form-data or application/x-www-form-urlencoded
-        form = await request.form()
-        user_prompt = str(form.get("user_prompt") or form.get("prompt") or "")
-        pdf_path = str(form.get("pdf_path") or "")
-        document_text = str(form.get("document_text") or "")
-        page_range = form.get("page_range")
-        emphasis_note = form.get("emphasis_note")
-        output_type = str(form.get("output_type") or "video")
-        subject_id = form.get("subject_id")
-        board_selection_raw = form.get("board_selection") or form.get("selection_json")
-
-        if "pdf" in form:
-            pdf_file = form["pdf"]
-            if hasattr(pdf_file, "read"):
-                temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-                content = await pdf_file.read()
-                temp_pdf.write(content)
-                temp_pdf.close()
-                pdf_path = temp_pdf.name
-
-    if isinstance(board_selection_raw, str) and board_selection_raw.strip():
-        try:
-            import json
-            board_selection_raw = json.loads(board_selection_raw)
-        except Exception:
-            pass
-
-    if document_text and not pdf_path:
-        temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        temp_pdf.write(base64.b64decode(document_text))
-        temp_pdf.close()
-        pdf_path = temp_pdf.name
-
-    board_selection = None
-    if board_selection_raw:
-        board_selection = BoardSelection.from_dict(board_selection_raw)
-
+    # The backend VideoJob model needs prompt/document_text fields right now
+    # We will map the fields from VideoGenerationRequest to VideoJob
     job = VideoJob(
         job_id=job_id,
-        pdf_path=pdf_path,
-        user_prompt=user_prompt,
-        document_text="",
-        page_range=page_range,
-        emphasis_note=emphasis_note,
-        output_type=output_type,
-        subject_id=subject_id,
-        board_selection=board_selection,
+        prompt=request.explanation_goal or "Explain this content.",
+        subject_id=request.subject_id,
     )
-    jobs_store[job_id] = job
-    background_tasks.add_task(run_job_background, job)
+    
+    # We construct BoardSelection from anchor_bbox if needed
+    if request.anchor_bbox:
+        bs = BoardSelection(
+            board_id=request.notebook_id or "",
+            bbox={"x": request.anchor_bbox.x, "y": request.anchor_bbox.y, 
+                  "width": request.anchor_bbox.width, "height": request.anchor_bbox.height},
+            user_instruction=request.explanation_goal
+        )
+        job.board_selection = bs
 
-    return VideoGenerationResponse(
+    # Cache check
+    import hashlib
+    import json
+    
+    # Very basic cache key
+    cache_data = {
+        "prompt": job.prompt,
+        "subject_id": job.subject_id,
+        "bbox": request.anchor_bbox.model_dump(mode='json') if request.anchor_bbox else None
+    }
+    cache_key = hashlib.md5(json.dumps(cache_data, sort_keys=True).encode()).hexdigest()
+    job.metadata["cache_key"] = cache_key
+    
+    # Check if we already have a completed job with this cache_key
+    cached_job = None
+    for j in jobs_store.values():
+        if j.metadata.get("cache_key") == cache_key and j.status in ["completed", "done", "success"] and (j.video_url or j.video_path):
+            if j.video_path and os.path.exists(j.video_path) and os.path.getsize(j.video_path) > 0:
+                cached_job = j
+                break
+            
+    if cached_job:
+        print(f"[{job_id}] Cache HIT for key {cache_key}")
+        job.status = "completed"
+        job.video_url = cached_job.video_url
+        job.video_path = cached_job.video_path
+        job.step = "completed"
+        job.friendly_step = "Video Complete!"
+        job.progress_percentage = 100
+        jobs_store[job_id] = job
+    else:
+        jobs_store[job_id] = job
+        background_tasks.add_task(run_job_background, job)
+
+    return VideoJobCreated(
+        request_id=request.request_id,
         job_id=job_id,
-        backend="local",
-        status_endpoint=f"{config.BACKEND_URL}/status/{job_id}"
+        status_url=f"{config.BACKEND_URL}/status/{job_id}"
     )
+
 
 def get_base_url() -> str:
     return config.BACKEND_URL
@@ -323,14 +307,15 @@ async def generate_latex(
     background_tasks: BackgroundTasks,
     request: LatexGenerationRequest = Body(...)
 ):
-    job_id = f"latex_{uuid.uuid4().hex[:8]}"
+    job_id = request.request_id
     
+    # We still convert the new contract to the internal LatexJob
     job = LatexJob(
         job_id=job_id,
         image_b64=request.image_b64,
-        template_type=request.template_type,
-        mode=request.mode,
-        classroom_action=request.classroom_action 
+        template_type="Document" if request.mode == LatexGenerationMode.VIEWPORT_DOCUMENT else "Selection",
+        mode=request.mode.value,
+        classroom_action="Export LaTeX"
     )
     latex_jobs_store[job_id] = job
 

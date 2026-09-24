@@ -127,3 +127,24 @@ class ConceptMemory(Base):
     
     last_encountered = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class LearnerObservation(Base):
+    __tablename__ = "learner_observations"
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    subject_id = Column(String, ForeignKey("subjects.id"), nullable=True)
+    observation_type = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    supporting_attempt_ids_json = Column(Text, default="[]")
+    supporting_step_ids_json = Column(Text, default="[]")
+    occurrence_count = Column(Integer, default=1)
+    status = Column(String, default="ACTIVE") # ACTIVE, RESOLVED
+    confidence = Column(Float, default=1.0)
+    first_seen = Column(DateTime, default=datetime.utcnow)
+    last_seen = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_learner_observations_user_subject", "user_id", "subject_id"),
+    )

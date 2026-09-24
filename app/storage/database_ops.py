@@ -6,6 +6,7 @@ from sqlalchemy.orm import joinedload
 
 # Assuming you rename databse.py to database.py
 from .database import SessionLocal, User, Subject, Notebook, Material, Video, ConceptNode, ConceptEdge, SubjectChunk
+from app.services.knowledge.graph_reconciliation_service import GraphReconciliationService
 
 def get_or_create_user(username: str) -> User:
     """Gets an existing user by username, or creates them if they don't exist."""
@@ -125,6 +126,11 @@ def delete_material(material_id: str) -> Optional[str]:
             SubjectVectorStore().delete_by_material(subject_id, material_id)
         except Exception as e:
             print(f"[DB] Failed to delete vector points for material {material_id}: {e}")
+            
+        try:
+            GraphReconciliationService().reconcile_material_graph(subject_id, material_id, [], [])
+        except Exception as e:
+            print(f"[DB] Failed to cleanup graph for material {material_id}: {e}")
             
         db.delete(mat)
         db.commit()

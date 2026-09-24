@@ -145,6 +145,16 @@ class _LatexToSpeech:
         result = re.sub(r"\\approx", " is approximately ", result)
         result = re.sub(r"\\to|\\rightarrow", " approaches ", result)
         result = re.sub(r"\\infty", "infinity", result)
+        result = re.sub(r"\\forall", "for all", result)
+        result = re.sub(r"\\exists", "there exists", result)
+        result = re.sub(r"\\in", " in ", result)
+        result = re.sub(r"\\notin", " not in ", result)
+        result = re.sub(r"\\subset", " is a subset of ", result)
+        result = re.sub(r"\\cup", " union ", result)
+        result = re.sub(r"\\cap", " intersection ", result)
+        result = re.sub(r"\\sin", " sine ", result)
+        result = re.sub(r"\\cos", " cosine ", result)
+        result = re.sub(r"\\tan", " tangent ", result)
 
         # Equal sign to spoken form
         result = re.sub(r"\s*=\s*", " equals ", result)

@@ -7,6 +7,9 @@ from backend.workspace.pdf_hierarchical_parser import PdfHierarchicalParser
 from app.services.document.image_extraction import ImageExtractionAdapter
 from app.storage.database_ops import update_material_status, replace_subject_chunks
 from backend.workspace.subject_vector_store import SubjectVectorStore
+from app.services.knowledge.graph_extraction_service import KnowledgeGraphExtractionService
+from app.services.knowledge.graph_reconciliation_service import GraphReconciliationService
+from app.services.knowledge.semantic_graph_extractor import SemanticGraphExtractor
 
 
 class SubjectIngestionService:
@@ -108,6 +111,36 @@ class SubjectIngestionService:
                     status = "PARTIAL"
 
             update_material_status(material_id, status, chunk_count=len(db_chunks), last_indexed_at=datetime.datetime.utcnow())
+            
+            # --- Graph Extraction ---
+            try:
+                if cancel_check and cancel_check():
+                    raise Exception("Cancelled before graph extraction")
+
+                from app.storage.database import get_session_factory, Material
+                with get_session_factory()() as session:
+                    mat = session.query(Material).filter_by(id=material_id).first()
+                    if not mat or mat.content_hash != content_hash:
+                        print("Stale material build detected, aborting graph extraction.")
+                        raise Exception("Stale build")
+                        
+                graph_service = KnowledgeGraphExtractionService()
+                snapshot = graph_service.extract_structural_graph(subject_id, material_id)
+                
+                # Optional Semantic Extraction
+                semantic_edges = SemanticGraphExtractor().extract_semantic_edges(subject_id, material_id, db_chunks)
+                snapshot.edges.extend(semantic_edges)
+                
+                # Stale check before applying
+                with get_session_factory()() as session:
+                    mat = session.query(Material).filter_by(id=material_id).first()
+                    if not mat or mat.content_hash != content_hash:
+                        raise Exception("Stale build detected right before reconciliation.")
+
+                GraphReconciliationService().reconcile_material_graph(subject_id, material_id, snapshot.nodes, snapshot.edges)
+            except Exception as graph_err:
+                # Don't fail the whole ingestion if graph extraction fails
+                print(f"Graph extraction failed: {graph_err}")
 
             return {
                 "status": status,

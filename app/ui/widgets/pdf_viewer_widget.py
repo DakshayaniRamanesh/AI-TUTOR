@@ -570,3 +570,14 @@ class PdfViewerWidget(QWidget):
         if self.current_page < self.total_pages:
             self.current_page += 1
             self._render_current_page()
+
+    def go_to_page(self, page_num: int):
+        """Navigates directly to the specified 1-indexed page number."""
+        if hasattr(self, 'total_pages') and 1 <= page_num <= self.total_pages:
+            self.current_page = page_num
+            self._render_current_page()
+            if hasattr(self, 'page_nav') and self.page_nav:
+                try:
+                    self.page_nav.setCurrentPage(page_num - 1)
+                except Exception:
+                    pass

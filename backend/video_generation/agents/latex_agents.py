@@ -119,6 +119,21 @@ REQUIRED STRUCTURE:
 {rules}
 """
 
+_TRANSCRIBE_ONLY_PROMPT = """
+You are an expert LaTeX typesetter.
+
+Your task is strictly to TRANSCRIBE the following text and math into valid LaTeX.
+{input_text}
+
+CRITICAL RULES:
+- DO NOT solve any equations.
+- DO NOT correct any mistakes.
+- DO NOT rearrange any expressions.
+- DO NOT add any explanations.
+- Output exactly what was given, but formatted beautifully in LaTeX.
+
+{rules}
+"""
 
 def _detect_educational_intent(text: str) -> str:
     """
@@ -299,7 +314,9 @@ class LatexStructureAgent:
 
         # ── Detect educational intent ─────────────────────────────────────────
         # classroom_action may override: e.g. "Explain Concept" forces theory intent
-        if action.lower() in ("explain concept", "explain theory", "conceptual overview", "theory"):
+        if job.mode == "selection_exact":
+            intent = "transcribe_only"
+        elif action.lower() in ("explain concept", "explain theory", "conceptual overview", "theory"):
             intent = "theory"
         elif action.lower() in ("prove theorem", "formal proof", "proof"):
             intent = "proof"
@@ -310,7 +327,7 @@ class LatexStructureAgent:
         else:
             intent = _detect_educational_intent(raw_text)
 
-        print(f"[{job.job_id}] Educational intent detected: {intent!r} (action={action!r})")
+        print(f"[{job.job_id}] Educational intent detected: {intent!r} (action={action!r}, mode={job.mode!r})")
 
         # ── Select the matching pedagogical prompt ────────────────────────────
         template_map = {
@@ -318,6 +335,7 @@ class LatexStructureAgent:
             "proof": _PROOF_PROMPT,
             "algorithm": _ALGORITHM_PROMPT,
             "problem": _PROBLEM_PROMPT,
+            "transcribe_only": _TRANSCRIBE_ONLY_PROMPT,
         }
         selected_template = template_map.get(intent, _PROBLEM_PROMPT)
         prompt = selected_template.format(

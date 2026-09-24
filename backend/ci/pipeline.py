@@ -39,6 +39,18 @@ _BANNED_APIS = [
     ("input(", "input() call detected — remove it"),
     ("import requests", "Network calls not allowed — remove import requests"),
     ("import urllib", "Network calls not allowed — remove import urllib"),
+    ("import os", "Banned API 'os' — remove it"),
+    ("import sys", "Banned API 'sys' — remove it"),
+    ("import subprocess", "Banned API 'subprocess' — remove it"),
+    ("import socket", "Banned API 'socket' — remove it"),
+    ("import pathlib", "Banned API 'pathlib' — remove it"),
+    ("import shutil", "Banned API 'shutil' — remove it"),
+    ("import importlib", "Banned API 'importlib' — remove it"),
+    ("eval(", "Banned API 'eval' — remove it"),
+    ("exec(", "Banned API 'exec' — remove it"),
+    ("compile(", "Banned API 'compile' — remove it"),
+    ("open(", "Banned API 'open' — remove it"),
+    ("__import__(", "Banned API '__import__' — remove it"),
 ]
 
 _MIN_FONT_SIZE = 16

@@ -234,6 +234,16 @@ class VideoPlayerWidget(QWidget):
         self.worker.video_failed.connect(self._on_video_failed)
         self.worker.start()
 
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.stop()
+
+    def destroy(self, destroyWindow: bool = True, destroySubWindows: bool = True):
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.stop()
+        super().destroy(destroyWindow, destroySubWindows)
+
     def _on_status_update(self, job_id, stage, progress):
         self.lbl_status.setText(stage)
         self.progress_bar.setValue(progress)

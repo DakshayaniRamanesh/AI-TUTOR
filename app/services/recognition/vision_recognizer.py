@@ -110,6 +110,7 @@ class VisionRecognizer(Recognizer):
             group_id=request.group_id,
             group_revision=request.group_revision,
             group_bbox=request.group_bbox,
+            is_auto_check=request.is_auto_check,
             provider_name="vision_provider",
             alternatives=[RecognitionAlternative(text=text, latex=latex, confidence=confidence)]
         )

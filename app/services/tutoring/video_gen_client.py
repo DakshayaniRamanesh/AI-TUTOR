@@ -12,6 +12,7 @@ import sys
 import uuid
 import requests
 from PyQt6.QtCore import QThread, pyqtSignal
+from shared.contracts.video import VideoGenerationRequest
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 if ROOT_DIR not in sys.path:
@@ -47,54 +48,23 @@ def _get_active_server() -> str:
     return LOCAL_SERVERS[0] if LOCAL_SERVERS else "http://localhost:8000"
 
 
-def request_video_generation(
-    selected_text: str,
-    pdf_path: str = None,
-    page_range: str = "",
-    emphasis_note: str = "",
-    output_type: str = "video",
-    subject_id: str = "",
-    selection_payload: dict | None = None,
-) -> str:
-    job_id = f"job_{uuid.uuid4().hex[:8]}"
-    selection_payload = selection_payload or {}
+def request_video_generation(request: VideoGenerationRequest) -> str:
+    job_id = request.request_id
 
     _PENDING_JOBS[job_id] = {
-        "prompt": selected_text,
-        "pdf_path": pdf_path,
-        "page_range": page_range,
-        "emphasis_note": emphasis_note,
-        "output_type": output_type,
-        "subject_id": subject_id,
-        "selection_payload": selection_payload,
+        "prompt": request.explanation_goal,
+        "subject_id": request.subject_id,
         "is_local_direct": True
     }
 
     # 1. Try local server
     for server_url in LOCAL_SERVERS:
         try:
-            files = None
-            file_handle = None
-            if pdf_path and os.path.exists(pdf_path):
-                file_handle = open(pdf_path, "rb")
-                files = {"pdf": file_handle}
-            try:
-                resp = requests.post(
-                    f"{server_url}/generate",
-                    data={
-                        "prompt": selected_text,
-                        "page_range": page_range,
-                        "emphasis_note": emphasis_note,
-                        "output_type": output_type,
-                        "subject_id": subject_id,
-                        "selection_json": json.dumps(selection_payload, separators=(",", ":")),
-                    },
-                    files=files,
-                    timeout=2.5,
-                )
-            finally:
-                if file_handle:
-                    file_handle.close()
+            resp = requests.post(
+                f"{server_url}/generate",
+                json=request.model_dump(mode='json'),
+                timeout=2.5,
+            )
             if resp.status_code in [200, 201, 202]:
                 data = resp.json()
                 ret_id = data.get("job_id", job_id)
@@ -107,22 +77,9 @@ def request_video_generation(
 
     # 2. Try Modal Cloud fallback
     try:
-        pdf_b64 = ""
-        if pdf_path and os.path.exists(pdf_path):
-            with open(pdf_path, "rb") as f:
-                pdf_b64 = base64.b64encode(f.read()).decode("ascii")
         resp = requests.post(
             MODAL_VIDEO_GENERATE_URL,
-            json={
-                "user_prompt": selected_text,
-                "pdf_path": "", 
-                "document_text": pdf_b64,
-                "page_range": page_range,
-                "emphasis_note": emphasis_note,
-                "output_type": output_type,
-                "subject_id": subject_id,
-                "board_selection": selection_payload,
-            },
+            json=request.model_dump(mode='json'),
             timeout=3.5,
         )
         if resp.status_code in [200, 201, 202]:
@@ -132,6 +89,8 @@ def request_video_generation(
             _PENDING_JOBS[ret_id]["is_local_direct"] = False
             _PENDING_JOBS[ret_id]["server_url"] = MODAL_ENDPOINT_URL
             return ret_id
+    except Exception:
+        pass
     except Exception:
         pass
 
@@ -151,6 +110,10 @@ class ManimVideoPollWorker(QThread):
         self.job_id = job_id
         self.prompt = prompt
         self._running = True
+
+    def stop(self):
+        self._running = False
+        self.wait(1000)
 
     def run(self):
         job_info = _PENDING_JOBS.get(self.job_id, {})

@@ -885,8 +885,10 @@ class CanvasScene(QGraphicsScene):
             start_ts = time.time() * 1000.0
             end_ts = time.time() * 1000.0
             if hasattr(final_item, "raw_stroke") and final_item.raw_stroke:
-                start_ts = final_item.raw_stroke[0].get("timestamp", start_ts)
-                end_ts = final_item.raw_stroke[-1].get("timestamp", end_ts)
+                first_pt = final_item.raw_stroke[0]
+                last_pt = final_item.raw_stroke[-1]
+                start_ts = first_pt.get("timestamp", start_ts) if isinstance(first_pt, dict) else (first_pt[3] if len(first_pt) > 3 else start_ts)
+                end_ts = last_pt.get("timestamp", end_ts) if isinstance(last_pt, dict) else (last_pt[3] if len(last_pt) > 3 else end_ts)
                 
             rect = final_item.sceneBoundingRect()
             stroke_data = StrokeData(
@@ -1221,9 +1223,9 @@ class CanvasScene(QGraphicsScene):
 
     def _on_auto_ai_timeout(self):
         """Fires in PenEcho Auto-AI mode after post-stroke delay."""
-        self.trigger_ai_on_dirty_ink()
+        self.trigger_ai_on_dirty_ink(is_auto_check=True)
 
-    def trigger_ai_on_dirty_ink(self, prompt: str = "") -> bool:
+    def trigger_ai_on_dirty_ink(self, prompt: str = "", is_auto_check: bool = False) -> bool:
         """Explicitly triggers PenEcho Feather AI on the latest ink strokes or selection."""
         import uuid
         from shared.contracts.recognition import RecognitionRequest
@@ -1298,6 +1300,7 @@ class CanvasScene(QGraphicsScene):
             source_stroke_ids=group.stroke_ids,
             group_bbox=group.bbox,
             image_b64=b64_img,
+            is_auto_check=is_auto_check,
         )
 
         self._ocr_in_flight = True
@@ -1308,13 +1311,64 @@ class CanvasScene(QGraphicsScene):
 
     def highlight_strokes_by_id(self, item_ids: list, is_error: bool = False):
         from PyQt6.QtGui import QColor, QPen
+        from PyQt6.QtWidgets import QGraphicsTextItem
+        from PyQt6.QtCore import QRectF
+
+        bounding_rect = QRectF()
+
         for item in self.items():
             if hasattr(item, "item_id") and item.item_id in item_ids:
                 if hasattr(item, "setPen"):
                     pen = item.pen()
-                    if is_error:
-                        pen.setColor(QColor("#f87171")) # Red warning
+                    # Do not modify original ink color permanently for mistakes as per requirements, 
+                    # but we can do a subtle highlight or leave it. We'll leave original color 
+                    # and rely purely on the issue marker UI as specified.
+                    # Restoring original color if it was changed before is complex without tracking, 
+                    # but to obey "never delete original handwriting", we add an explicit UI marker.
+                    pass
+                if hasattr(item, "sceneBoundingRect"):
+                    bounding_rect = bounding_rect.united(item.sceneBoundingRect())
+
+        if not bounding_rect.isEmpty():
+            from PyQt6.QtWidgets import QGraphicsItem
+            from PyQt6.QtGui import QPainter, QBrush
+            from PyQt6.QtCore import QRectF, Qt
+            
+            class IssueMarkerItem(QGraphicsItem):
+                def __init__(self, is_error: bool):
+                    super().__init__()
+                    self.is_error = is_error
+                    self.setZValue(100)
+                    
+                def boundingRect(self):
+                    return QRectF(-10, -10, 20, 20)
+                    
+                def paint(self, painter: QPainter, option, widget=None):
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    if self.is_error:
+                        # Amber outlined circle with exclamation mark
+                        painter.setPen(QPen(QColor("#d97706"), 2))
+                        painter.setBrush(QBrush(QColor(253, 230, 138, 100))) # Light amber fill
+                        painter.drawEllipse(-8, -8, 16, 16)
+                        
+                        painter.setPen(QPen(QColor("#d97706"), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                        painter.drawLine(0, -4, 0, 2)
+                        painter.drawPoint(0, 5)
                     else:
-                        pen.setColor(QColor("#4ade80")) # Green success
-                    pen.setWidthF(pen.widthF() + 1.0)
-                    item.setPen(pen)
+                        # Muted green outlined check
+                        painter.setPen(QPen(QColor("#16a34a"), 2))
+                        painter.setBrush(QBrush(QColor(187, 247, 208, 100))) # Light green fill
+                        painter.drawEllipse(-8, -8, 16, 16)
+                        
+                        painter.setPen(QPen(QColor("#16a34a"), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+                        painter.drawLine(-3, 0, -1, 3)
+                        painter.drawLine(-1, 3, 4, -3)
+
+            marker = IssueMarkerItem(is_error)
+            marker.setPos(bounding_rect.topRight() + QPointF(10, 0))
+            self.addItem(marker)
+            
+            # Fade out success markers after a few seconds
+            if not is_error:
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(3000, lambda m=marker: (self.removeItem(m) if m.scene() else None))

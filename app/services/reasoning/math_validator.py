@@ -51,8 +51,15 @@ def validate_transition(previous: ParsedMath, current: ParsedMath, step_id: str 
                     # If we flip the sign of the constant in current, does it match?
                     # This is a naive heuristic for demonstration.
                     try:
-                        # Try to find common errors
-                        if "-" in str(current.lhs) and "(" in str(previous.lhs):
+                        import re
+                        prev_raw = str(getattr(previous, 'raw_text', '') or previous.lhs).replace(" ", "")
+                        curr_raw = str(getattr(current, 'raw_text', '') or current.lhs).replace(" ", "")
+                        dist_match = re.search(r'(\d+)\(([a-zA-Z])\+(\d+)\)', prev_raw)
+                        if dist_match:
+                            factor, var_name, const = dist_match.groups()
+                            if f"{factor}{var_name}+{const}" in curr_raw or f"{factor}*{var_name}+{const}" in curr_raw or (f"{factor}{var_name}" in curr_raw and f"+{const}" in curr_raw):
+                                explanation = f"Check how {factor} distributes across the bracket. What is {factor} × {const}?"
+                        elif "-" in str(current.lhs) and "(" in str(previous.lhs):
                             explanation = "Check your sign distribution when removing parentheses."
                     except Exception:
                         pass

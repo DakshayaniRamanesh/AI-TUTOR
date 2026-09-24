@@ -6,14 +6,23 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 # 1. Setup SQLite Engine and Session
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
+DB_PATH = os.path.join(_BASE_DIR, "storage_data", "kestrel.db")
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
 # Allow tests or environment to override the database URL
 _ENV_DB_URL = os.getenv("KESTREL_DATABASE_URL")
 if _ENV_DB_URL:
     _resolved_db_url = _ENV_DB_URL
+    if _ENV_DB_URL.startswith("sqlite:///"):
+        DB_PATH = _ENV_DB_URL.replace("sqlite:///", "")
 else:
-    DB_PATH = os.path.join(_BASE_DIR, "storage_data", "kestrel.db")
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     _resolved_db_url = f"sqlite:///{DB_PATH}"
+
+def get_db_path() -> str:
+    env_url = os.getenv("KESTREL_DATABASE_URL")
+    if env_url and env_url.startswith("sqlite:///"):
+        return env_url.replace("sqlite:///", "")
+    return DB_PATH
 
 engine = create_engine(_resolved_db_url, echo=False)
 SessionLocal = sessionmaker(bind=engine)
@@ -118,21 +127,69 @@ class Video(Base):
 
     subject = relationship("Subject", back_populates="videos")
 
+from sqlalchemy import Float, Boolean, Text
+import json
+
 class ConceptNode(Base):
     __tablename__ = "concept_nodes"
     id = Column(String, primary_key=True)
     subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
-    name = Column(String, nullable=False)
-    category = Column(String, nullable=False, default="concept")
+    canonical_key = Column(String, nullable=False)
+    display_name = Column(String, nullable=False)
+    node_type = Column(String, nullable=False, default="CONCEPT")
     description = Column(String)
+    aliases_json = Column(String, default="[]")
+    evidence_count = Column(Integer, default=0)
+    extraction_method = Column(String)
+    confidence = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class ConceptEdge(Base):
     __tablename__ = "concept_edges"
     id = Column(String, primary_key=True)
     subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
-    source_name = Column(String, nullable=False)
-    target_name = Column(String, nullable=False)
-    relationship_desc = Column(String)
+    source_node_id = Column(String, ForeignKey("concept_nodes.id"), nullable=False)
+    target_node_id = Column(String, ForeignKey("concept_nodes.id"), nullable=False)
+    relation_type = Column(String, nullable=False)
+    
+    # Legacy fields preserved temporarily for safe migration
+    source_name = Column(String, nullable=True)
+    target_name = Column(String, nullable=True)
+    relationship_desc = Column(String, nullable=True)
+    
+    evidence_count = Column(Integer, default=0)
+    extraction_method = Column(String)
+    confidence = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class GraphEvidence(Base):
+    __tablename__ = "graph_evidence"
+    id = Column(String, primary_key=True)
+    subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
+    material_id = Column(String, ForeignKey("materials.id"), nullable=True)
+    chunk_id = Column(String, ForeignKey("subject_chunks.id"), nullable=True)
+    node_id = Column(String, ForeignKey("concept_nodes.id"), nullable=True)
+    edge_id = Column(String, ForeignKey("concept_edges.id"), nullable=True)
+    
+    page_number = Column(Integer, nullable=True)
+    snippet = Column(Text, nullable=True)
+    extraction_method = Column(String)
+    confidence = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class GraphLayoutState(Base):
+    __tablename__ = "graph_layout_state"
+    id = Column(String, primary_key=True)
+    scope_type = Column(String, nullable=False) # "SUBJECT" or "GLOBAL"
+    scope_id = Column(String, nullable=True)
+    node_id = Column(String, nullable=False) # NOT a strict FK since nodes might span
+    x = Column(Float, nullable=False)
+    y = Column(Float, nullable=False)
+    pinned = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    graph_revision = Column(Integer, default=0)
 
 from sqlalchemy import event
 
@@ -147,3 +204,14 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 
 # 3. Tables are now created/migrated via Alembic.
 # Base.metadata.create_all(bind=engine) is REMOVED to prevent import-time side effects.
+
+class GraphLayout(Base):
+    __tablename__ = "graph_layout"
+    id = Column(String, primary_key=True)
+    node_id = Column(String, nullable=False)
+    scope_type = Column(String, nullable=False)
+    scope_id = Column(String, nullable=True)
+    x = Column(Float, nullable=False)
+    y = Column(Float, nullable=False)
+    pinned = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

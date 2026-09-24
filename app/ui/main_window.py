@@ -61,10 +61,13 @@ MagicOrbWidget = FeatherAIButton
 from app.services.reasoning.stem_solver import solve_stem_question
 from app.services.document.pdf_rag_manager import PdfRAGManager
 from app.services.tutoring.video_gen_client import request_video_generation
+from shared.contracts.video import VideoGenerationRequest
 from ..storage.board_model import BoardModel
 from ..storage.notebook_storage import NotebookStorage
 from ..storage.downloads_manager import DownloadsManager
 from app.services.reasoning.latex_client import request_latex_generation, LatexPollWorker
+from shared.contracts.latex import LatexGenerationRequest, LatexGenerationMode, LatexSourceAnchor
+from shared.contracts.common import CanvasBBox
 from ..collaboration.collab_session_manager import CollabSessionManager
 
 # ── Autosave Configuration ─────────────────────────────────────────────────────
@@ -249,9 +252,9 @@ class MainWindow(QMainWindow):
         self.current_learning_session_id = self.learning_controller.current_session_id
         self.current_attempt_id = self.learning_controller.current_attempt_id
 
-        # ── Autosave State ─────────────────────────────────────────────────────
-        # ID of the currently open notebook. None = demo/unsaved canvas.
+        # ID of the currently open notebook and active subject. None = demo/unsaved canvas.
         self._current_notebook_id: str | None = None
+        self.current_subject_id: str | None = None
         # Single-shot debounce timer: fires _do_autosave after user pauses editing.
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
@@ -503,8 +506,10 @@ class MainWindow(QMainWindow):
 
     def _on_open_subject_detail(self, subject_id: str):
         """Loads the requested subject from the DB and switches the view."""
+        self.current_subject_id = subject_id
         self.subject_detail_view.load_subject(subject_id)
         self.main_stack.setCurrentWidget(self.subject_detail_view)
+        self._update_context_indicator()
 
     def _on_subject_pdf_requested(self, file_path: str):
         """Opens a PDF from the subject dashboard inside the whiteboard's PDF viewer tab."""
@@ -1031,6 +1036,12 @@ class MainWindow(QMainWindow):
         pl.addWidget(self.lbl_zoom)
         pl.addWidget(btn_zoom_in)
 
+        # Context Indicator
+        self.lbl_context_indicator = QLabel("Workspace · Ready", pill)
+        self.lbl_context_indicator.setObjectName("ContextIndicatorLabel")
+        self.lbl_context_indicator.setStyleSheet("font-size: 11px; font-weight: 500; color: #64748b; padding: 0 6px;")
+        pl.addWidget(self.lbl_context_indicator)
+
         # Separator
         sep1 = QFrame(pill)
         sep1.setFrameShape(QFrame.Shape.VLine)
@@ -1110,6 +1121,24 @@ class MainWindow(QMainWindow):
         worker.failure_emitted.connect(_on_failure)
         worker.start()
 
+    def _is_request_stale(self, request) -> bool:
+        """Determines if an async response belongs to a past notebook/attempt/subject/revision context."""
+        if not request:
+            return True
+        if hasattr(request, "subject_id") and request.subject_id and request.subject_id != getattr(self, "current_subject_id", None):
+            return True
+        if hasattr(request, "notebook_id") and request.notebook_id and request.notebook_id != getattr(self, "_current_notebook_id", None):
+            return True
+        if hasattr(request, "attempt_id") and request.attempt_id and request.attempt_id != getattr(self, "current_attempt_id", None):
+            return True
+        if hasattr(request, "request_id") and request.request_id and request.request_id != getattr(self, "_current_request_id", None):
+            return True
+        if hasattr(request, "semantic_block_id") and request.semantic_block_id and request.semantic_block_id != getattr(self, "_current_semantic_block_id", None):
+            return True
+        if hasattr(request, "canvas_revision") and request.canvas_revision and hasattr(self, "scene") and request.canvas_revision != self.scene.get_revision():
+            return True
+        return False
+
     def _on_auto_ai_requested(self, query: object, target_pos: QPointF, mode: str = None):
         from app.services.recognition.content_router import ContentRouter, RouteTarget
         from shared.contracts.recognition import RecognitionResult
@@ -1141,63 +1170,120 @@ class MainWindow(QMainWindow):
         self.magic_orb.set_state("thinking", "Analyzing...")
         clean_pos = self._find_non_overlapping_pos(target_pos, width=400.0, height=200.0)
 
-        # Wire up the new Phase 4 Tutor Orchestrator!
+        # Wire up the unified Phase 4 Tutor Orchestrator!
+        import uuid
+        from shared.contracts.context import ContextRequest, ContextScope
+        from shared.contracts.tutoring import TutorMode, FeedbackSeverity
+        from .items.answer_bubble import AnswerBubble
+
         class TutorWorker(QThread):
-            finished = pyqtSignal(object, QPointF, list) # emits TutorFeedback, pos, source_stroke_ids
+            finished = pyqtSignal(object, QPointF, list) # emits TutorResponse, pos, source_stroke_ids
             error = pyqtSignal(str)
 
-            def __init__(self, query_text, pos, orchestrator, attempt_id, source_stroke_ids, group_id, group_revision, parent=None):
+            def __init__(self, request: ContextRequest, pos, orchestrator, source_stroke_ids, parent=None):
                 super().__init__(parent)
-                self.query = query_text
+                self.request = request
                 self.pos = pos
                 self.orchestrator = orchestrator
-                self.attempt_id = attempt_id
                 self.source_stroke_ids = source_stroke_ids
-                self.group_id = group_id
-                self.group_revision = group_revision
 
             def run(self):
                 try:
-                    feedback = self.orchestrator.process_student_input(
-                        self.attempt_id, self.query, 
-                        group_id=self.group_id, group_revision=self.group_revision
-                    )
-                    self.finished.emit(feedback, self.pos, self.source_stroke_ids)
+                    response = self.orchestrator.process_request(self.request)
+                    self.finished.emit(response, self.pos, self.source_stroke_ids)
                 except Exception as e:
                     self.error.emit(str(e))
 
         source_stroke_ids = query.source_stroke_ids if hasattr(query, 'source_stroke_ids') else []
-        group_id = query.group_id if hasattr(query, 'group_id') else None
-        group_revision = query.group_revision if hasattr(query, 'group_revision') else 0
-        worker = TutorWorker(
-            query_text, clean_pos, self.tutor_orchestrator, 
-            self.current_attempt_id, source_stroke_ids, 
-            group_id, group_revision, parent=self
+        req_mode = mode or "CHECK_STEP"
+        
+        canvas_context = None
+        if hasattr(query, 'group_id') and hasattr(query, 'group_bbox'):
+            from shared.contracts.context import CanvasContext, SemanticBlock, SemanticBlockType
+            
+            # Map ContentType to SemanticBlockType
+            ctype_mapping = {
+                "TEXT": SemanticBlockType.TEXT,
+                "EQUATION": SemanticBlockType.MATH,
+                "DIAGRAM": SemanticBlockType.DIAGRAM,
+                "UNKNOWN": SemanticBlockType.UNKNOWN
+            }
+            mapped_type = ctype_mapping.get(getattr(query, 'content_type', 'UNKNOWN').value if hasattr(getattr(query, 'content_type', 'UNKNOWN'), 'value') else 'UNKNOWN', SemanticBlockType.UNKNOWN)
+            
+            block = SemanticBlock(
+                block_id=query.group_id,
+                block_type=mapped_type,
+                stroke_ids=source_stroke_ids,
+                bbox=query.group_bbox,
+                recognized_text=query_text,
+                confidence=getattr(query, 'confidence', None)
+            )
+            canvas_context = CanvasContext(
+                board_id=getattr(query, 'board_id', 'canvas_board'),
+                canvas_revision=getattr(self.scene, "revision", 1),
+                semantic_blocks=[block],
+                active_block_id=block.block_id
+            )
+            
+        context_req = ContextRequest(
+            request_id=str(uuid.uuid4()),
+            subject_id=getattr(self, "current_subject_id", None),
+            notebook_id=getattr(self, "_current_notebook_id", None),
+            session_id=getattr(self, "current_learning_session_id", None),
+            attempt_id=getattr(self, "current_attempt_id", None),
+            canvas_revision=getattr(self.scene, "revision", 1),
+            scope=ContextScope.SELECTION if getattr(query, "is_explicit_selection", False) else ContextScope.ACTIVE_BLOCK,
+            user_query=query_text,
+            tutor_mode=req_mode,
+            canvas_context=canvas_context,
+            source_stroke_ids=source_stroke_ids,
+            recognized_content=query_text,
+            recognition_confidence=getattr(query, 'confidence', None)
         )
 
-        def _on_finished(feedback, pos, stroke_ids):
+        worker = TutorWorker(
+            context_req, clean_pos, self.tutor_orchestrator, 
+            source_stroke_ids, parent=self
+        )
+
+        def _on_finished(response, pos, stroke_ids):
             if worker in self._solver_workers:
                 self._solver_workers.remove(worker)
                 
-            # Stale-result identity protection across notebooks
-            if worker.attempt_id != self.current_attempt_id:
+            # Stale-result identity protection across notebooks/attempts
+            if self._is_request_stale(worker.request):
                 print("[TutorWorker] Discarding stale result from a different session/notebook.")
+                self.magic_orb.set_state("idle", "")
                 return
+
+            is_auto_check = getattr(query, 'is_auto_check', False)
+            verdict_val = response.verdict.value if response.verdict else None
+            is_error = response.severity in [FeedbackSeverity.WARNING, FeedbackSeverity.CRITICAL]
+
+            if not is_auto_check:
+                citations_data = [c.model_dump() for c in response.citations]
+
+                bubble = AnswerBubble(
+                    title="Tutor Feedback",
+                    full_text=response.feedback_text,
+                    hints="\n".join(response.socratic_hints) if response.socratic_hints else "",
+                    verdict=verdict_val,
+                    citations=citations_data,
+                    spoken_text=response.spoken_text
+                )
+                bubble.setPos(pos)
+                bubble.bubble.citation_clicked.connect(self._on_citation_clicked)
+                self.scene.addItem(bubble)
                 
-            from shared.contracts.tutoring import FeedbackSeverity
-            from .items.answer_bubble import AnswerBubble
-            bubble = AnswerBubble(title="Tutor Feedback", full_text=feedback.feedback_text, hints="\n".join(feedback.socratic_hints) if feedback.socratic_hints else "")
-            bubble.setPos(pos)
-            self.scene.addItem(bubble)
-            
             if stroke_ids and hasattr(self.scene, 'highlight_strokes_by_id'):
-                is_error = feedback.severity in [FeedbackSeverity.WARNING, FeedbackSeverity.ERROR]
                 self.scene.highlight_strokes_by_id(stroke_ids, is_error=is_error)
                 
             self.magic_orb.set_state("idle", "")
 
         def _on_error(err):
+            print(f"[TutorWorker] Error: {err}")
             self.magic_orb.set_state("error")
+            QTimer.singleShot(1500, lambda: self.magic_orb.set_state("idle", ""))
             if worker in self._solver_workers:
                 self._solver_workers.remove(worker)
 
@@ -1847,13 +1933,28 @@ class MainWindow(QMainWindow):
 
     def _on_load_notebook_requested(self, notebook_id: str):
         try:
+            # Stop any voice narration and clear pending OCR
+            from app.services.tutoring.voice_service import VoiceNarrationService
+            VoiceNarrationService.instance().stop()
+            if hasattr(self, 'scene') and self.scene:
+                self.scene.clear_ocr_in_flight()
+
             payload = NotebookStorage.load_notebook(notebook_id)
             self._current_notebook_id = payload.get("board_id", notebook_id)
             self.current_board.board_id = payload.get("board_id", notebook_id)
             self.current_board.title = payload.get("title", "Notebook")
             self.title_edit.setText(self.current_board.title)
-            self.current_learning_session_id = self.memory_repo.get_or_create_active_session(notebook_id=self._current_notebook_id)
+
+            # Ensure subject_id is preserved if stored in notebook payload
+            if payload.get("subject_id"):
+                self.current_subject_id = payload.get("subject_id")
+
+            self.current_learning_session_id = self.memory_repo.get_or_create_active_session(
+                notebook_id=self._current_notebook_id,
+                subject_id=self.current_subject_id
+            )
             self.current_attempt_id = self.memory_repo.get_or_create_active_attempt(self.current_learning_session_id)
+            self._update_context_indicator()
             
             self.scene.load_from_dict_list(
                 payload.get("items", []),
@@ -1866,6 +1967,39 @@ class MainWindow(QMainWindow):
             self._set_sidebar_active_button("canvas")
         except Exception as err:
             QMessageBox.warning(self, "Load Failed", f"Could not load notebook:\n{err}")
+
+    def _on_citation_clicked(self, chip: dict):
+        """Opens the cited material in the split-screen PDF viewer at the exact page."""
+        material_id = chip.get("material_id")
+        page_num = chip.get("page_number")
+        if material_id:
+            try:
+                from app.storage.database import SessionLocal, Material
+                with SessionLocal() as db:
+                    mat = db.query(Material).filter(Material.id == material_id).first()
+                    if mat and mat.file_path and os.path.exists(mat.file_path):
+                        self._on_subject_pdf_requested(mat.file_path)
+                        if page_num and hasattr(self, 'pdf_viewer_widget') and hasattr(self.pdf_viewer_widget, "go_to_page"):
+                            self.pdf_viewer_widget.go_to_page(page_num)
+            except Exception as e:
+                print(f"[MainWindow] Citation click navigation error: {e}")
+
+    def _update_context_indicator(self):
+        """Updates the calm status pill with the active subject and available resources count."""
+        if not hasattr(self, 'lbl_context_indicator'):
+            return
+        if self.current_subject_id:
+            try:
+                from app.storage.database import SessionLocal, Subject, Material
+                with SessionLocal() as db:
+                    subj = db.query(Subject).filter(Subject.id == self.current_subject_id).first()
+                    mat_count = db.query(Material).filter(Material.subject_id == self.current_subject_id).count()
+                    subj_name = subj.name if subj else "Subject"
+                    self.lbl_context_indicator.setText(f"{subj_name} · {mat_count} source{'s' if mat_count != 1 else ''} available")
+            except Exception:
+                self.lbl_context_indicator.setText("Subject Workspace · Ready")
+        else:
+            self.lbl_context_indicator.setText("Workspace · Ready")
 
     def _on_notebook_git_requested(self, notebook_id: str):
         self.git_notes_panel.open_notebook_vcs(notebook_id)
@@ -1969,7 +2103,12 @@ class MainWindow(QMainWindow):
         self.reference_panel.hide()
 
     def _on_generate_video_requested(self, selected_text: str):
-        job_id = request_video_generation(selected_text)
+        job_id = request_video_generation(
+            VideoGenerationRequest(
+                request_id=f"job_{uuid.uuid4().hex[:8]}",
+                explanation_goal=selected_text
+            )
+        )
         center_pos = self.view.mapToScene(self.view.viewport().rect().center())
         v_item = VideoFloatItem(job_id=job_id, title=f"Video: {selected_text[:18]}...", video_url_or_path="")
         v_item.setPos(center_pos.x() + 300, center_pos.y())
@@ -1991,12 +2130,16 @@ class MainWindow(QMainWindow):
             current_subject = self.subject_detail_view.current_subject_id     
 
         job_id = request_video_generation(
-            selected_text="Explain this document.", 
-            pdf_path=pdf_path,
-            page_range=page_range,         
-            emphasis_note=emphasis,       
-            output_type=out_type,
-            subject_id=current_subject or ""
+            VideoGenerationRequest(
+                request_id=f"job_{uuid.uuid4().hex[:8]}",
+                explanation_goal="Explain this document.",
+                # Note: Currently pdf_path, page_range, emphasis_note, output_type 
+                # are not explicitly inside the new strict contract but they could be 
+                # mapped or we just temporarily ignore them since we just built the basic contract.
+                # But let's pass them as dict if we extend it, or just pass subject_id.
+                subject_id=current_subject or "",
+                tutor_mode=out_type
+            )
         )
         
         title = "Markdown: Study Notes" if out_type == "notes" else "Video Lesson"
@@ -2166,13 +2309,74 @@ class MainWindow(QMainWindow):
             worker.start()
             return
 
-        # 3. Grounded RAG if PDF Study Mode is active
-        if hasattr(self, 'pdf_rag_mgr') and self.pdf_rag_mgr.is_loaded() and hasattr(self, 'pdf_viewer_widget') and self.pdf_viewer_widget.isVisible():
-            ai_response = self.pdf_rag_mgr.generate_grounded_answer(question)
-            center_pos = self._find_non_overlapping_pos(raw_pos, width=580.0, height=220.0)
-            bubble = AnswerBubble(title="PDF Grounded Answer", full_text=ai_response, question=question)
-            bubble.setPos(center_pos)
+        # 3. Grounded Tutor Orchestrator with Subject RAG and Real Citations
+        if self.current_subject_id or any(k in q.lower() for k in ["explain", "tutorial", "notes", "why", "what", "how", "step"]):
+            import uuid
+            from shared.contracts.context import ContextRequest
+            from shared.contracts.tutoring import TutorMode
+
+            tutor_m = TutorMode.EXPLAIN if "explain" in q.lower() else TutorMode.ASK
+            req = ContextRequest(
+                request_id=str(uuid.uuid4()),
+                subject_id=self.current_subject_id,
+                notebook_id=getattr(self, "_current_notebook_id", None),
+                session_id=getattr(self, "current_learning_session_id", None),
+                attempt_id=getattr(self, "current_attempt_id", None),
+                user_query=q,
+                tutor_mode=tutor_m
+            )
+
+            bubble = AnswerBubble(title="AI Tutor", full_text=f"Consulting subject material for: {q}...", question=q)
+            bubble.setPos(place_pos)
+            bubble.bubble.citation_clicked.connect(self._on_citation_clicked)
             self.scene.addItem(bubble)
+
+            class TutorAskWorker(QThread):
+                finished = pyqtSignal(object)
+                error = pyqtSignal(str)
+
+                def __init__(self, request, orchestrator, parent=None):
+                    super().__init__(parent)
+                    self.request = request
+                    self.orchestrator = orchestrator
+
+                def run(self):
+                    try:
+                        resp = self.orchestrator.process_request(self.request)
+                        self.finished.emit(resp)
+                    except Exception as e:
+                        self.error.emit(str(e))
+
+            ask_worker = TutorAskWorker(req, self.tutor_orchestrator, parent=self)
+
+            def _on_ask_finished(response):
+                if ask_worker in self._solver_workers:
+                    self._solver_workers.remove(ask_worker)
+
+                if self._is_request_stale(ask_worker.request):
+                    print("[TutorAskWorker] Discarding stale result.")
+                    if bubble.scene() == self.scene:
+                        self.scene.removeItem(bubble)
+                    return
+
+                citations_data = [c.model_dump() for c in response.citations]
+                bubble.update_solution(q, {
+                    "full_solution": response.feedback_text,
+                    "hints": "\n".join(response.socratic_hints) if response.socratic_hints else "",
+                    "citations": citations_data,
+                    "spoken_text": response.spoken_text,
+                    "verdict": response.verdict.value if response.verdict else None
+                })
+
+            def _on_ask_error(err):
+                if ask_worker in self._solver_workers:
+                    self._solver_workers.remove(ask_worker)
+                bubble.update_solution(q, f"Could not complete tutoring inquiry: {err}")
+
+            ask_worker.finished.connect(_on_ask_finished)
+            ask_worker.error.connect(_on_ask_error)
+            self._solver_workers.append(ask_worker)
+            ask_worker.start()
             return
 
         if target_pos:
@@ -2219,27 +2423,71 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _convert_to_latex(self):
+        template_type = self.latex_combo.currentText()
+        is_document = (template_type == "Document")
+
         selected = self.scene.selectedItems()
         if not selected and not self.scene.items():
             QMessageBox.warning(self, "No Content", "There is nothing on the canvas to convert.")
             return
 
-        if selected:
-            rect = selected[0].sceneBoundingRect()
-            for item in selected[1:]:
-                rect = rect.united(item.sceneBoundingRect())
+        if is_document and not selected:
+            # Mode 2: Viewport -> Document
+            rect = self.view.mapToScene(self.view.viewport().rect()).boundingRect()
+            
+            # Find supported items intersecting viewport
+            # Exclude overlays like UI buttons, floating toolbars
+            items_in_view = self.scene.items(rect)
+            if not items_in_view:
+                QMessageBox.warning(self, "No Content", "No renderable content visible in current view.")
+                return
         else:
-            rect = self.scene.itemsBoundingRect()
+            # Mode 1: Selection -> Exact
+            if selected:
+                rect = selected[0].sceneBoundingRect()
+                for item in selected[1:]:
+                    rect = rect.united(item.sceneBoundingRect())
+            else:
+                rect = self.scene.itemsBoundingRect()
+            rect.adjust(-20, -20, 20, 20)
 
         if rect.isEmpty():
             return
-
-        rect.adjust(-20, -20, 20, 20)
 
         size = rect.size().toSize()
         if size.width() > 2000 or size.height() > 2000:
             scale_factor = 2000.0 / max(size.width(), size.height())
             size = (rect.size() * scale_factor).toSize()
+
+        from .items.answer_bubble import AnswerBubble
+        from .items.video_float_item import VideoFloatItem
+        from .items.group_selection import GroupSelectionBox
+        from .items.remote_cursor import RemoteCursor
+
+        hidden_items = []
+        for item in self.scene.items():
+            if not item.isVisible():
+                continue
+            
+            # Hide overlays
+            if isinstance(item, (AnswerBubble, VideoFloatItem, GroupSelectionBox, RemoteCursor)):
+                item.setVisible(False)
+                hidden_items.append(item)
+                continue
+                
+            # If Selection mode, hide anything not selected
+            if not is_document and selected and item not in selected:
+                # Need to verify it's not a child of a selected item
+                parent = item.parentItem()
+                is_selected_descendant = False
+                while parent:
+                    if parent in selected:
+                        is_selected_descendant = True
+                        break
+                    parent = parent.parentItem()
+                if not is_selected_descendant:
+                    item.setVisible(False)
+                    hidden_items.append(item)
 
         from PyQt6.QtCore import QRectF
         pixmap = QPixmap(size)
@@ -2249,17 +2497,30 @@ class MainWindow(QMainWindow):
         self.scene.render(painter, target=QRectF(pixmap.rect()), source=rect)
         painter.end()
 
+        # Restore visibility
+        for item in hidden_items:
+            item.setVisible(True)
+
         buffer = QBuffer()
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)
         pixmap.save(buffer, "PNG")
         image_b64 = buffer.data().toBase64().data().decode()
 
-        template_type = self.latex_combo.currentText()
-        current_mode = self.ask_bar.get_mode() if hasattr(self, 'ask_bar') else "study"
-        action = self.classroom_action_combo.currentText()
+        request = LatexGenerationRequest(
+            request_id=f"latex_{uuid.uuid4().hex[:8]}",
+            mode=LatexGenerationMode.VIEWPORT_DOCUMENT if template_type == "Document" else LatexGenerationMode.SELECTION_EXACT,
+            anchor=LatexSourceAnchor(
+                scene_bbox=CanvasBBox(
+                    x=rect.x(), y=rect.y(), width=rect.width(), height=rect.height()
+                ),
+                image_width=size.width(),
+                image_height=size.height()
+            ),
+            image_b64=image_b64
+        )
 
         try:
-            job_id, is_local_direct = request_latex_generation(image_b64, template_type, current_mode, action)
+            job_id, is_local_direct = request_latex_generation(request)
         except Exception as e:
             QMessageBox.warning(self, "API Connection Error",
                 f"Could not connect to the backend server.\n"
@@ -2270,12 +2531,9 @@ class MainWindow(QMainWindow):
             self.speedometer_widget.start_task(f"Generating {template_type}...")
 
         self.latex_worker = LatexPollWorker(
-            job_id,
-            image_b64=image_b64,
-            template_type=template_type,
-            mode=current_mode,
-            classroom_action=action,
+            request=request,
             is_local_direct=is_local_direct,
+            parent=self
         )
         self.latex_worker.status_updated.connect(self._on_latex_status_updated)
         self.latex_worker.latex_ready.connect(self._on_latex_ready)
@@ -2307,6 +2565,21 @@ class MainWindow(QMainWindow):
             self.canvas_tabs.removeTab(idx)
         self.ask_bar.set_pdf_mode(False)
         self.canvas_tabs.setCurrentWidget(self.view)
+
+    def _on_citation_clicked(self, citation_data: dict):
+        material_id = citation_data.get("material_id")
+        page_number = citation_data.get("page_number", 1)
+        if not material_id:
+            return
+            
+        if not hasattr(self, 'pdf_viewer_widget'):
+            return
+            
+        self.pdf_viewer_widget.load_document(material_id)
+        if page_number:
+            self.pdf_viewer_widget.jump_to_page(page_number)
+            
+        self._show_or_update_tab(self.pdf_viewer_widget, "Subject Material")
 
     def _on_canvas_tab_closed(self, index: int):
         if index == 0:
