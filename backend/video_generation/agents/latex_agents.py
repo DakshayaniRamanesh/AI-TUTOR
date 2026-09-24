@@ -225,9 +225,8 @@ class LatexTranscribeAgent:
 
         try:
             from shared.ai_client import ai_client
-            # Construct data URL for the image
-            data_url = f"data:image/png;base64,{b64_str}"
-            response_text = ai_client.generate_content(prompt, image_b64=data_url)
+            # Pass the raw base64 string directly; ai_client handles the data URL/MIME wrapping
+            response_text = ai_client.generate_content(prompt, image_b64=b64_str)
             import re as _re
             response_text = _re.sub(r'<think>.*?</think>', '', response_text, flags=_re.DOTALL).strip()
             print(f"[{job.job_id}] Vision transcription OK ({len(response_text)} chars)")
