@@ -16,13 +16,8 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-try:
-    from backend.config import BACKEND_URL, MODAL_LATEX_GENERATE_URL, MODAL_LATEX_STATUS_URL
-except Exception:
-    BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
-    MODAL_LATEX_GENERATE_URL = os.getenv("MODAL_LATEX_GENERATE_URL", "")
-    MODAL_LATEX_STATUS_URL = os.getenv("MODAL_LATEX_STATUS_URL", "")
-LOCAL_SERVER_URL = BACKEND_URL.rstrip("/")
+LOCAL_SERVER_URL = os.getenv("BACKEND_URL", f"http://localhost:{os.getenv('PORT', '8888')}")
+MODAL_ENDPOINT_URL = os.getenv("MODAL_URL", "https://dakshayaniramanesh--manim-app-generate.modal.run")
 
 
 from shared.contracts.latex import LatexGenerationRequest, LatexGenerationMode, LatexSourceAnchor
@@ -49,10 +44,9 @@ def request_latex_generation(request: LatexGenerationRequest) -> tuple[str, bool
 
     # 2. Try Modal web endpoint if local server is not running
     try:
-        if not MODAL_LATEX_GENERATE_URL:
-            raise RuntimeError("Modal LaTeX endpoint is not configured")
+        modal_url = MODAL_ENDPOINT_URL.replace("/generate", "/generate_latex")
         resp = requests.post(
-            MODAL_LATEX_GENERATE_URL,
+            modal_url,
             json=request.model_dump(mode='json'),
             timeout=2.5
         )

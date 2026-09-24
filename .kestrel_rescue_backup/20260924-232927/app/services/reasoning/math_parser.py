@@ -1,8 +1,5 @@
 import sympy
-from sympy.parsing.sympy_parser import (
-    parse_expr, standard_transformations, implicit_multiplication_application, convert_xor
-)
-import re
+from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 from pydantic import BaseModel, ConfigDict
 from typing import Optional, Any
 
@@ -22,19 +19,9 @@ def parse_math(text: str) -> ParsedMath:
         return ParsedMath(is_valid=False, raw_text=text, error_message="Empty input")
 
     clean_text = text.strip()
-    # Normalize common handwriting/OCR math forms before SymPy parsing.
-    clean_text = (clean_text
-                  .replace("−", "-").replace("–", "-")
-                  .replace("×", "*").replace("·", "*").replace("÷", "/")
-                  .replace("\\times", "*").replace("\\cdot", "*").replace("\\div", "/")
-                  .replace("\\left", "").replace("\\right", ""))
-    supers = str.maketrans({"²": "^2", "³": "^3", "⁴": "^4", "⁵": "^5", "⁶": "^6", "⁷": "^7", "⁸": "^8", "⁹": "^9", "⁰": "^0"})
-    clean_text = clean_text.translate(supers)
-    # Simple OCR LaTeX fractions, e.g. \frac{2}{3} -> ((2)/(3)); nested fractions remain safely UNKNOWN.
-    clean_text = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"((\1)/(\2))", clean_text)
     
-    # Safe transformations: implicit multiplication (2x -> 2*x) and ^ -> exponentiation.
-    transformations = standard_transformations + (implicit_multiplication_application, convert_xor)
+    # Safe transformations: handle implicit multiplication (2x -> 2*x) and ^ for exponents
+    transformations = standard_transformations + (implicit_multiplication_application,)
     
     # Restrict evaluation dictionary to prevent code injection
     # We must explicitly remove __builtins__ to prevent eval() from falling back to Python builtins

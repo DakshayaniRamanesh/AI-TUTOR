@@ -95,21 +95,17 @@ class TutorOrchestrator:
                 source_mode="OFFLINE_LOCAL"
             )
 
-        verdict = ValidationVerdict.UNKNOWN
-        explanation = "First step captured. Write the next step and I can verify the transition."
+        verdict = ValidationVerdict.VALID
+        explanation = "First step looks good."
         socratic_hints = ["What should we do next?"]
         severity = FeedbackSeverity.INFO
 
         # Find previous step in attempt explicitly
         previous_step = None
         if request.attempt_id:
-            # Compare against the latest non-invalid step. This lets a corrected step branch from
-            # the last trustworthy/captured line instead of from the mistake it is correcting.
-            recent_steps = self.repo.get_recent_steps(request.attempt_id, limit=20)
-            previous_step = next(
-                (s for s in reversed(recent_steps) if s.validation_verdict != ValidationVerdict.INVALID.value),
-                None,
-            )
+            previous_step = self.repo.get_last_valid_step(request.attempt_id)
+            if not previous_step:
+                previous_step = self.repo.get_last_step(request.attempt_id)
 
         if previous_step and previous_step.recognized_text:
             prev_parsed = parse_math(previous_step.recognized_text)
@@ -157,7 +153,6 @@ class TutorOrchestrator:
                 recognized_text=current_text,
                 recognized_latex=current_parsed.latex if hasattr(current_parsed, 'latex') else None,
                 content_type="EQUATION" if current_parsed.is_equation else "EXPRESSION",
-                group_id=request.semantic_block_id,
                 previous_step_id=previous_step.id if previous_step else None
             )
             self.repo.update_step_validation(step_id, verdict.value, explanation)

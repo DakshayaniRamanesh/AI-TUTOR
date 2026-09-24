@@ -134,25 +134,6 @@ class CanvasScene(QGraphicsScene):
     def set_notebook_id(self, notebook_id: str):
         self.notebook_id = notebook_id
 
-    def reset_context(self, notebook_id=None, clear_items: bool = False):
-        """Reset transient ink/OCR grouping when switching notebook/subject context."""
-        self._auto_ai_timer.stop()
-        self._auto_convert_timer.stop()
-        self._ocr_in_flight = False
-        self._recent_ink_strokes.clear()
-        from app.services.recognition.stroke_grouper import StrokeGrouper
-        self.stroke_grouper = StrokeGrouper()
-        self.notebook_id = notebook_id
-        if clear_items:
-            was_remote = self._is_remote_event
-            self._is_remote_event = True  # do not broadcast a destructive collaboration clear on navigation
-            try:
-                self.deactivate_active_shape()
-                self.clear()
-                self.clear_remote_cursors()
-            finally:
-                self._is_remote_event = was_remote
-
     def _on_theme_changed(self, theme_name: str):
         is_dark = theme_name == "dark"
         
@@ -1336,7 +1317,8 @@ class CanvasScene(QGraphicsScene):
         )
 
         self._ocr_in_flight = True
-        # Keep the recent-stroke buffer until a later stroke replaces it; this permits a retry after OCR failure.
+        self._recent_ink_strokes.clear()
+        
         self.recognition_requested.emit(req, target_pos)
         return True
 

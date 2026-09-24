@@ -54,12 +54,7 @@ def request_video_generation(request: VideoGenerationRequest) -> str:
     _PENDING_JOBS[job_id] = {
         "prompt": request.explanation_goal,
         "subject_id": request.subject_id,
-        "pdf_path": request.pdf_path,
-        "page_range": request.page_range,
-        "emphasis_note": request.emphasis_note,
-        "output_type": request.output_type,
-        "selection_payload": request.selection_payload,
-        "is_local_direct": True,
+        "is_local_direct": True
     }
 
     # 1. Try local server
@@ -76,7 +71,6 @@ def request_video_generation(request: VideoGenerationRequest) -> str:
                 _PENDING_JOBS[ret_id] = _PENDING_JOBS.get(job_id, {})
                 _PENDING_JOBS[ret_id]["is_local_direct"] = False
                 _PENDING_JOBS[ret_id]["server_url"] = server_url
-                _PENDING_JOBS[ret_id]["status_url"] = data.get("status_url") or f"{server_url}/status/{ret_id}"
                 return ret_id
         except Exception:
             continue
@@ -93,8 +87,10 @@ def request_video_generation(request: VideoGenerationRequest) -> str:
             ret_id = data.get("job_id", job_id)
             _PENDING_JOBS[ret_id] = _PENDING_JOBS.get(job_id, {})
             _PENDING_JOBS[ret_id]["is_local_direct"] = False
-            _PENDING_JOBS[ret_id]["status_url"] = data.get("status_url") or f"{MODAL_VIDEO_STATUS_URL.rstrip('/')}/{ret_id}"
+            _PENDING_JOBS[ret_id]["server_url"] = MODAL_ENDPOINT_URL
             return ret_id
+    except Exception:
+        pass
     except Exception:
         pass
 
@@ -123,7 +119,6 @@ class ManimVideoPollWorker(QThread):
         job_info = _PENDING_JOBS.get(self.job_id, {})
         is_direct = job_info.get("is_local_direct", True)
         server_url = job_info.get("server_url") or _get_active_server()
-        status_url = job_info.get("status_url")
 
         # If no backend server responded at startup, execute the pipeline directly in-process
         if is_direct:
@@ -136,7 +131,7 @@ class ManimVideoPollWorker(QThread):
             attempts += 1
             self.msleep(1500)
             try:
-                r = requests.get(status_url or f"{server_url}/status/{self.job_id}", timeout=2.5)
+                r = requests.get(f"{server_url}/status/{self.job_id}", timeout=2.5)
                 if r.status_code == 200:
                     data = r.json()
                     status = data.get("status", "processing")
@@ -176,7 +171,7 @@ class ManimVideoPollWorker(QThread):
 
             self.status_updated.emit(self.job_id, "Understanding your material...", 20)
 
-            from backend.video_generation.models import VideoJob, JobStatus, BoardSelection
+            from backend.video_generation.models import VideoJob, JobStatus
             from backend.video_generation.graph import VideoGenerationPipeline
 
             prompt_text = self.prompt or job_info.get("prompt", "")
@@ -189,7 +184,7 @@ class ManimVideoPollWorker(QThread):
                 emphasis_note=job_info.get("emphasis_note") or None,
                 output_type=job_info.get("output_type", "video"),
                 subject_id=job_info.get("subject_id") or None,
-                board_selection=BoardSelection.from_dict(job_info.get("selection_payload"))
+                board_selection=job_info.get("selection_payload") or {}
             )
 
             self.status_updated.emit(self.job_id, "Structuring explanation & presentation...", 45)

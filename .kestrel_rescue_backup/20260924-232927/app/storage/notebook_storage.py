@@ -202,7 +202,7 @@ class NotebookStorage:
     # ─── Notebook Operations ──────────────────────────────────────────────────
 
     @classmethod
-    def create_notebook(cls, name: str = "Untitled Notebook", folder_id: str = None, subject_id: str = None) -> dict:
+    def create_notebook(cls, name: str = "Untitled Notebook", folder_id: str = None) -> dict:
         """
         Creates a new notebook entry in index and saves a blank board file.
         """
@@ -214,7 +214,6 @@ class NotebookStorage:
             "id": nb_id,
             "name": name or "Untitled Notebook",
             "folder_id": folder_id,
-            "subject_id": subject_id,
             "created_at": now_str,
             "updated_at": now_str,
         }
@@ -223,7 +222,6 @@ class NotebookStorage:
         board_payload = {
             "board_id": nb_id,
             "title": meta["name"],
-            "subject_id": subject_id,
             "created_at": now_str,
             "updated_at": now_str,
             "items": [],
@@ -237,7 +235,7 @@ class NotebookStorage:
         return meta
 
     @classmethod
-    def save_notebook(cls, notebook_id: str, name: str, items_data: list, subject_id: str = None) -> dict:
+    def save_notebook(cls, notebook_id: str, name: str, items_data: list) -> dict:
         """
         Saves full canvas content for notebook_id and updates index entry.
         Always UPDATES the existing record — never creates a duplicate notebook.
@@ -250,7 +248,6 @@ class NotebookStorage:
         payload = {
             "board_id": notebook_id,
             "title": name,
-            "subject_id": subject_id,
             "updated_at": now_str,
             "items": items_data or [],
         }

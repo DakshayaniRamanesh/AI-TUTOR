@@ -125,26 +125,23 @@ async def generate(
 ):
     job_id = request.request_id
 
+    # The backend VideoJob model needs prompt/document_text fields right now
+    # We will map the fields from VideoGenerationRequest to VideoJob
     job = VideoJob(
         job_id=job_id,
-        user_prompt=request.explanation_goal or "Explain this content.",
-        document_text=request.recognized_content or "",
-        pdf_path=request.pdf_path or "",
-        page_range=request.page_range,
-        emphasis_note=request.emphasis_note,
-        output_type=request.output_type or "video",
+        prompt=request.explanation_goal or "Explain this content.",
         subject_id=request.subject_id,
-        board_selection=BoardSelection.from_dict(request.selection_payload),
     )
     
-    # Construct BoardSelection from the canvas anchor when no richer selection was supplied.
-    if request.anchor_bbox and job.board_selection is None:
-        job.board_selection = BoardSelection(
+    # We construct BoardSelection from anchor_bbox if needed
+    if request.anchor_bbox:
+        bs = BoardSelection(
             board_id=request.notebook_id or "",
-            bbox={"x": request.anchor_bbox.x, "y": request.anchor_bbox.y,
+            bbox={"x": request.anchor_bbox.x, "y": request.anchor_bbox.y, 
                   "width": request.anchor_bbox.width, "height": request.anchor_bbox.height},
-            user_instruction=request.explanation_goal,
+            user_instruction=request.explanation_goal
         )
+        job.board_selection = bs
 
     # Cache check
     import hashlib
@@ -152,7 +149,7 @@ async def generate(
     
     # Very basic cache key
     cache_data = {
-        "prompt": job.user_prompt,
+        "prompt": job.prompt,
         "subject_id": job.subject_id,
         "bbox": request.anchor_bbox.model_dump(mode='json') if request.anchor_bbox else None
     }

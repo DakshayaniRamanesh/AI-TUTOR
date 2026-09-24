@@ -28,13 +28,6 @@ class VideoGenerationRequest(ContractModel):
     requested_duration: Optional[int] = None
     style: Optional[str] = None
 
-    # Source details used by the existing PDF/video pipeline.
-    pdf_path: Optional[str] = None
-    page_range: Optional[str] = None
-    emphasis_note: Optional[str] = None
-    output_type: str = "video"
-    selection_payload: Optional[dict] = None
-
 class VideoJobCreated(ContractModel):
     request_id: StableId
     job_id: StableId

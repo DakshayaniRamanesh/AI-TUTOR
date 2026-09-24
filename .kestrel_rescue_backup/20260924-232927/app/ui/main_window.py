@@ -269,7 +269,6 @@ class MainWindow(QMainWindow):
 
         self._apply_global_styles()
         self._init_ui()
-        self.current_user_id = getattr(getattr(self.subjects_list_view, "current_user", None), "id", None)
         self._setup_shortcuts()
         self._update_window_corners()
 
@@ -433,18 +432,7 @@ class MainWindow(QMainWindow):
 
         # Connect Navigation Signals
         def _open_blank():
-            self._clear_active_requests("blank_canvas")
             self.subject_detail_view.current_subject_id = None
-            self.current_subject_id = None
-            self._current_notebook_id = None
-            self.current_learning_session_id = None
-            self.current_attempt_id = None
-            self.learning_controller.current_session_id = None
-            self.learning_controller.current_attempt_id = None
-            self.current_board = BoardModel("Untitled Notebook")
-            self.title_edit.setText(self.current_board.title)
-            self.scene.reset_context(notebook_id=None, clear_items=True)
-            self._update_context_indicator()
             self.main_stack.setCurrentWidget(canvas_wrapper)
             self._set_sidebar_active_button("canvas")
             
@@ -1104,7 +1092,6 @@ class MainWindow(QMainWindow):
             payload.learning_session_id = self.current_learning_session_id
             
         self.magic_orb.set_state("thinking", "Recognizing handwriting...")
-        self._register_active_request("recognition", payload)
         
         from app.services.recognition.vision_recognizer import VisionRecognizer, RealProviderClient
         from app.workers.recognition_worker import RecognitionWorker
@@ -1121,11 +1108,6 @@ class MainWindow(QMainWindow):
                 return
             self.scene.clear_ocr_in_flight()
             self._active_ocr_worker = None
-            if self._is_request_stale("recognition", payload):
-                self._complete_active_request("recognition", getattr(payload, "request_id", None))
-                worker.deleteLater()
-                return
-            self._complete_active_request("recognition", getattr(payload, "request_id", None))
             self._on_auto_ai_requested(result, target_pos)
             worker.deleteLater()
             
@@ -1135,7 +1117,6 @@ class MainWindow(QMainWindow):
                 return
             self.scene.clear_ocr_in_flight()
             self._active_ocr_worker = None
-            self._complete_active_request("recognition", getattr(payload, "request_id", None))
             
             error_msg = getattr(failure, 'user_message', "Recognition failed")
             if getattr(failure, 'is_retryable', False):
@@ -1299,8 +1280,7 @@ class MainWindow(QMainWindow):
             notebook_id=getattr(self, "_current_notebook_id", None),
             session_id=getattr(self, "current_learning_session_id", None),
             attempt_id=getattr(self, "current_attempt_id", None),
-            canvas_revision=getattr(query, "canvas_revision", getattr(self.scene, "revision", 1)),
-            semantic_block_id=getattr(query, "group_id", None),
+            canvas_revision=getattr(self.scene, "revision", 1),
             scope=ContextScope.SELECTION if getattr(query, "is_explicit_selection", False) else ContextScope.ACTIVE_BLOCK,
             user_query=query_text,
             tutor_mode=req_mode,
@@ -1349,8 +1329,8 @@ class MainWindow(QMainWindow):
                 bubble.bubble.citation_clicked.connect(self._on_citation_clicked)
                 self.scene.addItem(bubble)
                 
-            if stroke_ids and hasattr(self.scene, 'highlight_strokes_by_id') and verdict_val in ("VALID", "INVALID"):
-                self.scene.highlight_strokes_by_id(stroke_ids, is_error=(verdict_val == "INVALID"))
+            if stroke_ids and hasattr(self.scene, 'highlight_strokes_by_id'):
+                self.scene.highlight_strokes_by_id(stroke_ids, is_error=is_error)
                 
             self.magic_orb.set_state("idle", "")
 
@@ -1937,20 +1917,11 @@ class MainWindow(QMainWindow):
             if not (ok and name.strip()):
                 return
             try:
-                meta = NotebookStorage.create_notebook(name.strip(), subject_id=self.current_subject_id)
-                from app.storage.database_ops import create_notebook as db_create_notebook
-                db_create_notebook(name.strip(), self.current_subject_id, override_id=meta["id"])
+                meta = NotebookStorage.create_notebook(name.strip())
                 self._current_notebook_id = meta["id"]
                 self.current_board.board_id = meta["id"]
                 self.current_board.title = meta["name"]
                 self.title_edit.setText(meta["name"])
-                self.scene.set_notebook_id(meta["id"])
-                self.current_learning_session_id = self.memory_repo.get_or_create_active_session(
-                    notebook_id=meta["id"], user_id=self.current_user_id, subject_id=self.current_subject_id
-                )
-                self.current_attempt_id = self.memory_repo.get_or_create_active_attempt(self.current_learning_session_id)
-                self.learning_controller.current_session_id = self.current_learning_session_id
-                self.learning_controller.current_attempt_id = self.current_attempt_id
             except Exception as err:
                 traceback.print_exc()
                 QMessageBox.warning(self, "Save Failed", f"Could not create notebook:\n{err}")
@@ -1977,9 +1948,7 @@ class MainWindow(QMainWindow):
             self._set_save_status("Saving...")
             name = self.current_board.title or "Untitled Notebook"
             items_data = self.scene.to_dict_list()
-            NotebookStorage.save_notebook(
-                self._current_notebook_id, name, items_data, subject_id=self.current_subject_id
-            )
+            NotebookStorage.save_notebook(self._current_notebook_id, name, items_data)
             if hasattr(self, 'notebooks_panel'):
                 self.notebooks_panel.refresh()
             self._set_save_status("Saved", clear_after_ms=2000)
@@ -2032,18 +2001,10 @@ class MainWindow(QMainWindow):
             self.current_board.title = payload.get("title", "Notebook")
             self.title_edit.setText(self.current_board.title)
 
-            # Restore subject context. New JSON files carry subject_id; legacy files can resolve it from SQL.
-            self.current_subject_id = payload.get("subject_id")
-            if not self.current_subject_id:
-                try:
-                    from app.storage.database import SessionLocal, Notebook
-                    with SessionLocal() as db:
-                        db_nb = db.query(Notebook).filter(Notebook.id == self._current_notebook_id).first()
-                        self.current_subject_id = db_nb.subject_id if db_nb else None
-                except Exception as e:
-                    print(f"[MainWindow] Could not resolve legacy notebook subject: {e}")
+            # Ensure subject_id is preserved if stored in notebook payload
+            if payload.get("subject_id"):
+                self.current_subject_id = payload.get("subject_id")
 
-            self.scene.reset_context(notebook_id=self._current_notebook_id, clear_items=False)
             user_id = getattr(self, "current_user_id", None)
             self.current_learning_session_id = self.memory_repo.get_or_create_active_session(
                 notebook_id=self._current_notebook_id,
@@ -2232,12 +2193,12 @@ class MainWindow(QMainWindow):
             VideoGenerationRequest(
                 request_id=f"job_{uuid.uuid4().hex[:8]}",
                 explanation_goal="Explain this document.",
-                subject_id=current_subject or None,
-                tutor_mode="EXPLAIN",
-                pdf_path=pdf_path,
-                page_range=page_range or None,
-                emphasis_note=emphasis or None,
-                output_type=out_type or "video"
+                # Note: Currently pdf_path, page_range, emphasis_note, output_type 
+                # are not explicitly inside the new strict contract but they could be 
+                # mapped or we just temporarily ignore them since we just built the basic contract.
+                # But let's pass them as dict if we extend it, or just pass subject_id.
+                subject_id=current_subject or "",
+                tutor_mode=out_type
             )
         )
         
@@ -2566,8 +2527,8 @@ class MainWindow(QMainWindow):
 
         from .items.answer_bubble import AnswerBubble
         from .items.video_float_item import VideoFloatItem
-        from .items.group_selection import GroupSelection
-        from .items.remote_cursor import RemoteCollaboratorCursor
+        from .items.group_selection import GroupSelectionBox
+        from .items.remote_cursor import RemoteCursor
 
         hidden_items = []
         for item in self.scene.items():
@@ -2575,7 +2536,7 @@ class MainWindow(QMainWindow):
                 continue
             
             # Hide overlays
-            if isinstance(item, (AnswerBubble, VideoFloatItem, GroupSelection, RemoteCollaboratorCursor)):
+            if isinstance(item, (AnswerBubble, VideoFloatItem, GroupSelectionBox, RemoteCursor)):
                 item.setVisible(False)
                 hidden_items.append(item)
                 continue
@@ -2672,22 +2633,19 @@ class MainWindow(QMainWindow):
         self.canvas_tabs.setCurrentWidget(self.view)
 
     def _on_citation_clicked(self, citation_data: dict):
-        """Open a cited material by database material id and jump to its PDF page."""
         material_id = citation_data.get("material_id")
-        page_number = citation_data.get("page_number")
+        page_number = citation_data.get("page_number", 1)
         if not material_id:
             return
-        try:
-            from app.storage.database import SessionLocal, Material
-            with SessionLocal() as db:
-                mat = db.query(Material).filter(Material.id == material_id).first()
-                if not mat or not mat.file_path or not os.path.exists(mat.file_path):
-                    return
-                self._on_subject_pdf_requested(mat.file_path)
-            if page_number and hasattr(self.pdf_viewer_widget, "go_to_page"):
-                self.pdf_viewer_widget.go_to_page(int(page_number))
-        except Exception as e:
-            print(f"[MainWindow] Citation click navigation error: {e}")
+            
+        if not hasattr(self, 'pdf_viewer_widget'):
+            return
+            
+        self.pdf_viewer_widget.load_document(material_id)
+        if page_number:
+            self.pdf_viewer_widget.jump_to_page(page_number)
+            
+        self._show_or_update_tab(self.pdf_viewer_widget, "Subject Material")
 
     def _on_canvas_tab_closed(self, index: int):
         if index == 0:

@@ -481,7 +481,7 @@ class SubjectDetailView(QWidget):
         if not self.current_subject_id: return
         name, ok = QInputDialog.getText(self, "New Notebook", "Notebook name:", text="Untitled Notebook")
         if not ok or not name.strip(): return
-        meta = NotebookStorage.create_notebook(name.strip(), subject_id=self.current_subject_id)
+        meta = NotebookStorage.create_notebook(name.strip())
         db_create_notebook(name.strip(), self.current_subject_id, override_id=meta["id"])
         self.refresh_data()
 

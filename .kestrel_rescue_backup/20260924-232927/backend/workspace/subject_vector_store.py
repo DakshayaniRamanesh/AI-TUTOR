@@ -39,14 +39,6 @@ except ImportError:
 # ── Constants ──────────────────────────────────────────────────────────────────
 COLLECTION      = "kestrel-subject-brain-v1"
 EMBEDDING_DIM   = 3072   # models/gemini-embedding-2
-_LOCAL_MEMORY_CLIENT = None
-
-
-def _shared_memory_client() -> QdrantClient:
-    global _LOCAL_MEMORY_CLIENT
-    if _LOCAL_MEMORY_CLIENT is None:
-        _LOCAL_MEMORY_CLIENT = QdrantClient(location=":memory:")
-    return _LOCAL_MEMORY_CLIENT
 
 
 class SubjectVectorStore:
@@ -73,7 +65,7 @@ class SubjectVectorStore:
 
         if qdrant_url == ":memory:":
             print("[SubjectVectorStore] Using in-memory Qdrant (dev mode)")
-            return _shared_memory_client()
+            return QdrantClient(location=":memory:")
 
         try:
             client = QdrantClient(
@@ -87,7 +79,7 @@ class SubjectVectorStore:
             return client
         except Exception as e:
             print(f"[SubjectVectorStore] Remote unreachable ({e}); using in-memory fallback")
-            return _shared_memory_client()
+            return QdrantClient(location=":memory:")
 
     def _ensure_collection(self):
         """Create the collection and payload indexes if they don't exist yet."""
@@ -194,9 +186,6 @@ class SubjectVectorStore:
 
             return [
                 {
-                    "id":             hit.payload.get("chunk_id", str(hit.id)),
-                    "chunk_id":       hit.payload.get("chunk_id", str(hit.id)),
-                    "material_id":    hit.payload.get("material_id", ""),
                     "score":          hit.score,
                     "text":           hit.payload.get("text", ""),
                     "subject_id":     hit.payload.get("subject_id", ""),
