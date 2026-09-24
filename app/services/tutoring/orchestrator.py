@@ -12,7 +12,7 @@ class TutorOrchestrator:
         self.repo = repository
         self.context_builder = context_builder
 
-    def process_student_input(self, attempt_id: str, recognized_text: str, anchors: Optional[List[dict]] = None) -> TutorFeedback:
+    def process_student_input(self, attempt_id: str, recognized_text: str, group_id: Optional[str] = None, group_revision: int = 0, anchors: Optional[List[dict]] = None) -> TutorFeedback:
         """
         Coordinates parsing, validation, memory storage, and feedback generation.
         """
@@ -39,7 +39,9 @@ class TutorOrchestrator:
             attempt_id=attempt_id,
             recognized_text=recognized_text,
             content_type="EQUATION" if current_parsed.is_equation else "EXPRESSION",
-            anchors=anchors
+            anchors=anchors,
+            group_id=group_id,
+            group_revision=group_revision
         )
         
         # 5. Store validation result in database
@@ -66,7 +68,7 @@ class TutorOrchestrator:
             )
         elif verdict == ValidationVerdict.INVALID:
             return TutorFeedback(
-                feedback_text=f"Wait, {recognized_text} doesn't mathematically follow from the previous step.",
+                feedback_text=explanation,
                 socratic_hints=["Check your algebra operations.", "Did you apply the same operation to both sides?"],
                 severity=FeedbackSeverity.WARNING,
                 anchors=[]

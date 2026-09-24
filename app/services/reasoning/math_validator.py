@@ -43,10 +43,24 @@ def validate_transition(previous: ParsedMath, current: ParsedMath, step_id: str 
                 if sol_prev == sol_curr:
                     return ValidationResult(step_id=step_id, verdict=ValidationVerdict.VALID, explanation="Solution sets are identical.")
                 else:
+                    explanation = "Wait, that doesn't mathematically follow from the previous step."
+                    
+                    # Operation inference: check if it's a sign distribution error
+                    # E.g. previous: 3x - (2x - 5) = 14 (x=9)
+                    # current: 3x - 2x - 5 = 14 (x=19)
+                    # If we flip the sign of the constant in current, does it match?
+                    # This is a naive heuristic for demonstration.
+                    try:
+                        # Try to find common errors
+                        if "-" in str(current.lhs) and "(" in str(previous.lhs):
+                            explanation = "Check your sign distribution when removing parentheses."
+                    except Exception:
+                        pass
+                        
                     return ValidationResult(
                         step_id=step_id,
                         verdict=ValidationVerdict.INVALID, 
-                        explanation=f"Solution sets differ. Previous: {sol_prev}, Current: {sol_curr}"
+                        explanation=explanation
                     )
             
             return ValidationResult(

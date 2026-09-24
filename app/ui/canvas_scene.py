@@ -64,6 +64,9 @@ class CanvasScene(QGraphicsScene):
         self.eraser_size = 2 # 1=small, 2=medium, 3=large
         
         self.stroke_processor = StrokeProcessor(enable_smart_shapes=True, enable_smoothing=True)
+        from app.services.recognition.stroke_grouper import StrokeGrouper
+        self.stroke_grouper = StrokeGrouper()
+        
         self._current_path_item = None
         self._current_painter_path = None
         self._stroke_start_pos = None
@@ -868,6 +871,27 @@ class CanvasScene(QGraphicsScene):
         
         # 3. Add to mathematical tracking (ignore highlighters/erasers)
         if active_tool == "pen":
+            import time
+            import uuid
+            from app.services.recognition.stroke_grouper import StrokeData
+            
+            if not hasattr(final_item, "item_id"):
+                final_item.item_id = str(uuid.uuid4())
+                
+            start_ts = time.time() * 1000.0
+            end_ts = time.time() * 1000.0
+            if hasattr(final_item, "raw_stroke") and final_item.raw_stroke:
+                start_ts = final_item.raw_stroke[0].get("timestamp", start_ts)
+                end_ts = final_item.raw_stroke[-1].get("timestamp", end_ts)
+                
+            rect = final_item.sceneBoundingRect()
+            stroke_data = StrokeData(
+                stroke_id=final_item.item_id,
+                x=rect.x(), y=rect.y(), w=rect.width(), h=rect.height(),
+                start_ts=start_ts, end_ts=end_ts
+            )
+            self.stroke_grouper.add_stroke(stroke_data, board_id="canvas_board")
+            
             self._recent_ink_strokes.append(final_item)
             if self.auto_ai_enabled and not getattr(self, "_ocr_in_flight", False):
                 self._auto_ai_timer.start(int(getattr(self, "auto_ai_delay_sec", 2.0) * 1000))
@@ -1196,55 +1220,79 @@ class CanvasScene(QGraphicsScene):
         self.trigger_ai_on_dirty_ink()
 
     def trigger_ai_on_dirty_ink(self, prompt: str = "") -> bool:
-        """Explicitly triggers PenEcho Feather AI on the latest ink strokes or selection.
-
-        This is the entry point for the Feather AI button.
-        If a prompt is already known it is used directly; otherwise Groq Vision OCR
-        runs in a background QThread so the canvas never freezes.
-        """
-        valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
-        if not valid_strokes:
-            # Fallback 1: check if user has strokes selected with lasso or selection tool
-            from PyQt6.QtWidgets import QGraphicsPathItem
-            selected = [it for it in self.selectedItems() if isinstance(it, QGraphicsPathItem) and it.scene() == self]
-            if selected:
-                valid_strokes = selected
-            else:
-                # Fallback 2: check if any recent ink path items exist on the scene
-                all_paths = [it for it in self.items() if isinstance(it, QGraphicsPathItem) and it.scene() == self]
-                if all_paths:
-                    valid_strokes = all_paths[-15:]
-
-        if valid_strokes:
-            min_y = min(s.sceneBoundingRect().y() for s in valid_strokes)
-            max_x = max(s.sceneBoundingRect().right() for s in valid_strokes)
-            target_pos = QPointF(max_x + 35, min_y)
-        else:
-            target_pos = QPointF(200, 200)
+        """Explicitly triggers PenEcho Feather AI on the latest ink strokes or selection."""
+        import uuid
+        from shared.contracts.recognition import RecognitionRequest
+        from app.services.recognition.stroke_grouper import StrokeData
+        import time
 
         if self._ocr_in_flight:
             return False
 
-        if prompt:
-            # We treat prompt as a raw string bypass (not OCR)
-            self.recognition_requested.emit(prompt, target_pos)
-            return True
+        valid_strokes = [s for s in self._recent_ink_strokes if s.scene() == self]
+        
+        # Check if user has strokes selected with lasso or selection tool
+        from PyQt6.QtWidgets import QGraphicsPathItem
+        selected = [it for it in self.selectedItems() if isinstance(it, QGraphicsPathItem) and it.scene() == self]
+        
+        is_explicit_selection = False
+        if selected:
+            valid_strokes = selected
+            is_explicit_selection = True
+        elif not valid_strokes:
+            # Fallback
+            all_paths = [it for it in self.items() if isinstance(it, QGraphicsPathItem) and it.scene() == self]
+            if all_paths:
+                valid_strokes = all_paths[-15:]
+                is_explicit_selection = True
 
         if not valid_strokes:
             self.auto_ai_failed.emit("No handwriting or ink found on canvas.")
             return False
 
-        b64_img = self._render_strokes_base64(valid_strokes)
-        stroke_count = len(valid_strokes)
+        if is_explicit_selection:
+            stroke_datas = []
+            for s in valid_strokes:
+                if not hasattr(s, "item_id"):
+                    s.item_id = str(uuid.uuid4())
+                rect = s.sceneBoundingRect()
+                now_ms = time.time() * 1000.0
+                stroke_datas.append(StrokeData(
+                    stroke_id=s.item_id, x=rect.x(), y=rect.y(), w=rect.width(), h=rect.height(),
+                    start_ts=now_ms, end_ts=now_ms
+                ))
+            group = self.stroke_grouper.create_explicit_group(stroke_datas, board_id="canvas_board")
+        else:
+            group_id = self.stroke_grouper.active_group_id
+            if group_id and group_id in self.stroke_grouper.groups:
+                group = self.stroke_grouper.groups[group_id]
+                valid_strokes = [s for s in self.items() if hasattr(s, "item_id") and s.item_id in group.stroke_ids and s.scene() == self]
+            else:
+                self.auto_ai_failed.emit("No active ink group found.")
+                return False
 
-        import uuid
-        from shared.contracts.recognition import RecognitionRequest
+        if not valid_strokes:
+            self.auto_ai_failed.emit("No valid strokes in the active group.")
+            return False
+
+        if prompt:
+            # We treat prompt as a raw string bypass (not OCR)
+            target_pos = QPointF(group.bbox.x + group.bbox.width + 35, group.bbox.y)
+            self.recognition_requested.emit(prompt, target_pos)
+            return True
+
+        b64_img = self._render_strokes_base64(valid_strokes)
+        target_pos = QPointF(group.bbox.x + group.bbox.width + 35, group.bbox.y)
+
         req = RecognitionRequest(
             request_id=str(uuid.uuid4()),
             board_id="canvas_board",
-            learning_session_id="dummy",
-            stroke_group_id=str(uuid.uuid4()),
-            source_stroke_ids=[s.item_id for s in valid_strokes if hasattr(s, 'item_id')],
+            notebook_id=None,
+            attempt_id=None,
+            group_id=group.id,
+            group_revision=group.revision,
+            source_stroke_ids=group.stroke_ids,
+            group_bbox=group.bbox,
             image_b64=b64_img,
         )
 
@@ -1253,3 +1301,16 @@ class CanvasScene(QGraphicsScene):
         
         self.recognition_requested.emit(req, target_pos)
         return True
+
+    def highlight_strokes_by_id(self, item_ids: list, is_error: bool = False):
+        from PyQt6.QtGui import QColor, QPen
+        for item in self.items():
+            if hasattr(item, "item_id") and item.item_id in item_ids:
+                if hasattr(item, "setPen"):
+                    pen = item.pen()
+                    if is_error:
+                        pen.setColor(QColor("#f87171")) # Red warning
+                    else:
+                        pen.setColor(QColor("#4ade80")) # Green success
+                    pen.setWidthF(pen.widthF() + 1.0)
+                    item.setPen(pen)

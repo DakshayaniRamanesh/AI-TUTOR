@@ -93,6 +93,8 @@ def test_instant_widgets_instantiation_and_serialization():
     ]
 
     scene = CanvasScene()
+    scene.set_notebook_id("test_notebook")
+    scene.board_id = "test_board"
 
     for w_type in preset_types:
         item = create_instant_widget_item(w_type)
@@ -143,6 +145,8 @@ def test_dynamic_custom_widget_worker_and_code_restore(monkeypatch):
 
     # Test restoring dynamically compiled widget from code dict
     scene = CanvasScene()
+    scene.set_notebook_id("test_notebook")
+    scene.board_id = "test_board"
     restored_custom = scene.create_item_from_dict(data)
     assert restored_custom is not None
     assert isinstance(restored_custom, InteractiveCanvasItem)
@@ -174,6 +178,8 @@ def test_dynamic_code_execution_safety():
     }
 
     scene = CanvasScene()
+    scene.set_notebook_id("test_notebook")
+    scene.board_id = "test_board"
     item = scene.create_item_from_dict(data)
     assert item is not None
     assert isinstance(item, InteractiveCanvasItem)
@@ -222,6 +228,8 @@ def test_world_clock_comparison_circular_and_digital():
 
     # 4. Test serialization and roundtrip reconstruction in CanvasScene
     scene = CanvasScene()
+    scene.set_notebook_id("test_notebook")
+    scene.board_id = "test_board"
     restored = scene.create_item_from_dict(item_circ.to_dict())
     assert restored is not None
     assert isinstance(restored, InteractiveCanvasItem)
@@ -256,6 +264,8 @@ def test_procedural_simulation_generation():
 
     # Test roundtrip serialization in scene
     scene = CanvasScene()
+    scene.set_notebook_id("test_notebook")
+    scene.board_id = "test_board"
     restored = scene.create_item_from_dict(item_orbit.to_dict())
     assert restored is not None
     assert isinstance(restored.content_widget, ProceduralSimulationWidget)

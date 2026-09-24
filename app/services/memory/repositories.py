@@ -93,13 +93,28 @@ class MemoryRepository:
         recognized_text: str, 
         recognized_latex: Optional[str] = None,
         content_type: Optional[str] = None,
-        anchors: Optional[List[Dict[str, Any]]] = None
+        anchors: Optional[List[Dict[str, Any]]] = None,
+        group_id: Optional[str] = None,
+        group_revision: Optional[int] = None
     ) -> str:
         with self.Session() as db:
-            # Lock the attempt row to safely calculate the next sequence number (if this was Postgres we'd FOR UPDATE)
-            # In SQLite with WAL, transactions are serialized appropriately.
-            
-            # Find max sequence number
+            if group_id is not None:
+                existing = db.query(ReasoningStep).filter(
+                    ReasoningStep.attempt_id == attempt_id,
+                    ReasoningStep.group_id == group_id
+                ).first()
+                if existing:
+                    if group_revision is not None and (existing.group_revision is None or group_revision > existing.group_revision):
+                        existing.recognized_text = recognized_text
+                        existing.recognized_latex = recognized_latex
+                        existing.content_type = content_type
+                        existing.group_revision = group_revision
+                        existing.validation_verdict = None
+                        db.commit()
+                        return existing.id
+                    else:
+                        return existing.id
+
             max_seq = db.query(ReasoningStep).filter(ReasoningStep.attempt_id == attempt_id).count()
             
             step = ReasoningStep(
@@ -108,7 +123,9 @@ class MemoryRepository:
                 sequence_number=max_seq + 1,
                 recognized_text=recognized_text,
                 recognized_latex=recognized_latex,
-                content_type=content_type
+                content_type=content_type,
+                group_id=group_id,
+                group_revision=group_revision
             )
             db.add(step)
             

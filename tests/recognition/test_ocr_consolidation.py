@@ -24,6 +24,9 @@ def test_empty_recognition_returns_failure(qt_app):
     # Return empty plain_text to simulate whitespace-only success
     mock_recognizer.recognize.return_value = RecognitionResult(
         request_id="test",
+        board_id="b1",
+        group_id="g1",
+        group_revision=1,
         status="SUCCESS",
         provider_name="groq",
         plain_text="   ",
@@ -31,7 +34,7 @@ def test_empty_recognition_returns_failure(qt_app):
     )
     
     req = RecognitionRequest(
-        request_id="test", board_id="b", learning_session_id="s", stroke_group_id="g", image_b64="img"
+        request_id="test", board_id="b", group_id="g", group_revision=1, source_stroke_ids=["s1"], image_b64="img"
     )
     
     worker = RecognitionWorker(mock_recognizer, req)
@@ -57,6 +60,9 @@ def test_valid_recognition_returns_success(qt_app):
     mock_recognizer = MagicMock(spec=Recognizer)
     mock_recognizer.recognize.return_value = RecognitionResult(
         request_id="test",
+        board_id="b1",
+        group_id="g1",
+        group_revision=1,
         status="SUCCESS",
         provider_name="groq",
         plain_text="x = 2",
@@ -64,7 +70,7 @@ def test_valid_recognition_returns_success(qt_app):
     )
     
     req = RecognitionRequest(
-        request_id="test", board_id="b", learning_session_id="s", stroke_group_id="g", image_b64="img"
+        request_id="test", board_id="b", group_id="g", group_revision=1, source_stroke_ids=["s1"], image_b64="img"
     )
     
     worker = RecognitionWorker(mock_recognizer, req)
@@ -85,14 +91,27 @@ def test_valid_recognition_returns_success(qt_app):
 
 def test_canvas_scene_exactly_once_submission(qt_app):
     scene = CanvasScene()
+    scene.board_id = "test_board"
     scene._ocr_in_flight = False
     
     stroke = InkStroke()
+    stroke.item_id = "test_stroke"
     scene.addItem(stroke)
     scene._recent_ink_strokes.append(stroke)
     
     spy = MagicMock()
     scene.recognition_requested.connect(spy)
+    
+    mock_group = MagicMock()
+    mock_group.id = "g1"
+    mock_group.revision = 1
+    mock_group.stroke_ids = ["test_stroke"]
+    from shared.contracts.common import CanvasBBox
+    mock_group.bbox = CanvasBBox(x=0, y=0, width=10, height=10)
+    scene.stroke_grouper = MagicMock()
+    scene.stroke_grouper.active_group_id = "g1"
+    scene.stroke_grouper.groups = {"g1": mock_group}
+    scene.stroke_grouper.create_explicit_group.return_value = mock_group
     
     # First trigger should succeed and emit
     res1 = scene.trigger_ai_on_dirty_ink()

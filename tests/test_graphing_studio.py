@@ -137,6 +137,8 @@ def test_graph_preset_detection_and_canvas_roundtrip(qapp):
     assert item.content_widget.mode == "3d"
 
     scene = CanvasScene()
+    scene.set_notebook_id("test_notebook")
+    scene.board_id = "test_board"
     scene.addItem(item)
     dict_data = item.to_dict()
 

@@ -14,25 +14,29 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", "backend", ".env"))
 
 
-def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", stroke_count: int = 0) -> str:
+def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", stroke_count: int = 0) -> dict:
     """
     Recognizes handwritten text, equations, or chemical structures from canvas.
-    Supports direct text or base64 rendered ink images.
-    Uses Groq Vision (qwen/qwen3.8-27b, qwen/qwen3.6-27b) as the primary fast engine,
-    with Google Gemini Vision as fallback.
+    Uses Groq Vision or Gemini to output a structured JSON dict.
     """
     last_error = None
     if input_text_or_path and not input_text_or_path.startswith("Recognized"):
-        return input_text_or_path.strip()
+        return {"text": input_text_or_path.strip(), "content_type": "TEXT", "confidence": 1.0}
 
     if not b64_image:
-        return ""
+        return {}
 
     prompt = (
         "You are an expert OCR transcription engine for mathematics and science handwriting.\n"
         "Transcribe the handwritten text, formula, question, or diagram topic shown in this canvas image.\n"
-        "Output ONLY the clean transcribed question or formula (e.g. 'integrate 5x dx' or 'differentiate 5x^3' or 'formula for benzene C6H6'). "
-        "Do NOT output thinking process, conversational text, quotes, or markdown backticks."
+        "Output ONLY valid JSON matching this schema:\n"
+        "{\n"
+        '  "content_type": "EQUATION" | "TEXT" | "DIAGRAM" | "UNKNOWN",\n'
+        '  "text": "plain text representation",\n'
+        '  "latex": "latex representation if equation",\n'
+        '  "confidence": 0.0 to 1.0\n'
+        "}\n"
+        "Do NOT output markdown blocks or backticks. Start directly with {."
     )
 
     # 1. PRIMARY: Groq Vision (fast, high accuracy, active API key)
@@ -57,6 +61,7 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
                                 ]
                             }
                         ],
+                        "response_format": {"type": "json_object"},
                         "temperature": 0.1,
                         "max_tokens": 300
                     },
@@ -67,18 +72,21 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
                 choices = data.get("choices", [])
                 if choices:
                     raw = choices[0].get("message", {}).get("content", "").strip()
-                    raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
-                    raw = raw.strip('"`\'')
                     if raw:
-                        return raw
+                        try:
+                            import json
+                            parsed = json.loads(raw)
+                            return parsed
+                        except json.JSONDecodeError:
+                            return {"text": raw, "content_type": "UNKNOWN", "confidence": 0.5}
             except requests.exceptions.Timeout as e:
                 print(f"[Handwriting OCR Groq Vision] Timeout for model {model}: {e}")
                 last_error = e
-                continue # Try next model or fallback
+                continue
             except Exception as e:
                 print(f"[Handwriting OCR Groq Vision] Error for model {model}: {e}")
                 last_error = e
-                continue # Try next model or fallback
+                continue
 
     # 2. SECONDARY / FALLBACK: Google Gemini Vision
     gemini_key = (
@@ -101,7 +109,10 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
                         }
                     ]
                 }
-            ]
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json"
+            }
         }
         for model in models:
             try:
@@ -109,9 +120,12 @@ def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", str
                 resp = requests.post(api_url, json=payload, timeout=6.0)
                 if resp.status_code == 200:
                     text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-                    if text:
-                        return text
+                    try:
+                        import json
+                        parsed = json.loads(text)
+                        return parsed
+                    except json.JSONDecodeError:
+                        return {"text": text, "content_type": "UNKNOWN", "confidence": 0.5}
             except requests.exceptions.Timeout as e:
                 last_error = e
                 continue

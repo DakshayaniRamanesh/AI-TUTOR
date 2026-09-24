@@ -1,7 +1,7 @@
 from typing import List, Optional
 from enum import Enum
 from pydantic import Field, model_validator
-from .common import ContractModel, StableId
+from .common import ContractModel, StableId, CanvasBBox, CoordinateSpace
 
 class RecognitionStatus(str, Enum):
     SUCCESS = "SUCCESS"
@@ -23,14 +23,27 @@ class RecognitionAlternative(ContractModel):
 class RecognitionRequest(ContractModel):
     request_id: StableId
     board_id: StableId
-    learning_session_id: StableId
-    stroke_group_id: StableId
-    source_stroke_ids: List[StableId] = Field(default_factory=list)
+    notebook_id: Optional[StableId] = None
+    attempt_id: Optional[StableId] = None
+    group_id: StableId
+    group_revision: int
+    source_stroke_ids: List[StableId] = Field(default_factory=list, min_length=1)
+    group_bbox: Optional[CanvasBBox] = None
+    coordinate_space: CoordinateSpace = Field(default=CoordinateSpace.SCENE)
     image_b64: Optional[str] = None
     expected_type: Optional[ContentType] = None
 
 class RecognitionResult(ContractModel):
     request_id: StableId
+    board_id: StableId
+    notebook_id: Optional[StableId] = None
+    attempt_id: Optional[StableId] = None
+    group_id: StableId
+    group_revision: int
+    source_stroke_ids: List[StableId] = Field(default_factory=list, min_length=1)
+    group_bbox: Optional[CanvasBBox] = None
+    coordinate_space: CoordinateSpace = Field(default=CoordinateSpace.SCENE)
+    
     status: RecognitionStatus
     content_type: ContentType = Field(default=ContentType.UNKNOWN)
     
@@ -39,11 +52,10 @@ class RecognitionResult(ContractModel):
     latex: Optional[str] = None
     normalized_expression: Optional[str] = None
     
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     alternatives: List[RecognitionAlternative] = Field(default_factory=list)
     
     # Traceability
-    source_stroke_ids: List[StableId] = Field(default_factory=list, min_length=1)
     provider_name: str
     warnings: List[str] = Field(default_factory=list)
 
@@ -53,6 +65,6 @@ class RecognitionResult(ContractModel):
             if not (self.plain_text or self.latex or self.normalized_expression):
                 raise ValueError("SUCCESS status requires at least one parsed output (plain_text, latex, or normalized_expression).")
         elif self.status == RecognitionStatus.FAILED:
-            if self.confidence > 0.0:
+            if self.confidence is not None and self.confidence > 0.0:
                 raise ValueError("FAILED status cannot have a confidence > 0.0.")
         return self

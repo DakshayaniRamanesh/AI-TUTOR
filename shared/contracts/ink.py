@@ -20,5 +20,6 @@ class InkStroke(ContractModel):
 class InkGroup(ContractModel):
     id: StableId
     board_id: StableId
+    revision: int = Field(default=0)
     stroke_ids: List[StableId] = Field(default_factory=list, min_length=1)
     bbox: CanvasBBox

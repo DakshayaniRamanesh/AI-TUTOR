@@ -10,6 +10,9 @@ from shared.contracts.recognition import (
 def test_valid_recognition_result():
     res = RecognitionResult(
         request_id="req_123",
+        board_id="board",
+        group_id="group",
+        group_revision=1,
         status=RecognitionStatus.SUCCESS,
         content_type=ContentType.EQUATION,
         latex="x^2 + y = 10",
@@ -43,6 +46,10 @@ def test_enum_rejection():
 def test_ambiguous_result_with_alternatives():
     res = RecognitionResult(
         request_id="req_2",
+        board_id="board",
+        group_id="group",
+        group_revision=1,
+        source_stroke_ids=["stroke_1"],
         status=RecognitionStatus.AMBIGUOUS,
         content_type=ContentType.UNKNOWN,
         provider_name="gemini",

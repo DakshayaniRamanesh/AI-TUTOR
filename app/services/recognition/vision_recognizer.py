@@ -16,10 +16,13 @@ class LegacyProviderClient(ProviderClient):
         self.stroke_count = stroke_count
         
     def execute(self, image_b64: str) -> dict:
-        # We don't actually use the image right now in the legacy mock
-        from app.services.recognition.handwriting_ocr import recognize_handwriting
-        text = recognize_handwriting(stroke_count=self.stroke_count)
-        return {"text": text}
+        # Mock legacy behavior
+        return {
+            "text": "3x = 12",
+            "latex": "3x = 12",
+            "content_type": "EQUATION",
+            "confidence": 0.9
+        }
 
 class RealProviderClient(ProviderClient):
     """Bridge to the real handwriting OCR module (Groq/Gemini)."""
@@ -28,8 +31,8 @@ class RealProviderClient(ProviderClient):
         from app.services.recognition.handwriting_ocr import recognize_handwriting
         try:
             # Pass the actual base64 image to the backend
-            text = recognize_handwriting(b64_image=image_b64)
-            return {"text": text}
+            result_dict = recognize_handwriting(b64_image=image_b64)
+            return result_dict
         except requests.exceptions.Timeout as e:
             raise TimeoutError(str(e))
         except RuntimeError as e:
@@ -82,21 +85,31 @@ class VisionRecognizer(Recognizer):
             )
 
     def _parse_success(self, raw_data: dict, request: RecognitionRequest) -> RecognitionResult:
-        # Assuming raw_data contains 'text' or 'latex' from the legacy OCR wrapper
         text = raw_data.get('text', '').strip()
+        latex = raw_data.get('latex', '').strip() or text
+        content_type_str = raw_data.get('content_type', 'UNKNOWN')
+        confidence = raw_data.get('confidence', 0.8)
+        
+        try:
+            content_type = ContentType(content_type_str)
+        except ValueError:
+            content_type = ContentType.UNKNOWN
+
         if not text:
             raise ValueError("Provider returned empty text.")
 
-        # For simplicity, treating as successful math equation if it contains math-like chars,
-        # or just passing it back. In a real scenario, this would map the provider's specific JSON structure.
         return RecognitionResult(
             request_id=request.request_id,
+            board_id=request.board_id,
             status=RecognitionStatus.SUCCESS,
-            content_type=ContentType.EQUATION,
+            content_type=content_type,
             plain_text=text,
-            latex=text,
-            confidence=1.0, # Placeholder, legacy didn't provide confidence
-            source_stroke_ids=request.source_stroke_ids, # Resolved to actual stroke IDs
+            latex=latex,
+            confidence=confidence,
+            source_stroke_ids=request.source_stroke_ids,
+            group_id=request.group_id,
+            group_revision=request.group_revision,
+            group_bbox=request.group_bbox,
             provider_name="vision_provider",
-            alternatives=[RecognitionAlternative(text=text, confidence=1.0)]
+            alternatives=[RecognitionAlternative(text=text, latex=latex, confidence=confidence)]
         )

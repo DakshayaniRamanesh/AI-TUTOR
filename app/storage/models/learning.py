@@ -68,6 +68,9 @@ class ReasoningStep(Base):
     content_type = Column(String, nullable=True)
     recognition_confidence = Column(Float, nullable=True)
     
+    group_id = Column(String, nullable=True)
+    group_revision = Column(Integer, nullable=True)
+    
     validation_verdict = Column(String, nullable=True)
     previous_step_id = Column(String, ForeignKey("reasoning_steps.id"), nullable=True)
     replaces_step_id = Column(String, ForeignKey("reasoning_steps.id"), nullable=True)

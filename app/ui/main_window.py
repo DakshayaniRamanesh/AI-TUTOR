@@ -243,9 +243,11 @@ class MainWindow(QMainWindow):
         self.context_builder = ContextBuilder(self.memory_repo)
         self.tutor_orchestrator = TutorOrchestrator(self.memory_repo, self.context_builder)
         
-        # Start a dummy session/attempt for UI testing
-        self.current_learning_session_id = self.memory_repo.start_learning_session()
-        self.current_attempt_id = self.memory_repo.start_problem_attempt(self.current_learning_session_id)
+        from app.controllers.learning_controller import LearningController
+        self.learning_controller = LearningController(self.memory_repo, parent=self)
+        self.learning_controller.ensure_active_attempt()
+        self.current_learning_session_id = self.learning_controller.current_session_id
+        self.current_attempt_id = self.learning_controller.current_attempt_id
 
         # ── Autosave State ─────────────────────────────────────────────────────
         # ID of the currently open notebook. None = demo/unsaved canvas.
@@ -1109,15 +1111,31 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_auto_ai_requested(self, query: object, target_pos: QPointF, mode: str = None):
-        query_text = query if isinstance(query, str) else query.plain_text
-        if not query_text:
-            return
-            
+        from app.services.recognition.content_router import ContentRouter, RouteTarget
+        from shared.contracts.recognition import RecognitionResult
         from .items.interactive_widgets.dynamic_builder import (
             match_instant_interactive_preset, is_interactive_build_request
         )
-        if match_instant_interactive_preset(query_text) or is_interactive_build_request(query_text):
+
+        if isinstance(query, str):
+            query_text = query
+            route = RouteTarget.MATH_ENGINE
+        elif isinstance(query, RecognitionResult):
+            query_text = query.plain_text
+            route = ContentRouter.route(query)
+            if match_instant_interactive_preset(query_text) or is_interactive_build_request(query_text):
+                route = RouteTarget.DIAGRAM_BUILDER
+        else:
+            return
+
+        if not query_text:
+            return
+
+        if route == RouteTarget.DIAGRAM_BUILDER or route == RouteTarget.TEXT_ASSISTANT:
             self._on_stem_question_asked(query_text, target_pos=target_pos, mode=mode)
+            return
+        elif route == RouteTarget.IGNORE:
+            self._on_auto_ai_failed("Could not determine math or text content.")
             return
 
         self.magic_orb.set_state("thinking", "Analyzing...")
@@ -1128,23 +1146,34 @@ class MainWindow(QMainWindow):
             finished = pyqtSignal(object, QPointF, list) # emits TutorFeedback, pos, source_stroke_ids
             error = pyqtSignal(str)
 
-            def __init__(self, query_text, pos, orchestrator, attempt_id, source_stroke_ids, parent=None):
+            def __init__(self, query_text, pos, orchestrator, attempt_id, source_stroke_ids, group_id, group_revision, parent=None):
                 super().__init__(parent)
                 self.query = query_text
                 self.pos = pos
                 self.orchestrator = orchestrator
                 self.attempt_id = attempt_id
                 self.source_stroke_ids = source_stroke_ids
+                self.group_id = group_id
+                self.group_revision = group_revision
 
             def run(self):
                 try:
-                    feedback = self.orchestrator.process_student_input(self.attempt_id, self.query)
+                    feedback = self.orchestrator.process_student_input(
+                        self.attempt_id, self.query, 
+                        group_id=self.group_id, group_revision=self.group_revision
+                    )
                     self.finished.emit(feedback, self.pos, self.source_stroke_ids)
                 except Exception as e:
                     self.error.emit(str(e))
 
         source_stroke_ids = query.source_stroke_ids if hasattr(query, 'source_stroke_ids') else []
-        worker = TutorWorker(query_text, clean_pos, self.tutor_orchestrator, self.current_attempt_id, source_stroke_ids, parent=self)
+        group_id = query.group_id if hasattr(query, 'group_id') else None
+        group_revision = query.group_revision if hasattr(query, 'group_revision') else 0
+        worker = TutorWorker(
+            query_text, clean_pos, self.tutor_orchestrator, 
+            self.current_attempt_id, source_stroke_ids, 
+            group_id, group_revision, parent=self
+        )
 
         def _on_finished(feedback, pos, stroke_ids):
             if worker in self._solver_workers:
@@ -1155,14 +1184,15 @@ class MainWindow(QMainWindow):
                 print("[TutorWorker] Discarding stale result from a different session/notebook.")
                 return
                 
+            from shared.contracts.tutoring import FeedbackSeverity
             from .items.answer_bubble import AnswerBubble
             bubble = AnswerBubble(title="Tutor Feedback", full_text=feedback.feedback_text, hints="\n".join(feedback.socratic_hints) if feedback.socratic_hints else "")
             bubble.setPos(pos)
             self.scene.addItem(bubble)
             
-            # Transactional ink replacement
-            if stroke_ids and hasattr(self.scene, 'remove_strokes_by_id'):
-                self.scene.remove_strokes_by_id(stroke_ids)
+            if stroke_ids and hasattr(self.scene, 'highlight_strokes_by_id'):
+                is_error = feedback.severity in [FeedbackSeverity.WARNING, FeedbackSeverity.ERROR]
+                self.scene.highlight_strokes_by_id(stroke_ids, is_error=is_error)
                 
             self.magic_orb.set_state("idle", "")
 
