@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, String, DateTime, ForeignKey
+from sqlalchemy import create_engine, Column, String, DateTime, ForeignKey, Integer
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 # 1. Setup SQLite Engine and Session
@@ -67,9 +67,45 @@ class Material(Base):
     subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
     filename = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
+    
+    resource_type = Column(String, default="PDF")
+    mime_type = Column(String, nullable=True)
+    content_hash = Column(String, nullable=True)
+    file_size = Column(Integer, nullable=True)
+    ingestion_status = Column(String, default="REGISTERED")
+    chunk_count = Column(Integer, default=0)
+    ingestion_error = Column(String, nullable=True)
+    last_indexed_at = Column(DateTime, nullable=True)
+    metadata_json = Column(String, nullable=True)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
 
     subject = relationship("Subject", back_populates="materials")
+    chunks = relationship("SubjectChunk", back_populates="material", cascade="all, delete-orphan")
+
+
+class SubjectChunk(Base):
+    __tablename__ = "subject_chunks"
+    id = Column(String, primary_key=True)
+    subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
+    material_id = Column(String, ForeignKey("materials.id"), nullable=False)
+    
+    chunk_index = Column(Integer, nullable=False)
+    document_title = Column(String)
+    chapter = Column(String)
+    section = Column(String)
+    page_number = Column(Integer)
+    content_type = Column(String)
+    text = Column(String)
+    token_count = Column(Integer)
+    content_hash = Column(String)
+    parent_path = Column(String)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    subject = relationship("Subject")
+    material = relationship("Material", back_populates="chunks")
 
 
 class Video(Base):

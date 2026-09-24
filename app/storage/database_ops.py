@@ -1,10 +1,11 @@
 import os
 import uuid
+import datetime
 from typing import List, Optional
 from sqlalchemy.orm import joinedload
 
 # Assuming you rename databse.py to database.py
-from .database import SessionLocal, User, Subject, Notebook, Material, Video, ConceptNode, ConceptEdge
+from .database import SessionLocal, User, Subject, Notebook, Material, Video, ConceptNode, ConceptEdge, SubjectChunk
 
 def get_or_create_user(username: str) -> User:
     """Gets an existing user by username, or creates them if they don't exist."""
@@ -82,10 +83,10 @@ def delete_subject(subject_id: str):
             db.delete(subject)
             db.commit()
 
-def add_material(subject_id: str, filename: str, file_path: str) -> Material:
+def add_material(subject_id: str, filename: str, file_path: str, resource_type: str = "PDF") -> Material:
     """Logs an uploaded PDF/document under a subject."""
     with SessionLocal() as db:
-        material = Material(id=uuid.uuid4().hex, subject_id=subject_id, filename=filename, file_path=file_path)
+        material = Material(id=uuid.uuid4().hex, subject_id=subject_id, filename=filename, file_path=file_path, resource_type=resource_type)
         db.add(material)
         db.commit()
         db.refresh(material)
@@ -109,15 +110,79 @@ def delete_notebook_record(notebook_id: str):
             db.commit()
 
 def delete_material(material_id: str) -> Optional[str]:
-    """Deletes a material record from the DB. Returns the file_path so the caller can remove the physical file."""
+    """Deletes a material record from the DB and its vector points. Returns the file_path."""
+    from backend.workspace.subject_vector_store import SubjectVectorStore
+    
+    with SessionLocal() as db:
+        mat = db.query(Material).filter(Material.id == material_id).first()
+        if not mat:
+            return None
+            
+        subject_id = mat.subject_id
+        path = mat.file_path
+        
+        try:
+            SubjectVectorStore().delete_by_material(subject_id, material_id)
+        except Exception as e:
+            print(f"[DB] Failed to delete vector points for material {material_id}: {e}")
+            
+        db.delete(mat)
+        db.commit()
+        return path
+
+def update_material_status(
+    material_id: str, 
+    status: str, 
+    error: Optional[str] = None, 
+    chunk_count: Optional[int] = None,
+    content_hash: Optional[str] = None,
+    file_size: Optional[int] = None,
+    last_indexed_at: Optional[datetime.datetime] = None
+) -> Optional[Material]:
     with SessionLocal() as db:
         mat = db.query(Material).filter(Material.id == material_id).first()
         if mat:
-            path = mat.file_path
-            db.delete(mat)
+            mat.ingestion_status = status
+            if error is not None:
+                mat.ingestion_error = error
+            if chunk_count is not None:
+                mat.chunk_count = chunk_count
+            if content_hash is not None:
+                mat.content_hash = content_hash
+            if file_size is not None:
+                mat.file_size = file_size
+            if last_indexed_at is not None:
+                mat.last_indexed_at = last_indexed_at
             db.commit()
-            return path
+            db.refresh(mat)
+            return mat
     return None
+
+def replace_subject_chunks(material_id: str, subject_id: str, chunks: List[dict]):
+    """Transactionally deletes old chunks for a material and inserts new ones."""
+    with SessionLocal() as db:
+        # Delete old chunks
+        db.query(SubjectChunk).filter(SubjectChunk.material_id == material_id).delete()
+        
+        # Insert new chunks
+        for chunk in chunks:
+            c = SubjectChunk(
+                id=chunk.get("id"),
+                subject_id=subject_id,
+                material_id=material_id,
+                chunk_index=chunk.get("chunk_index"),
+                document_title=chunk.get("document_title"),
+                chapter=chunk.get("chapter"),
+                section=chunk.get("section"),
+                page_number=chunk.get("page_number"),
+                content_type=chunk.get("content_type"),
+                text=chunk.get("text"),
+                token_count=chunk.get("token_count"),
+                content_hash=chunk.get("content_hash"),
+                parent_path=chunk.get("parent_path")
+            )
+            db.add(c)
+        db.commit()
 
 def delete_video(video_id: str) -> Optional[str]:
     """Deletes a video record from the DB. Returns the video_url so the caller can remove the physical file."""

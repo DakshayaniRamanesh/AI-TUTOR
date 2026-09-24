@@ -192,15 +192,7 @@ class ObsidianGraphPanel(QWidget):
         self.lbl_node_subtitle.setObjectName("lbl_node_subtitle")
         layout.addWidget(self.lbl_node_subtitle)
 
-        # Formula / Core Notation Box (Clean, borderless with left accent)
-        self.box_formula = QFrame(panel)
-        self.box_formula.setObjectName("FormulaBox")
-        fb_layout = QVBoxLayout(self.box_formula)
-        fb_layout.setContentsMargins(12, 10, 12, 10)
-        self.lbl_formula = QLabel("∀ x ∈ Concept: f(x) → L", self.box_formula)
-        self.lbl_formula.setObjectName("lbl_formula")
-        fb_layout.addWidget(self.lbl_formula)
-        layout.addWidget(self.box_formula)
+
 
         # Description text
         self.lbl_concept_desc = QLabel(
@@ -234,7 +226,6 @@ class ObsidianGraphPanel(QWidget):
 
         self.lbl_val_connections = make_stat_row("Direct Connections")
         self.lbl_val_type = make_stat_row("Classification")
-        self.lbl_val_confidence = make_stat_row("Confidence Score")
 
         layout.addWidget(self.meta_frame)
 
@@ -337,32 +328,6 @@ class ObsidianGraphPanel(QWidget):
         except Exception as e:
             print(f"[KnowledgeGraph] Tag parser warning: {e}")
 
-        # Fallback default concepts if workspace is brand new
-        if not nodes_dict:
-            defaults = [
-                ("Decision Trees", "Supervised machine learning algorithm for classification and regression.", "concept"),
-                ("Information Gain", "Metric used to select the split attribute in decision trees.", "concept"),
-                ("Gini Index", "Measure of inequality and impurity used in CART decision tree algorithms.", "concept"),
-                ("Gain Ratio", "Modification of information gain that reduces bias toward multi-valued attributes.", "concept"),
-                ("Pruning", "Technique in machine learning that reduces the size of decision trees.", "concept"),
-                ("Machine Learning", "Branch of AI focused on building data-driven systems.", "board"),
-                ("C4.5", "Algorithm used to generate a decision tree developed by Ross Quinlan.", "concept"),
-                ("OneR", "Simple, accurate rule-based classification algorithm.", "concept"),
-            ]
-            for name, desc, ntype in defaults:
-                nodes_dict[name] = GraphConceptNode(name, ntype, desc)
-
-            def_edges = [
-                ("Decision Trees", "Information Gain", "uses"),
-                ("Decision Trees", "Gini Index", "uses"),
-                ("Decision Trees", "Gain Ratio", "uses"),
-                ("Decision Trees", "Pruning", "optimized_by"),
-                ("Decision Trees", "Machine Learning", "is_a"),
-                ("Decision Trees", "C4.5", "implemented_by"),
-                ("Decision Trees", "OneR", "related_to"),
-            ]
-            for s, t, d in def_edges:
-                add_edge_safe(s, t, d)
 
         self.all_nodes = list(nodes_dict.values())
         self.all_edges = edges_list
@@ -479,9 +444,16 @@ class ObsidianGraphPanel(QWidget):
         is_dark = ThemeManager.instance().is_dark()
 
         if not nodes:
-            txt = self.scene.addText("No concepts found matching the current filter.")
-            txt.setDefaultTextColor(QColor(c['text_secondary']))
-            txt.setFont(QFont("Consolas", 11))
+            # Honest empty state
+            txt = self.scene.addText("No connected knowledge yet")
+            txt.setDefaultTextColor(QColor(c['text_primary']))
+            txt.setFont(QFont(DISPLAY_FONT, 16, QFont.Weight.Bold))
+            txt.setPos(-txt.boundingRect().width() / 2, -20)
+            
+            body = self.scene.addText("Add resources to a subject and Kestrel will build this map from real material.")
+            body.setDefaultTextColor(QColor(c['text_secondary']))
+            body.setFont(QFont(DISPLAY_FONT, 12, QFont.Weight.Normal))
+            body.setPos(-body.boundingRect().width() / 2, 20)
             return
 
         # 1. Degree Centrality Calculation
@@ -708,15 +680,12 @@ class ObsidianGraphPanel(QWidget):
 
         self.lbl_node_subtitle.setText(f"Type: {type_display} • Knowledge Graph")
 
-        # Formula / Definition text
-        self.lbl_formula.setText(f"∀ x ∈ {name}: f(x) → L")
         self.lbl_concept_desc.setText(node.description or f"Key relational knowledge node for '{name}'.")
 
         # Connection counts
         conns = sum(1 for e in self.all_edges if e.source_name == name or e.target_name == name)
         self.lbl_val_connections.setText(f"{conns} {'Edge' if conns == 1 else 'Edges'}")
         self.lbl_val_type.setText(type_display)
-        self.lbl_val_confidence.setText("99.8%")
         self.btn_open_board.setText(f"Drill Down Into '{name}'")
 
     # ── Theme Application ─────────────────────────────────────────────────

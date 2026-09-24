@@ -17,21 +17,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from backend.workspace.subject_vector_store import SubjectVectorStore
-
+from backend.workspace.subject_search_service import SubjectSearchService
 
 class CitationService:
     """
     Retrieves relevant course material for the tutoring context.
-
-    Public API (called by Developer 3's ContextBuilder):
-        find_relevant_materials(subject_id, topic, query_text, preferred_type, top_k)
-        → list of citation dicts, each with text + citation_label + metadata
+    Delegates to SubjectSearchService for canonical hybrid search.
     """
 
-    def __init__(self, store: Optional[SubjectVectorStore] = None):
-        # Allow injection for testing; default creates its own store
-        self.store = store or SubjectVectorStore()
+    def __init__(self, search_service: Optional[SubjectSearchService] = None):
+        self.search_service = search_service or SubjectSearchService()
 
     def find_relevant_materials(
         self,
@@ -41,61 +36,30 @@ class CitationService:
         preferred_type: Optional[str] = None,
         top_k: int = 3,
     ) -> list[dict]:
-        """
-        Retrieves the most relevant chunks for the current tutoring context.
-
-        Args:
-            subject_id:     The student's current subject slug (e.g. "calculus_101").
-                            Results are strictly scoped to this subject.
-            topic:          Human-readable label for logging (e.g. "chain rule").
-            query_text:     Full semantic query (e.g. "how do I differentiate composite functions").
-            preferred_type: Optional content_type bias — e.g. "worked_example" when the
-                            student needs a demonstration rather than a definition.
-            top_k:          Maximum number of citations to return. Developer 3's ContextBuilder
-                            typically uses top 2 (30% context budget).
-
-        Returns:
-            List of citation dicts sorted by relevance score (highest first):
-            {
-                "text":           str,   # the retrieved chunk text (keep under ~400 tokens)
-                "citation_label": str,   # "Title — Section, p.N"
-                "document_title": str,
-                "chapter":        str,
-                "section":        str,
-                "page_number":    int,
-                "content_type":   str,
-                "subject_id":     str,
-                "score":          float,
-            }
-        """
         print(f"[CitationService] Searching subject='{subject_id}' topic='{topic}' "
               f"type={preferred_type or 'any'}")
 
-        # Primary search: with preferred_type filter if specified
-        results = self.store.search(
+        results = self.search_service.search(
             subject_id=subject_id,
             query_text=query_text,
             top_k=top_k,
             content_type=preferred_type,
         )
 
-        # If preferred_type filter returned too few results, supplement with unfiltered search
         if preferred_type and len(results) < top_k:
             extra_needed = top_k - len(results)
-            fallback = self.store.search(
+            fallback = self.search_service.search(
                 subject_id=subject_id,
                 query_text=query_text,
-                top_k=top_k + extra_needed,  # fetch more to deduplicate
+                top_k=top_k + extra_needed,
                 content_type=None,
             )
-            # Deduplicate by text, append only new entries
             seen_texts = {r["text"] for r in results}
             for item in fallback:
                 if item["text"] not in seen_texts and len(results) < top_k:
                     results.append(item)
                     seen_texts.add(item["text"])
 
-        # Attach formatted citation labels
         citations = []
         for item in results:
             citation = dict(item)
@@ -131,6 +95,7 @@ class CitationService:
 # ── Standalone test ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    from backend.workspace.subject_vector_store import SubjectVectorStore
     import random
     random.seed(42)
 
@@ -203,7 +168,9 @@ if __name__ == "__main__":
     ]
 
     store.ingest_chunks(sample_chunks)
-    service = CitationService(store=store)
+    from backend.workspace.subject_search_service import SubjectSearchService
+    search_service = SubjectSearchService(vector_store=store)
+    service = CitationService(search_service=search_service)
 
     # ── Test 1: Basic retrieval ────────────────────────────────────────────────
     print("\n=== Test 1: Basic retrieval ===")

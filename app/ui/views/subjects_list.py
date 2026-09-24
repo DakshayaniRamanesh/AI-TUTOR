@@ -1,20 +1,17 @@
 """
-Curriculum Subjects & Notebooks View
-Matches the Figma reference screen:
-- Large bold display title: 'Curriculum Subjects & Notebooks'
-- Monospace subheaders and tag pills
-- Crisp monochrome cards with technical metadata footer (board counts, sync status)
+Phase 2: Premium Subject Workspace - Subjects List View
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QScrollArea, QGridLayout, QInputDialog, QFrame
+    QScrollArea, QGridLayout, QInputDialog, QFrame, QLineEdit, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QCursor
 from app.storage.database_ops import get_user_subjects, create_subject, get_or_create_user
 from ..theme_manager import ThemeManager
-from ..kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
-
+from ..kestrel_theme import MONO_FONT, DISPLAY_FONT, primary_button_qss, ghost_button_qss
+from datetime import datetime
 
 class SubjectsListView(QWidget):
     open_subject_detail = pyqtSignal(str)
@@ -30,24 +27,33 @@ class SubjectsListView(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(20)
+        layout.setContentsMargins(48, 48, 48, 48)
+        layout.setSpacing(24)
 
         # Header Bar
         header_layout = QHBoxLayout()
-        header_layout.setSpacing(12)
+        header_layout.setSpacing(16)
         
-        self.btn_back = QPushButton("← BACK", self)
-        self.btn_back.clicked.connect(self.go_back.emit)
-        self.btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
-        header_layout.addWidget(self.btn_back)
-
-        self.lbl_title = QLabel("Curriculum Subjects & Notebooks", self)
-        header_layout.addWidget(self.lbl_title)
+        # Title and Subtitle Container
+        title_container = QVBoxLayout()
+        title_container.setSpacing(4)
         
+        self.lbl_title = QLabel("Your subjects", self)
+        self.lbl_subtitle = QLabel("Pick up where you left off, or begin something new.", self)
+        
+        title_container.addWidget(self.lbl_title)
+        title_container.addWidget(self.lbl_subtitle)
+        
+        header_layout.addLayout(title_container)
         header_layout.addStretch()
 
-        self.btn_new = QPushButton("+ NEW SUBJECT", self)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search subjects...")
+        self.search_input.setFixedWidth(200)
+        self.search_input.textChanged.connect(self._filter_subjects)
+        header_layout.addWidget(self.search_input)
+
+        self.btn_new = QPushButton("New subject")
         self.btn_new.clicked.connect(self._on_new_subject)
         self.btn_new.setCursor(Qt.CursorShape.PointingHandCursor)
         header_layout.addWidget(self.btn_new)
@@ -62,7 +68,7 @@ class SubjectsListView(QWidget):
         self.grid_widget = QWidget()
         self.grid_widget.setStyleSheet("background-color: transparent;")
         self.grid_layout = QGridLayout(self.grid_widget)
-        self.grid_layout.setSpacing(20)
+        self.grid_layout.setSpacing(24)
         self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.grid_layout.setColumnStretch(0, 1)
         self.grid_layout.setColumnStretch(1, 1)
@@ -75,34 +81,46 @@ class SubjectsListView(QWidget):
         c = ThemeManager.instance().get_colors()
         self.setStyleSheet(f"background-color: {c['bg_app']};")
 
-        self.btn_back.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: 1px solid {c['border_color']};
-                border-radius: 2px;
-                padding: 5px 12px;
-                color: {c['text_secondary']};
-                font-family: {MONO_FONT};
-                font-size: 11px;
-                font-weight: 700;
-                letter-spacing: 1px;
-            }}
-            QPushButton:hover {{
+        self.lbl_title.setStyleSheet(f"""
+            font-size: 28px;
+            font-weight: 600;
+            color: {c['text_primary']};
+            background: transparent;
+            font-family: {DISPLAY_FONT};
+        """)
+        
+        self.lbl_subtitle.setStyleSheet(f"""
+            font-size: 14px;
+            color: {c['text_secondary']};
+            background: transparent;
+            font-family: {DISPLAY_FONT};
+        """)
+
+        self.btn_new.setStyleSheet(primary_button_qss(c, radius=6))
+        
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {c['input_bg']};
                 color: {c['text_primary']};
+                border: 1px solid {c['border_color']};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-family: {DISPLAY_FONT};
+                font-size: 13px;
+            }}
+            QLineEdit:focus {{
                 border-color: {c['accent']};
             }}
         """)
 
-        self.lbl_title.setStyleSheet(f"""
-            font-size: 24px;
-            font-weight: 800;
-            color: {c['text_primary']};
-            background: transparent;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin-left: 8px;
-        """)
-
-        self.btn_new.setStyleSheet(primary_button_qss(c))
+    def _filter_subjects(self, query: str):
+        query = query.lower()
+        for i in range(self.grid_layout.count()):
+            item = self.grid_layout.itemAt(i)
+            if item and item.widget():
+                widget = item.widget()
+                if hasattr(widget, "subject_name"):
+                    widget.setVisible(query in widget.subject_name.lower())
 
     def refresh_subjects(self):
         for i in reversed(range(self.grid_layout.count())): 
@@ -114,9 +132,7 @@ class SubjectsListView(QWidget):
         c = ThemeManager.instance().get_colors()
         
         if not subjects:
-            empty_label = QLabel("No curriculum subjects yet. Click '+ NEW SUBJECT' to initialize.")
-            empty_label.setStyleSheet(f"color: {c['text_secondary']}; font-family: {MONO_FONT}; font-size: 13px; margin-top: 40px;")
-            self.grid_layout.addWidget(empty_label, 0, 0)
+            self._show_empty_state()
             return
 
         row, col = 0, 0
@@ -130,11 +146,54 @@ class SubjectsListView(QWidget):
                 col = 0
                 row += 1
 
+    def _show_empty_state(self):
+        c = ThemeManager.instance().get_colors()
+        empty_widget = QWidget()
+        empty_layout = QVBoxLayout(empty_widget)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.setSpacing(16)
+        
+        lbl_empty_title = QLabel("Build your first learning space")
+        lbl_empty_title.setStyleSheet(f"color: {c['text_primary']}; font-family: {DISPLAY_FONT}; font-size: 20px; font-weight: 600;")
+        lbl_empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        lbl_empty_body = QLabel("Keep tutorials, notes and notebooks together so Kestrel can understand the subject as you study.")
+        lbl_empty_body.setStyleSheet(f"color: {c['text_secondary']}; font-family: {DISPLAY_FONT}; font-size: 14px;")
+        lbl_empty_body.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_empty_body.setWordWrap(True)
+        lbl_empty_body.setMaximumWidth(400)
+        
+        btn_create = QPushButton("Create a subject")
+        btn_create.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_create.setStyleSheet(primary_button_qss(c, radius=6))
+        btn_create.setFixedWidth(160)
+        btn_create.clicked.connect(self._on_new_subject)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_layout.addWidget(btn_create)
+        
+        empty_layout.addStretch()
+        empty_layout.addWidget(lbl_empty_title)
+        empty_layout.addWidget(lbl_empty_body)
+        empty_layout.addLayout(btn_layout)
+        empty_layout.addStretch()
+        
+        self.grid_layout.addWidget(empty_widget, 0, 0, 1, 3)
+
     def _create_subject_card(self, subject) -> QFrame:
         c = ThemeManager.instance().get_colors()
         card = QFrame()
         card.setObjectName("SubjectCard")
-        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.subject_name = subject.name
+        
+        # Deterministic muted accent based on subject name
+        accent_hues = ["#3b82f6", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4"]
+        if ThemeManager.instance().is_dark():
+            accent_hues = ["#60a5fa", "#a78bfa", "#34d399", "#fbbf24", "#f87171", "#22d3ee"]
+            
+        color_idx = hash(subject.name) % len(accent_hues)
+        accent_color = accent_hues[color_idx]
 
         card.setStyleSheet(f"""
             QFrame#SubjectCard {{
@@ -143,126 +202,123 @@ class SubjectsListView(QWidget):
                 border-radius: 8px;
             }}
             QFrame#SubjectCard:hover {{
-                border: 1.5px solid {c['accent']};
+                border: 1px solid {accent_color};
                 background-color: {c['panel_card_bg']};
             }}
         """)
 
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(18, 16, 18, 16)
-        c_layout.setSpacing(6)
+        c_layout.setContentsMargins(20, 20, 20, 20)
+        c_layout.setSpacing(12)
 
-        # Subject-specific metadata mapping matching Figma reference
-        META_MAP = {
-            "Combined Mathematics": {
-                "tag": "A/L COMBINED MATHEMATICS • UNITS 01-05",
-                "symbol": "∑",
-                "desc": "Pure Maths (Algebra, Calculus, Vectors, Complex Numbers) and Applied Mechanics (Dynamics, Statics, SHM).",
-                "extra_stats": "42 AI proofs"
-            },
-            "Physics": {
-                "tag": "A/L PHYSICS • UNITS 01-11",
-                "symbol": "Ψ",
-                "desc": "Mechanics, Waves & Oscillations, Thermal Physics, Gravitational & Electrostatic Fields, Electronics & Quantum.",
-                "extra_stats": "12 past papers"
-            },
-            "Chemistry": {
-                "tag": "A/L CHEMISTRY • UNITS 01-14",
-                "symbol": "Δ",
-                "desc": "Atomic Structure, Chemical Bonding, Reaction Kinetics, Equilibrium, Organic Mechanisms & Aromatic Chemistry.",
-                "extra_stats": "36 syntheses"
-            },
-            "Semester 1 Notebooks": {
-                "tag": "SEMESTER 1 • UNITS 01-06",
-                "symbol": "∫",
-                "desc": "Foundational units across Combined Mathematics, Physics, and Chemistry covering first-term coursework and assessments.",
-                "extra_stats": "20 AI proofs"
-            },
-            "Semester 1 Revision": {
-                "tag": "SEMESTER 1 • REVISION SET",
-                "symbol": "✓",
-                "desc": "Consolidated revision boards, past paper walkthroughs, and quick-reference summaries for Semester 1 content.",
-                "extra_stats": "15 past papers"
-            },
-        }
-
-        meta = META_MAP.get(subject.name, {
-            "tag": f"CURRICULUM UNIT • {subject.name.upper()}",
-            "symbol": "∑",
-            "desc": f"Structured workspace for {subject.name} derivations, proofs & study notes.",
-            "extra_stats": f"{len(subject.materials)} PDFs"
-        })
-
-        # Micro Header Tag
-        lbl_tag = QLabel(meta["tag"], card)
-        lbl_tag.setStyleSheet(f"""
-            font-family: {MONO_FONT};
-            font-size: 10px;
-            font-weight: 700;
-            letter-spacing: 1px;
-            color: {c['text_secondary']};
-            background: transparent;
-        """)
-        c_layout.addWidget(lbl_tag)
-
-        # Subject Title with symbol
-        lbl_name = QLabel(f"{meta['symbol']} {subject.name}", card)
+        # Header with Name and deterministic color bar
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(12)
+        
+        color_bar = QFrame()
+        color_bar.setFixedSize(4, 24)
+        color_bar.setStyleSheet(f"background-color: {accent_color}; border-radius: 2px;")
+        header_layout.addWidget(color_bar)
+        
+        lbl_name = QLabel(subject.name)
         lbl_name.setStyleSheet(f"""
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            font-size: 15px;
-            font-weight: 700;
+            font-family: {DISPLAY_FONT};
+            font-size: 18px;
+            font-weight: 600;
             color: {c['text_primary']};
             background: transparent;
         """)
-        c_layout.addWidget(lbl_name)
+        header_layout.addWidget(lbl_name)
+        header_layout.addStretch()
+        c_layout.addLayout(header_layout)
 
-        # Description / Syllabus summary (tightly hugged)
+        # Stats Grid
         nb_count = len(subject.notebooks)
-        lbl_desc = QLabel(meta["desc"], card)
-        lbl_desc.setWordWrap(True)
-        lbl_desc.setStyleSheet(f"""
-            font-size: 12px;
-            color: {c['text_secondary']};
-            background: transparent;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            line-height: 1.4;
-            margin-bottom: 4px;
-        """)
-        c_layout.addWidget(lbl_desc)
+        mat_count = len(subject.materials)
+        vid_count = len(subject.videos)
+        
+        ready_count = 0
+        search_ready_count = 0
+        proc_count = 0
+        failed_count = 0
+        
+        for m in subject.materials:
+            s = m.ingestion_status
+            if s == "READY":
+                ready_count += 1
+            elif s == "PARTIAL":
+                # Both PDFs (lexical) and Images (stored) that are partial go to search-ready / stored pool
+                search_ready_count += 1
+            elif s in ("REGISTERED", "EXTRACTING", "INDEXING"):
+                proc_count += 1
+            elif s == "FAILED":
+                failed_count += 1
+                
+        stats_layout = QVBoxLayout()
+        stats_layout.setSpacing(4)
+        
+        def add_stat_row(label, value):
+            row = QHBoxLayout()
+            lbl_key = QLabel(label)
+            lbl_key.setStyleSheet(f"color: {c['text_secondary']}; font-family: {DISPLAY_FONT}; font-size: 13px;")
+            lbl_val = QLabel(str(value))
+            lbl_val.setStyleSheet(f"color: {c['text_primary']}; font-family: {MONO_FONT}; font-size: 13px;")
+            row.addWidget(lbl_key)
+            row.addStretch()
+            row.addWidget(lbl_val)
+            stats_layout.addLayout(row)
+            
+        add_stat_row("Notebooks", nb_count)
+        add_stat_row("Resources", mat_count)
+        if vid_count > 0:
+            add_stat_row("Generated videos", vid_count)
+            
+        parts = []
+        if ready_count > 0:
+            parts.append(f"{ready_count} ready")
+        if search_ready_count > 0:
+            parts.append(f"{search_ready_count} search-ready")
+        if proc_count > 0:
+            parts.append(f"{proc_count} processing")
+        if failed_count > 0:
+            parts.append(f"{failed_count} needs attention")
+            
+        if parts:
+            lbl_proc = QLabel(" • ".join(parts))
+            color_hex = "#f59e0b" if failed_count > 0 else ("#3b82f6" if proc_count > 0 else "#10b981")
+            lbl_proc.setStyleSheet(f"color: {color_hex}; font-family: {DISPLAY_FONT}; font-size: 12px; margin-top: 4px;")
+            stats_layout.addWidget(lbl_proc)
 
-        # Footer stats row sitting close under the description
+        c_layout.addLayout(stats_layout)
+        c_layout.addStretch()
+        
+        # Footer
         footer_layout = QHBoxLayout()
-        footer_layout.setContentsMargins(0, 4, 0, 0)
-        stats_text = f"{nb_count} boards  {meta['extra_stats']}"
-        lbl_stats = QLabel(stats_text, card)
-        lbl_stats.setStyleSheet(f"""
-            font-family: {MONO_FONT};
-            font-size: 11px;
-            color: {c['text_secondary']};
-            background: transparent;
-        """)
-        footer_layout.addWidget(lbl_stats)
-
+        
+        last_updated = subject.created_at
+        if subject.notebooks:
+            last_updated = max((nb.updated_at for nb in subject.notebooks if nb.updated_at), default=last_updated)
+            
+        if last_updated:
+            time_str = last_updated.strftime("%b %d, %Y")
+            lbl_time = QLabel(f"Updated {time_str}")
+            lbl_time.setStyleSheet(f"color: {c['text_secondary']}; font-family: {DISPLAY_FONT}; font-size: 11px;")
+            footer_layout.addWidget(lbl_time)
+            
         footer_layout.addStretch()
-
-        lbl_synced = QLabel("● Synced", card)
-        lbl_synced.setStyleSheet(f"""
-            font-family: {MONO_FONT};
-            font-size: 11px;
-            font-weight: 600;
-            color: {c['text_secondary']};
-            background: transparent;
-        """)
-        footer_layout.addWidget(lbl_synced)
-
+        
+        btn_continue = QPushButton("Continue")
+        btn_continue.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_continue.setStyleSheet(ghost_button_qss(c, radius=4))
+        btn_continue.clicked.connect(lambda _, s_id=subject.id: self.open_subject_detail.emit(s_id))
+        footer_layout.addWidget(btn_continue)
+        
         c_layout.addLayout(footer_layout)
 
-        # Mouse click routing
-        card.mousePressEvent = lambda e, s_id=subject.id: self.open_subject_detail.emit(s_id)
         return card
 
     def _on_new_subject(self):
-        name, ok = QInputDialog.getText(self, "New Subject", "Enter subject name (e.g. Linear Algebra):")
+        name, ok = QInputDialog.getText(self, "New Subject", "Enter subject name (e.g. Algebra Essentials):")
         if ok and name.strip():
             create_subject(self.current_user.id, name.strip())
             self.refresh_subjects()

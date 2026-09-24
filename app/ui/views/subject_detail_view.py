@@ -7,23 +7,19 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
     QListWidget, QListWidgetItem, QSplitter, QFileDialog, QMessageBox,
     QTabWidget, QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, 
-    QGraphicsTextItem, QInputDialog, QFrame, QMenu, QAbstractItemView, QGraphicsRectItem, QDialog, QDialogButtonBox
+    QGraphicsTextItem, QInputDialog, QFrame, QMenu, QAbstractItemView, QGraphicsRectItem, QDialog, QDialogButtonBox,
+    QScrollArea, QGridLayout, QSizePolicy
 )
 from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QIcon, QAction
-from PyQt6.QtCore import pyqtSignal, Qt, QSize
+from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer
 
-# Import our DB operations
 from app.storage.database_ops import (
     get_subject_details, add_material, delete_subject,
     delete_notebook_record, delete_material, delete_video
 )
-# Import the REAL notebook storage system that the canvas actually uses
 from app.storage.notebook_storage import NotebookStorage
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# Knowledge Graph Widget
-# ────────────────────────────────────────────────────────────────────────────
+from app.ui.theme_manager import ThemeManager
+from app.ui.kestrel_theme import MONO_FONT, DISPLAY_FONT, primary_button_qss, ghost_button_qss
 
 class KnowledgeGraphWidget(QGraphicsView):
     """Draws a beautiful circular node map natively using PyQt graphics."""
@@ -268,97 +264,160 @@ class KnowledgeGraphWidget(QGraphicsView):
 # Deletable List Widget — a list with checkboxes + a "Delete Selected" action
 # ────────────────────────────────────────────────────────────────────────────
 
-class DeletableListWidget(QWidget):
-    item_double_clicked = pyqtSignal(QListWidgetItem)
 
-    def __init__(self, parent=None):
+
+class IngestionStatusChip(QLabel):
+    def __init__(self, status, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        from app.ui.theme_manager import ThemeManager
-        from app.ui.kestrel_theme import MONO_FONT
+        self.set_status(status)
+        self.setContentsMargins(6, 2, 6, 2)
+        
+    def set_status(self, status):
         c = ThemeManager.instance().get_colors()
+        self.setStyleSheet(f"border-radius: 4px; font-family: {MONO_FONT}; font-size: 10px; font-weight: bold;")
+        if status == "READY":
+            self.setText("Ready")
+            self.setStyleSheet(self.styleSheet() + f"background-color: #10b981; color: #ffffff;")
+        elif status == "PARTIAL":
+            self.setText("Search ready - semantic search unavailable")
+            self.setStyleSheet(self.styleSheet() + f"background-color: #f59e0b; color: #ffffff;")
+        elif status in ("REGISTERED", "EXTRACTING", "INDEXING"):
+            self.setText("Processing")
+            self.setStyleSheet(self.styleSheet() + f"background-color: #3b82f6; color: #ffffff;")
+        elif status == "FAILED":
+            self.setText("Failed")
+            self.setStyleSheet(self.styleSheet() + f"background-color: #ef4444; color: #ffffff;")
+        else:
+            self.setText(str(status))
+            self.setStyleSheet(self.styleSheet() + f"background-color: {c['border_color']}; color: {c['text_secondary']};")
 
-        self.list_widget = QListWidget()
-        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.list_widget.itemDoubleClicked.connect(self.item_double_clicked.emit)
-        layout.addWidget(self.list_widget)
+class ResourceRow(QFrame):
+    delete_requested = pyqtSignal(str)
+    open_requested = pyqtSignal(str)
+    retry_requested = pyqtSignal(str)
+    
+    def __init__(self, material, parent=None):
+        super().__init__(parent)
+        self.material_id = material.id
+        self.file_path = getattr(material, 'file_path', None)
+        c = ThemeManager.instance().get_colors()
+        
+        self.setObjectName("ResourceRow")
+        self.setStyleSheet(f"QFrame#ResourceRow {{ border-bottom: 1px solid {c['border_color']}; padding: 8px; }} QFrame#ResourceRow:hover {{ background-color: {c['panel_card_bg']}; }}")
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(16)
+        
+        import qtawesome as qta
+        
+        # Icon
+        icon_lbl = QLabel()
+        if getattr(material, 'resource_type', None) == "IMAGE":
+            icon_lbl.setPixmap(qta.icon("fa5s.image", color=c['text_secondary']).pixmap(QSize(18, 18)))
+        elif getattr(material, "title", None) is not None:  # simple check for video
+            icon_lbl.setPixmap(qta.icon("fa5s.video", color=c['text_secondary']).pixmap(QSize(18, 18)))
+        elif not hasattr(material, "file_path"): # simple check for notebook
+            icon_lbl.setPixmap(qta.icon("fa5s.book", color=c['text_secondary']).pixmap(QSize(18, 18)))
+        else:
+            icon_lbl.setPixmap(qta.icon("fa5s.file-pdf", color=c['text_secondary']).pixmap(QSize(18, 18)))
+        layout.addWidget(icon_lbl)
+        
+        # Name
+        name_lbl = QLabel(getattr(material, "filename", getattr(material, "title", getattr(material, "name", "Unknown"))))
+        name_lbl.setStyleSheet(f"font-family: {DISPLAY_FONT}; font-size: 13px; color: {c['text_primary']}; font-weight: 500;")
+        layout.addWidget(name_lbl, stretch=2)
+        
+        # Status
+        status = getattr(material, "ingestion_status", "READY")
+        if getattr(material, 'resource_type', None) == "IMAGE" and status == "PARTIAL":
+            self.status_chip = IngestionStatusChip("STORED")
+            self.status_chip.setText("Stored - analysis pending")
+        elif status == "PARTIAL":
+            self.status_chip = IngestionStatusChip(status)
+            self.status_chip.setText("Search ready - semantic search unavailable")
+        else:
+            self.status_chip = IngestionStatusChip(status)
+        layout.addWidget(self.status_chip)
+        
+        layout.addStretch(1)
+        
+        # Actions
+        btn_retry = QPushButton("Retry")
+        btn_retry.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_retry.setStyleSheet(ghost_button_qss(c, radius=4))
+        btn_retry.clicked.connect(lambda: self.retry_requested.emit(self.material_id))
+        self.btn_retry = btn_retry
+        layout.addWidget(btn_retry)
+        self._update_retry_visibility(status)
+        
+        # Open action
+        btn_open = QPushButton("Open")
+        btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_open.setStyleSheet(ghost_button_qss(c, radius=4))
+        btn_open.clicked.connect(lambda: self.open_requested.emit(self.material_id))
+        layout.addWidget(btn_open)
+        
+        # Delete action
+        btn_del = QPushButton("Delete")
+        btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_del.setStyleSheet(f"QPushButton {{ color: #ef4444; border: none; font-size: 12px; }} QPushButton:hover {{ text-decoration: underline; }}")
+        btn_del.clicked.connect(lambda: self.delete_requested.emit(self.material_id))
+        layout.addWidget(btn_del)
+        
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+    
+    def _update_retry_visibility(self, status):
+        self.btn_retry.setVisible(status == "FAILED")
 
-        # Delete bar — hidden until items are checked
-        self.delete_bar = QHBoxLayout()
-        self.delete_bar.setContentsMargins(0, 0, 0, 0)
-        self.lbl_selected = QLabel("0 selected")
-        self.lbl_selected.setStyleSheet(f"font-size: 11px; font-family: {MONO_FONT}; color: {c['text_secondary']};")
-        self.delete_bar.addWidget(self.lbl_selected)
-        self.delete_bar.addStretch()
-        self.btn_delete = QPushButton("✕ Delete Selected")
-        self.btn_delete.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                color: #cc3333;
-                border: 1px solid #cc3333;
-                font-family: {MONO_FONT};
-                font-weight: 600;
-                padding: 4px 10px;
-                border-radius: 2px;
-                font-size: 11px;
-            }}
-            QPushButton:hover {{
-                background-color: #cc3333;
-                color: white;
-            }}
-        """)
-        self.btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.delete_bar.addWidget(self.btn_delete)
+    def update_status(self, status):
+        if getattr(self, 'material_type', None) == "IMAGE" and status == "PARTIAL":
+            self.status_chip.set_status("STORED")
+            self.status_chip.setText("Stored - analysis pending")
+        elif status == "PARTIAL":
+            self.status_chip.set_status(status)
+            self.status_chip.setText("Search ready - semantic search unavailable")
+        else:
+            self.status_chip.set_status(status)
+        self._update_retry_visibility(status)
 
-        self.delete_bar_widget = QWidget()
-        self.delete_bar_widget.setLayout(self.delete_bar)
-        self.delete_bar_widget.setVisible(False)
-        layout.addWidget(self.delete_bar_widget)
+    def mouseDoubleClickEvent(self, event):
+        self.open_requested.emit(self.material_id)
 
-    def clear(self):
-        self.list_widget.clear()
-        self.delete_bar_widget.setVisible(False)
-
-    def add_item(self, text: str, data=None):
-        item = QListWidgetItem(text)
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(Qt.CheckState.Unchecked)
-        if data is not None:
-            item.setData(Qt.ItemDataRole.UserRole, data)
-        self.list_widget.addItem(item)
-
-    def get_checked_items(self) -> list:
-        """Returns list of (row, item) tuples for all checked items."""
-        checked = []
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                checked.append((i, item))
-        return checked
-
-    def connect_check_state_updates(self):
-        """Call after populating items to track checkbox changes."""
-        self.list_widget.itemChanged.connect(self._on_item_changed)
-
-    def disconnect_check_state_updates(self):
-        """Disconnect to prevent signals during clear/repopulate."""
-        try:
-            self.list_widget.itemChanged.disconnect(self._on_item_changed)
-        except TypeError:
-            pass
-
-    def _on_item_changed(self, item):
-        count = len(self.get_checked_items())
-        self.delete_bar_widget.setVisible(count > 0)
-        self.lbl_selected.setText(f"{count} selected")
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# Subject Detail View
-# ────────────────────────────────────────────────────────────────────────────
+class NotebookCard(QFrame):
+    open_requested = pyqtSignal(str)
+    
+    def __init__(self, notebook, parent=None):
+        super().__init__(parent)
+        self.notebook_id = notebook.id
+        c = ThemeManager.instance().get_colors()
+        
+        self.setObjectName("NotebookCard")
+        self.setStyleSheet(f"QFrame#NotebookCard {{ background-color: {c['bg_card']}; border: 1px solid {c['border_color']}; border-radius: 6px; padding: 12px; }} QFrame#NotebookCard:hover {{ border-color: {c['accent']}; background-color: {c['panel_card_bg']}; }}")
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        
+        name_lbl = QLabel(notebook.name)
+        name_lbl.setStyleSheet(f"font-family: {DISPLAY_FONT}; font-size: 14px; color: {c['text_primary']}; font-weight: 600;")
+        layout.addWidget(name_lbl)
+        
+        time_str = notebook.updated_at.strftime("%b %d, %Y %H:%M") if notebook.updated_at else "Unknown"
+        date_lbl = QLabel(f"Updated {time_str}")
+        date_lbl.setStyleSheet(f"font-family: {DISPLAY_FONT}; font-size: 11px; color: {c['text_secondary']};")
+        layout.addWidget(date_lbl)
+        
+        layout.addStretch()
+        
+        btn_open = QPushButton("Continue")
+        btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_open.setStyleSheet(ghost_button_qss(c, radius=4))
+        btn_open.clicked.connect(lambda: self.open_requested.emit(self.notebook_id))
+        
+        action_layout = QHBoxLayout()
+        action_layout.addWidget(btn_open)
+        action_layout.addStretch()
+        layout.addLayout(action_layout)
 
 class SubjectDetailView(QWidget):
     go_back = pyqtSignal()
@@ -368,244 +427,192 @@ class SubjectDetailView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_subject_id = None
-        self._cached_materials = []
-        self._cached_videos = []
+        self._cached_subject = None
+        self._workers = []
+        self._resource_rows = {}
         self._setup_ui()
-        from app.ui.theme_manager import ThemeManager
         ThemeManager.instance().theme_changed.connect(self._apply_theme)
         self._apply_theme(ThemeManager.instance().current_theme)
 
     def _setup_ui(self):
-        from app.ui.theme_manager import ThemeManager
-        from app.ui.kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
         c = ThemeManager.instance().get_colors()
-
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(24, 16, 24, 16)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(32, 24, 32, 24)
+        main_layout.setSpacing(16)
 
         # ── Header ──
         header = QHBoxLayout()
         header.setSpacing(12)
-
-        self.btn_back = QPushButton("← SUBJECTS", self)
+        
+        self.btn_back = QPushButton("← Back to subjects")
         self.btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_back.clicked.connect(self.go_back.emit)
         header.addWidget(self.btn_back)
 
-        self.lbl_title = QLabel("Subject", self)
+        self.lbl_title = QLabel("Subject")
         header.addWidget(self.lbl_title)
+        
+        self.lbl_readiness = QLabel("")
+        header.addWidget(self.lbl_readiness)
+        
         header.addStretch()
 
-        self.btn_delete = QPushButton("✕ Delete Subject", self)
-        self.btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_delete.clicked.connect(self._on_delete_subject)
-        header.addWidget(self.btn_delete)
+        self.btn_options = QPushButton("Options ▼")
+        self.btn_options.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.options_menu = QMenu(self)
+        self.action_delete = QAction("Delete subject", self)
+        self.action_delete.triggered.connect(self._on_delete_subject)
+        self.options_menu.addAction(self.action_delete)
+        self.btn_options.setMenu(self.options_menu)
+        header.addWidget(self.btn_options)
+        
         main_layout.addLayout(header)
 
         # ── Tabs ──
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_dashboard_tab(), "DASHBOARD")
+        
+        self.overview_tab = QScrollArea()
+        self.overview_tab.setWidgetResizable(True)
+        self.overview_content = QWidget()
+        self.overview_layout = QVBoxLayout(self.overview_content)
+        self.overview_tab.setWidget(self.overview_content)
+        
         self.graph_view = KnowledgeGraphWidget()
-        self.tabs.addTab(self.graph_view, "KNOWLEDGE GRAPH")
+        
+        self.resources_tab = QWidget()
+        self.resources_layout = QVBoxLayout(self.resources_tab)
+        
+        self.tabs.addTab(self.overview_tab, "Overview")
+        self.tabs.addTab(self.graph_view, "Knowledge Map")
+        self.tabs.addTab(self.resources_tab, "Resources")
         main_layout.addWidget(self.tabs)
+        
+        # Build Overview Layout
+        self._build_overview_layout()
+        # Build Resources Layout
+        self._build_resources_layout()
+
+    def _build_overview_layout(self):
+        self.overview_layout.setContentsMargins(0, 16, 0, 16)
+        self.overview_layout.setSpacing(24)
+        
+        # Continue Studying Card
+        self.continue_card = QFrame()
+        self.continue_card.setObjectName("ContinueCard")
+        cc_layout = QVBoxLayout(self.continue_card)
+        self.lbl_cc_title = QLabel("Start your first notebook")
+        self.lbl_cc_body = QLabel("Your notes will stay connected to the resources in this subject.")
+        self.btn_cc_action = QPushButton("Create notebook")
+        self.btn_cc_action.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cc_action.clicked.connect(self._on_new_notebook)
+        
+        cc_layout.addWidget(self.lbl_cc_title)
+        cc_layout.addWidget(self.lbl_cc_body)
+        cc_layout.addWidget(self.btn_cc_action, 0, Qt.AlignmentFlag.AlignLeft)
+        
+        # Sub-grid for notebooks and readiness
+        sub_grid = QGridLayout()
+        sub_grid.setSpacing(16)
+        
+        self.nb_container = QWidget()
+        nb_vbox = QVBoxLayout(self.nb_container)
+        nb_vbox.setContentsMargins(0,0,0,0)
+        self.lbl_recent_nb = QLabel("Your notebooks")
+        nb_vbox.addWidget(self.lbl_recent_nb)
+        self.nb_grid = QGridLayout()
+        nb_vbox.addLayout(self.nb_grid)
+        nb_vbox.addStretch()
+        
+        self.readiness_card = QFrame()
+        self.readiness_card.setObjectName("ReadinessCard")
+        rd_layout = QVBoxLayout(self.readiness_card)
+        self.lbl_rd_title = QLabel("What Kestrel can use")
+        self.lbl_rd_stats = QLabel("")
+        rd_layout.addWidget(self.lbl_rd_title)
+        rd_layout.addWidget(self.lbl_rd_stats)
+        rd_layout.addStretch()
+        
+        sub_grid.addWidget(self.nb_container, 0, 0)
+        sub_grid.addWidget(self.readiness_card, 0, 1)
+        
+        self.overview_layout.addWidget(self.continue_card)
+        self.overview_layout.addLayout(sub_grid)
+        self.overview_layout.addStretch()
+
+    def _build_resources_layout(self):
+        self.resources_layout.setContentsMargins(0, 16, 0, 16)
+        self.resources_layout.setSpacing(16)
+        
+        top_bar = QHBoxLayout()
+        self.btn_add_resource = QPushButton("Add course material")
+        self.btn_add_resource.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_add_resource.clicked.connect(self._on_upload_material)
+        top_bar.addWidget(self.btn_add_resource)
+        
+        from PyQt6.QtWidgets import QLineEdit, QComboBox
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search resources...")
+        self.search_input.setFixedWidth(200)
+        self.search_input.textChanged.connect(self._filter_resources)
+        top_bar.addWidget(self.search_input)
+        
+        self.type_filter = QComboBox()
+        self.type_filter.addItems(["All Types", "PDFs", "Images", "Notebooks", "Videos"])
+        self.type_filter.currentIndexChanged.connect(self._filter_resources)
+        top_bar.addWidget(self.type_filter)
+        
+        self.status_filter = QComboBox()
+        self.status_filter.addItems(["All Status", "Processing", "Ready", "Needs attention"])
+        self.status_filter.currentIndexChanged.connect(self._filter_resources)
+        top_bar.addWidget(self.status_filter)
+        
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Recently added", "Name", "Type"])
+        self.sort_combo.currentIndexChanged.connect(self._sort_resources)
+        top_bar.addWidget(self.sort_combo)
+        
+        top_bar.addStretch()
+        
+        self.resources_layout.addLayout(top_bar)
+        
+        self.res_scroll = QScrollArea()
+        self.res_scroll.setWidgetResizable(True)
+        self.res_content = QWidget()
+        self.res_list_layout = QVBoxLayout(self.res_content)
+        self.res_list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.res_scroll.setWidget(self.res_content)
+        
+        self.resources_layout.addWidget(self.res_scroll)
 
     def _apply_theme(self, theme_name: str = "light"):
-        from app.ui.theme_manager import ThemeManager
-        from app.ui.kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
         c = ThemeManager.instance().get_colors()
-        self.setStyleSheet(f"""
-            QWidget {{ background-color: {c['bg_app']}; color: {c['text_primary']}; }}
-            QListWidget {{
-                background: {c['bg_card']}; border: 1px solid {c['border_color']}; border-radius: 2px;
-                font-family: {MONO_FONT}; font-size: 12px; padding: 2px;
-            }}
-            QListWidget::item {{ padding: 6px 4px; border-bottom: 1px solid {c['border_color']}; }}
-            QListWidget::item:hover {{ background: {c['panel_card_bg']}; }}
-        """)
-
-        self.btn_back.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: 1px solid {c['border_color']};
-                border-radius: 2px;
-                padding: 5px 12px;
-                color: {c['text_secondary']};
-                font-family: {MONO_FONT};
-                font-size: 11px;
-                font-weight: 700;
-                letter-spacing: 1px;
-            }}
-            QPushButton:hover {{
-                color: {c['text_primary']};
-                border-color: {c['accent']};
-            }}
-        """)
-
-        self.lbl_title.setStyleSheet(f"""
-            font-size: 20px; font-weight: 800; color: {c['text_primary']};
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            margin-left: 4px;
-        """)
-
-        self.btn_delete.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                color: #cc3333;
-                border: 1px solid {c['border_color']};
-                border-radius: 2px;
-                font-family: {MONO_FONT};
-                font-weight: 600;
-                font-size: 11px;
-                padding: 5px 12px;
-            }}
-            QPushButton:hover {{
-                border-color: #cc3333;
-                background-color: {c['panel_card_bg']};
-            }}
-        """)
-
-        self.tabs.setStyleSheet(f"""
-            QTabWidget::pane {{ border: none; border-top: 1px solid {c['border_color']}; }}
-            QTabBar::tab {{
-                padding: 8px 16px; font-weight: 700; font-size: 11px;
-                font-family: {MONO_FONT}; letter-spacing: 1px;
-                border: none; border-bottom: 2px solid transparent; color: {c['text_secondary']};
-                margin-right: 4px;
-            }}
-            QTabBar::tab:selected {{ color: {c['text_primary']}; border-bottom: 2px solid {c['accent']}; }}
-            QTabBar::tab:hover:!selected {{ color: {c['text_primary']}; }}
-        """)
-
-        if hasattr(self, 'nb_card'):
-            for card in [self.nb_card, self.mat_card, self.vid_card]:
-                card.setStyleSheet(f"""
-                    QFrame#card {{
-                        background-color: {c['bg_card']};
-                        border: 1px solid {c['border_color']};
-                        border-radius: 4px;
-                    }}
-                """)
-            self.btn_new_nb.setStyleSheet(primary_button_qss(c))
-            self.btn_upload.setStyleSheet(ghost_button_qss(c))
-
-    # ── Dashboard Tab ───────────────────────────────────────────────────────
-
-    def _build_dashboard_tab(self):
-        from app.ui.theme_manager import ThemeManager
-        from app.ui.kestrel_theme import MONO_FONT, primary_button_qss, ghost_button_qss
-        c = ThemeManager.instance().get_colors()
-
-        tab = QWidget()
-        layout = QHBoxLayout(tab)
-        layout.setContentsMargins(0, 10, 0, 0)
-        layout.setSpacing(14)
-
-        # ── Left: Notebooks ──
-        self.nb_card = QFrame()
-        self.nb_card.setObjectName("card")
-        self.nb_card.setStyleSheet(f"""
-            QFrame#card {{
-                background-color: {c['bg_card']};
-                border: 1px solid {c['border_color']};
-                border-radius: 4px;
-            }}
-        """)
-        nb_layout = QVBoxLayout(self.nb_card)
-        nb_layout.setContentsMargins(14, 14, 14, 14)
-
-        nb_header = QHBoxLayout()
-        nb_lbl = QLabel("NOTEBOOKS")
-        nb_lbl.setStyleSheet(f"font-size: 13px; font-weight: 800; font-family: {MONO_FONT}; letter-spacing: 1px; color: {c['text_primary']};")
-        nb_header.addWidget(nb_lbl)
-        nb_header.addStretch()
-        self.btn_new_nb = QPushButton("+ NEW")
-        self.btn_new_nb.setStyleSheet(primary_button_qss(c))
-        self.btn_new_nb.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_new_nb.clicked.connect(self._on_new_notebook)
-        nb_header.addWidget(self.btn_new_nb)
-        nb_layout.addLayout(nb_header)
-
-        hint = QLabel("Double-click to open  •  Check boxes to select for deletion")
-        hint.setStyleSheet(f"font-size: 10px; font-family: {MONO_FONT}; color: {c['text_secondary']}; margin-bottom: 2px;")
-        nb_layout.addWidget(hint)
-
-        self.nb_list = DeletableListWidget()
-        self.nb_list.item_double_clicked.connect(self._on_notebook_clicked)
-        self.nb_list.btn_delete.clicked.connect(self._on_delete_notebooks)
-        nb_layout.addWidget(self.nb_list)
-        layout.addWidget(self.nb_card, stretch=4)
-
-        # ── Right: Materials + Videos ──
-        right = QVBoxLayout()
-        right.setSpacing(12)
-
-        # Materials card
-        self.mat_card = QFrame()
-        self.mat_card.setObjectName("card")
-        self.mat_card.setStyleSheet(f"""
-            QFrame#card {{
-                background-color: {c['bg_card']};
-                border: 1px solid {c['border_color']};
-                border-radius: 4px;
-            }}
-        """)
-        mat_layout = QVBoxLayout(self.mat_card)
-        mat_layout.setContentsMargins(14, 14, 14, 14)
-
-        mat_header = QHBoxLayout()
-        mat_lbl = QLabel("REFERENCE PDFS")
-        mat_lbl.setStyleSheet(f"font-size: 13px; font-weight: 800; font-family: {MONO_FONT}; letter-spacing: 1px; color: {c['text_primary']};")
-        mat_header.addWidget(mat_lbl)
-        mat_header.addStretch()
-        self.btn_upload = QPushButton("+ UPLOAD")
-        self.btn_upload.setStyleSheet(ghost_button_qss(c))
-        self.btn_upload.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_upload.clicked.connect(self._on_upload_material)
-        mat_header.addWidget(self.btn_upload)
-        mat_layout.addLayout(mat_header)
-
-        hint2 = QLabel("Double-click to open in PDF viewer  •  Check boxes to select for deletion")
-        hint2.setStyleSheet(f"font-size: 10px; font-family: {MONO_FONT}; color: {c['text_secondary']}; margin-bottom: 2px;")
-        mat_layout.addWidget(hint2)
-
-        self.mat_list = DeletableListWidget()
-        self.mat_list.item_double_clicked.connect(self._on_material_clicked)
-        self.mat_list.btn_delete.clicked.connect(self._on_delete_materials)
-        mat_layout.addWidget(self.mat_list)
-        right.addWidget(self.mat_card)
-
-        # Videos card
-        self.vid_card = QFrame()
-        self.vid_card.setObjectName("card")
-        self.vid_card.setStyleSheet(f"""
-            QFrame#card {{
-                background-color: {c['bg_card']};
-                border: 1px solid {c['border_color']};
-                border-radius: 4px;
-            }}
-        """)
-        vid_layout = QVBoxLayout(self.vid_card)
-        vid_layout.setContentsMargins(14, 14, 14, 14)
-
-        vid_lbl = QLabel("GENERATED VIDEOS")
-        vid_lbl.setStyleSheet(f"font-size: 13px; font-weight: 800; font-family: {MONO_FONT}; letter-spacing: 1px; color: {c['text_primary']};")
-        vid_layout.addWidget(vid_lbl)
-
-        hint3 = QLabel("Double-click to play  •  Check boxes to select for deletion")
-        hint3.setStyleSheet(f"font-size: 10px; font-family: {MONO_FONT}; color: {c['text_secondary']}; margin-bottom: 2px;")
-        vid_layout.addWidget(hint3)
-
-        self.vid_list = DeletableListWidget()
-        self.vid_list.item_double_clicked.connect(self._on_video_clicked)
-        self.vid_list.btn_delete.clicked.connect(self._on_delete_videos)
-        vid_layout.addWidget(self.vid_list)
-        right.addWidget(self.vid_card)
-
-        layout.addLayout(right, stretch=5)
-        return tab
-
-    # ── Data Loading ────────────────────────────────────────────────────────
+        self.setStyleSheet(f"QWidget {{ background-color: {c['bg_app']}; color: {c['text_primary']}; }}")
+        
+        self.btn_back.setStyleSheet(ghost_button_qss(c, radius=4) + "QPushButton { border: none; }")
+        self.btn_options.setStyleSheet(ghost_button_qss(c, radius=4))
+        
+        self.lbl_title.setStyleSheet(f"font-size: 24px; font-weight: 600; font-family: {DISPLAY_FONT}; color: {c['text_primary']};")
+        self.lbl_readiness.setStyleSheet(f"font-size: 13px; font-family: {DISPLAY_FONT}; color: {c['text_secondary']};")
+        
+        self.tabs.setStyleSheet(f"QTabWidget::pane {{ border: none; border-top: 1px solid {c['border_color']}; }} QTabBar::tab {{ padding: 12px 24px; font-size: 14px; font-family: {DISPLAY_FONT}; background: transparent; border: none; border-bottom: 2px solid transparent; color: {c['text_secondary']}; }} QTabBar::tab:selected {{ color: {c['text_primary']}; border-bottom: 2px solid {c['accent']}; }} QTabBar::tab:hover:!selected {{ color: {c['text_primary']}; }}")
+        
+        self.continue_card.setStyleSheet(f"QFrame#ContinueCard {{ background-color: {c['bg_card']}; border: 1px solid {c['border_color']}; border-radius: 8px; padding: 24px; }}")
+        self.lbl_cc_title.setStyleSheet(f"font-size: 20px; font-weight: 600; font-family: {DISPLAY_FONT}; color: {c['text_primary']};")
+        self.lbl_cc_body.setStyleSheet(f"font-size: 14px; font-family: {DISPLAY_FONT}; color: {c['text_secondary']}; margin-bottom: 12px;")
+        self.btn_cc_action.setStyleSheet(primary_button_qss(c, radius=6))
+        
+        self.readiness_card.setStyleSheet(f"QFrame#ReadinessCard {{ background-color: {c['bg_card']}; border: 1px solid {c['border_color']}; border-radius: 8px; padding: 20px; }}")
+        self.lbl_rd_title.setStyleSheet(f"font-size: 16px; font-weight: 600; font-family: {DISPLAY_FONT}; color: {c['text_primary']}; margin-bottom: 8px;")
+        self.lbl_rd_stats.setStyleSheet(f"font-size: 14px; font-family: {DISPLAY_FONT}; color: {c['text_secondary']}; line-height: 1.5;")
+        
+        self.lbl_recent_nb.setStyleSheet(f"font-size: 16px; font-weight: 600; font-family: {DISPLAY_FONT}; color: {c['text_primary']}; margin-bottom: 8px;")
+        self.btn_add_resource.setStyleSheet(primary_button_qss(c, radius=6))
+        
+        self.overview_tab.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.res_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.overview_content.setStyleSheet("background: transparent;")
+        self.res_content.setStyleSheet("background: transparent;")
+        self.resources_tab.setStyleSheet("background: transparent;")
 
     def load_subject(self, subject_id: str):
         self.current_subject_id = subject_id
@@ -615,249 +622,237 @@ class SubjectDetailView(QWidget):
         if not self.current_subject_id:
             return
 
-        subject = get_subject_details(self.current_subject_id)
-        if not subject:
+        self._cached_subject = get_subject_details(self.current_subject_id)
+        if not self._cached_subject:
             return
 
-        self.lbl_title.setText(subject.name.upper())
+        subject = self._cached_subject
+        self.lbl_title.setText(subject.name)
+        
+        # Calculate readiness
+        ready = sum(1 for m in subject.materials if m.ingestion_status in ("READY", "PARTIAL"))
+        proc = sum(1 for m in subject.materials if m.ingestion_status in ("REGISTERED", "EXTRACTING", "INDEXING"))
+        readiness_text = []
+        if ready > 0:
+            readiness_text.append(f"{ready} resources ready")
+        if proc > 0:
+            readiness_text.append(f"{proc} resource indexing")
+        
+        # Check for image processing
+        images = sum(1 for m in subject.materials if m.resource_type == "IMAGE" and m.ingestion_status == "PARTIAL")
+        if images > 0:
+            readiness_text.append(f"{images} images stored - analysis pending")
+            
+        self.lbl_readiness.setText(" • ".join(readiness_text) if readiness_text else "No resources yet")
+        
+        # Overview Tab
+        notebooks = sorted(subject.notebooks, key=lambda x: x.updated_at or x.created_at, reverse=True)
+        if notebooks:
+            recent_nb = notebooks[0]
+            self.lbl_cc_title.setText(recent_nb.name)
+            self.lbl_cc_body.setText(f"Last updated {recent_nb.updated_at.strftime('%b %d, %Y') if recent_nb.updated_at else 'Unknown'}")
+            self.btn_cc_action.setText("Continue notebook")
+            try:
+                self.btn_cc_action.clicked.disconnect()
+            except Exception: pass
+            self.btn_cc_action.clicked.connect(lambda _, nb_id=recent_nb.id: self.open_notebook.emit(nb_id))
+        else:
+            self.lbl_cc_title.setText("Start your first notebook")
+            self.lbl_cc_body.setText("Your notes will stay connected to the resources in this subject.")
+            self.btn_cc_action.setText("Create notebook")
+            try:
+                self.btn_cc_action.clicked.disconnect()
+            except Exception: pass
+            self.btn_cc_action.clicked.connect(self._on_new_notebook)
+            
+        # Recent Notebooks
+        for i in reversed(range(self.nb_grid.count())):
+            widget = self.nb_grid.itemAt(i).widget()
+            if widget: widget.setParent(None)
+            
+        for i, nb in enumerate(notebooks[:4]):
+            card = NotebookCard(nb)
+            card.open_requested.connect(self.open_notebook.emit)
+            self.nb_grid.addWidget(card, i // 2, i % 2)
+            
+        # Readiness panel
+        searchable = sum(m.chunk_count for m in subject.materials if m.chunk_count)
+        stats_text = f"""{ready} Resources ready
+        {proc} Resources processing
+        {searchable} Searchable chunks
+        {len(notebooks)} Notebooks
+        {len(subject.videos)} Generated videos"""
+        self.lbl_rd_stats.setText(stats_text)
 
-        # ── Notebooks ──
-        self.nb_list.disconnect_check_state_updates()
-        self.nb_list.clear()
-        for nb in subject.notebooks:
-            self.nb_list.add_item(nb.name, data=nb.id)
-        self.nb_list.connect_check_state_updates()
+        # Knowledge Map
+        if subject.concept_nodes:
+            self.graph_view.render_graph(subject.concept_nodes, subject.concept_edges)
+        else:
+            self.graph_view.render_graph([], [])
 
-        # ── Materials ──
-        self.mat_list.disconnect_check_state_updates()
-        self.mat_list.clear()
-        self._cached_materials = list(subject.materials)
-        for i, mat in enumerate(self._cached_materials):
-            self.mat_list.add_item(mat.filename, data=i)
-        self.mat_list.connect_check_state_updates()
-
-        # ── Videos ──
-        self.vid_list.disconnect_check_state_updates()
-        self.vid_list.clear()
-        self._cached_videos = list(subject.videos)
-        for i, vid in enumerate(self._cached_videos):
-            self.vid_list.add_item(vid.title, data=i)
-        self.vid_list.connect_check_state_updates()
-
-        # ── Knowledge Graph ──
-        self.graph_view.render_graph(subject.concept_nodes, subject.concept_edges)
-
-    # ── Notebook Actions ────────────────────────────────────────────────────
-
+        # Resources Tab
+        for i in reversed(range(self.res_list_layout.count())):
+            widget = self.res_list_layout.itemAt(i).widget()
+            if widget: widget.setParent(None)
+            
+        self._resource_rows = {}
+        all_resources = list(subject.materials) + list(subject.videos) + list(subject.notebooks)
+        all_resources.sort(key=lambda x: getattr(x, "created_at", getattr(x, "updated_at", None)), reverse=True)
+        
+        for res in all_resources:
+            row = ResourceRow(res)
+            if hasattr(res, "video_url"):
+                row.open_requested.connect(self._on_open_video)
+                row.delete_requested.connect(self._on_delete_video)
+            elif hasattr(res, "file_path"):
+                row.open_requested.connect(self._on_open_material)
+                row.delete_requested.connect(self._on_delete_material)
+                row.retry_requested.connect(self._on_retry_material)
+                self._resource_rows[res.id] = row
+            else:
+                row.open_requested.connect(self.open_notebook.emit)
+            self.res_list_layout.addWidget(row)
+            
+        self._filter_resources()
+            
     def _on_new_notebook(self):
-        if not self.current_subject_id:
-            return
-
-        name, ok = QInputDialog.getText(
-            self, "New Notebook", "Notebook name:", text="Untitled Notebook"
-        )
-        if not ok or not name.strip():
-            return
-
+        if not self.current_subject_id: return
+        name, ok = QInputDialog.getText(self, "New Notebook", "Notebook name:", text="Untitled Notebook")
+        if not ok or not name.strip(): return
         meta = NotebookStorage.create_notebook(name.strip())
-        nb_id = meta["id"]
-
         from app.storage.database_ops import create_notebook as db_create_notebook
-        db_create_notebook(name.strip(), self.current_subject_id, override_id=nb_id)
+        db_create_notebook(name.strip(), self.current_subject_id, override_id=meta["id"])
         self.refresh_data()
 
-    def _on_notebook_clicked(self, item: QListWidgetItem):
-        nb_id = item.data(Qt.ItemDataRole.UserRole)
-        if nb_id:
-            self.open_notebook.emit(nb_id)
-
-    def _on_delete_notebooks(self):
-        checked = self.nb_list.get_checked_items()
-        if not checked:
-            return
-        reply = QMessageBox.question(
-            self, "Delete Notebooks",
-            f"Delete {len(checked)} notebook(s)? This cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            for _, item in checked:
-                nb_id = item.data(Qt.ItemDataRole.UserRole)
-                if nb_id:
-                    NotebookStorage.delete_notebook(nb_id)
-                    delete_notebook_record(nb_id)
-            self.refresh_data()
-
-    # ── Material (PDF) Actions ──────────────────────────────────────────────
     def _on_upload_material(self):
-        if not self.current_subject_id:
-            return
-
-        file_paths, _ = QFileDialog.getOpenFileNames(
-            self, "Upload Reference PDFs", "", "PDF Files (*.pdf)"
-        )
-        if not file_paths:
-            return
+        if not self.current_subject_id: return
+        file_paths, _ = QFileDialog.getOpenFileNames(self, "Upload Reference Material", "", "Images and PDFs (*.pdf *.png *.jpg *.jpeg)")
+        if not file_paths: return
 
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
         materials_dir = os.path.join(base_dir, "storage_data", "materials")
         os.makedirs(materials_dir, exist_ok=True)
 
-        dest_paths = []
+        new_materials = []
         for file_path in file_paths:
             filename = os.path.basename(file_path)
             dest_path = os.path.join(materials_dir, f"{self.current_subject_id}_{filename}")
+            
+            existing = next((m for m in self._cached_subject.materials if m.file_path == dest_path), None)
+            if existing:
+                QMessageBox.information(self, "Duplicate Upload", f"{filename} is already uploaded to this subject.")
+                continue
+
             try:
                 shutil.copy2(file_path, dest_path)
-                add_material(self.current_subject_id, filename, dest_path)
-                dest_paths.append(dest_path)
+                res_type = "PDF" if dest_path.lower().endswith(".pdf") else "IMAGE"
+                mat = add_material(self.current_subject_id, filename, dest_path, resource_type=res_type)
+                new_materials.append((mat.id, dest_path, res_type))
             except Exception as e:
                 QMessageBox.critical(self, "Upload Failed", f"Failed to copy {filename}:\n{e}")
                 
-        if not dest_paths:
+        if not new_materials:
             return
             
         self.refresh_data()
         
-        # --- KNOWLEDGE GRAPH EXTRACTION BACKGROUND WORKER ---
-        print(f"[Graph] Starting background extraction for {len(dest_paths)} files...")
-        self.lbl_title.setText(self.lbl_title.text() + " (Extracting Graph...)")
-        
-        def extract_and_save(pdf_paths, subj_id):
+        from app.ui.workers.ingestion_worker import IngestionWorker
+        for mat_id, dest_path, res_type in new_materials:
+            worker = IngestionWorker(
+                material_id=mat_id, subject_id=self.current_subject_id,
+                file_path=dest_path, resource_type=res_type,
+                parent=self
+            )
+            worker.status_changed.connect(self._on_worker_status)
+            worker.finished.connect(self._on_worker_finished)
+            worker.error.connect(self._on_worker_error)
+            self._workers.append(worker)
+            if mat_id in self._resource_rows:
+                self._resource_rows[mat_id].update_status("REGISTERED")
+            worker.start()
+
+    def _cleanup_worker(self, mat_id):
+        worker = next((w for w in self._workers if getattr(w, 'material_id', None) == mat_id), None)
+        if worker:
+            if hasattr(worker, 'cancel'):
+                worker.cancel()
             try:
-                print(f"[Graph] SubjectBrain migration in progress. Skipping legacy extraction for {len(pdf_paths)} PDFs.")
-                    
-            except Exception as e:
-                print(f"[GraphExtraction] Error: {e}")
+                worker.status_changed.disconnect(self._on_worker_status)
+                worker.finished.disconnect(self._on_worker_finished)
+                worker.error.disconnect(self._on_worker_error)
+            except Exception: pass
+            self._workers.remove(worker)
+            worker.deleteLater()
+
+    def _on_worker_status(self, mat_id, status):
+        if mat_id in self._resource_rows:
+            self._resource_rows[mat_id].update_status(status)
+
+    def _on_worker_finished(self, mat_id, result):
+        self._cleanup_worker(mat_id)
+        self.refresh_data()
         
-        import threading
-        thread = threading.Thread(target=extract_and_save, args=(dest_paths, self.current_subject_id))
-        thread.daemon = True
-        thread.start()
+    def _on_worker_error(self, mat_id, error):
+        self._cleanup_worker(mat_id)
+        if mat_id in self._resource_rows:
+            self._resource_rows[mat_id].update_status("FAILED")
 
-    def _on_material_clicked(self, item: QListWidgetItem):
-        idx = item.data(Qt.ItemDataRole.UserRole)
-        if idx is None or idx >= len(self._cached_materials):
-            return
+    def _on_open_video(self, vid_id):
+        vid = next((v for v in self._cached_subject.videos if v.id == vid_id), None)
+        if vid and vid.video_url:
+            self._open_file_external(vid.video_url)
 
-        mat = self._cached_materials[idx]
+    def _on_retry_material(self, mat_id):
+        mat = next((m for m in self._cached_subject.materials if m.id == mat_id), None)
+        if not mat: return
+        from app.ui.workers.ingestion_worker import IngestionWorker
+        worker = IngestionWorker(
+            material_id=mat.id, subject_id=self.current_subject_id,
+            file_path=mat.file_path, resource_type=mat.resource_type,
+            parent=self
+        )
+        worker.status_changed.connect(self._on_worker_status)
+        worker.finished.connect(self._on_worker_finished)
+        worker.error.connect(self._on_worker_error)
+        self._workers.append(worker)
+        if mat_id in self._resource_rows:
+            self._resource_rows[mat_id].update_status("REGISTERED")
+        worker.start()
+
+    def _on_open_material(self, mat_id):
+        mat = next((m for m in self._cached_subject.materials if m.id == mat_id), None)
+        if not mat: return
         path = mat.file_path
-
         if not path or not os.path.exists(path):
             QMessageBox.warning(self, "File Missing", f"The file no longer exists:\n{path}")
             return
+        if mat.resource_type == "IMAGE":
+            self._open_file_external(path)
+        else:
+            self.open_pdf_in_viewer.emit(path)
 
-        # Emit signal — MainWindow will switch to canvas and load the PDF viewer
-        print(f"[SubjectDetailView] Opening PDF: {path}")
-        self.open_pdf_in_viewer.emit(path)
-
-    def _on_delete_materials(self):
-        checked = self.mat_list.get_checked_items()
-        if not checked:
-            return
-        reply = QMessageBox.question(
-            self, "Delete PDFs",
-            f"Delete {len(checked)} PDF(s)? The files will also be removed.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
+    def _on_delete_material(self, mat_id):
+        reply = QMessageBox.question(self, "Delete Resource", "Are you sure you want to delete this resource?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            for _, item in checked:
-                idx = item.data(Qt.ItemDataRole.UserRole)
-                if idx is not None and idx < len(self._cached_materials):
-                    mat = self._cached_materials[idx]
-                    path = delete_material(mat.id)
-                    if path and os.path.exists(path):
-                        try:
-                            os.remove(path)
-                        except Exception:
-                            pass
-            self.refresh_data()
-            
-            # --- KNOWLEDGE GRAPH REBUILDER ---
-            print("[Graph] PDF deleted! Starting background rebuild...")
-            self.lbl_title.setText(self.lbl_title.text() + " (Rebuilding Graph...)")
-            
-            def rebuild_graph(subj_id):
-                try:
-                    from app.storage.database_ops import update_subject_knowledge_graph, get_subject_details
-                    subject = get_subject_details(subj_id)
-                    remaining_materials = subject.materials if subject else []
-                    
-                    if not remaining_materials:
-                        print("[Graph] No materials left. Clearing graph.")
-                        update_subject_knowledge_graph(subj_id, [], [], clear_existing=True)
-                    else:
-                        print(f"[Graph] SubjectBrain migration in progress. Skipping legacy rebuild.")
-                    
-                    # 2. Tell UI to refresh when done
-                    from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, self.refresh_data)
-                    
-                except Exception as e:
-                    print(f"[GraphRebuild] Error: {e}")
-            
-            import threading
-            thread = threading.Thread(target=rebuild_graph, args=(self.current_subject_id,))
-            thread.daemon = True
-            thread.start()
-
+            self._cleanup_worker(mat_id)
+            try:
+                path = delete_material(mat_id)
+                if path and os.path.exists(path):
+                    try: os.remove(path)
+                    except Exception: pass
+            except Exception as e:
+                QMessageBox.warning(self, "Delete Failed", f"Failed to delete resource:\n{e}")
             self.refresh_data()
 
-    # ── Video Actions ───────────────────────────────────────────────────────
-
-    def _on_video_clicked(self, item: QListWidgetItem):
-        idx = item.data(Qt.ItemDataRole.UserRole)
-        if idx is None or idx >= len(self._cached_videos):
-            return
-
-        vid = self._cached_videos[idx]
-        self._open_file_external(vid.video_url)
-
-    def _on_delete_videos(self):
-        checked = self.vid_list.get_checked_items()
-        if not checked:
-            return
-        reply = QMessageBox.question(
-            self, "Delete Videos",
-            f"Delete {len(checked)} video(s)? The files will also be removed.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
+    def _on_delete_video(self, vid_id):
+        reply = QMessageBox.question(self, "Delete Video", "Are you sure you want to delete this video?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            for _, item in checked:
-                idx = item.data(Qt.ItemDataRole.UserRole)
-                if idx is not None and idx < len(self._cached_videos):
-                    vid = self._cached_videos[idx]
-                    path = delete_video(vid.id)
-                    if path and os.path.exists(path):
-                        try:
-                            os.remove(path)
-                        except Exception:
-                            pass
+            path = delete_video(vid_id)
+            if path and os.path.exists(path):
+                try: os.remove(path)
+                except Exception: pass
             self.refresh_data()
-
-    # ── Delete Subject ──────────────────────────────────────────────────────
-
-    def _on_delete_subject(self):
-        if not self.current_subject_id:
-            return
-
-        reply = QMessageBox.question(
-            self, "Delete Subject",
-            "Are you sure you want to delete this subject and ALL its "
-            "notebooks, materials, and videos?\n\nThis cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            delete_subject(self.current_subject_id)
-            self.current_subject_id = None
-            self.go_back.emit()
-
-    # ── Helpers ─────────────────────────────────────────────────────────────
-
+            
     def _open_file_external(self, path: str):
         if not path or not os.path.exists(path):
             QMessageBox.warning(self, "File Missing", f"File not found:\n{path}")
@@ -871,3 +866,66 @@ class SubjectDetailView(QWidget):
                 subprocess.Popen(["xdg-open", path])
         except Exception as e:
             QMessageBox.warning(self, "Open Failed", f"Could not open file:\n{e}")
+
+    def _on_delete_subject(self):
+        if not self.current_subject_id: return
+        reply = QMessageBox.question(self, "Delete Subject", "Delete this subject and ALL its data?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            delete_subject(self.current_subject_id)
+            self.current_subject_id = None
+            self.go_back.emit()
+
+    def _sort_resources(self):
+        self._filter_resources()
+
+    def _filter_resources(self):
+        query = self.search_input.text().strip().lower()
+        type_flt = self.type_filter.currentText()
+        status_flt = self.status_filter.currentText()
+        sort_idx = self.sort_combo.currentIndex()
+        
+        rows = []
+        for i in range(self.res_list_layout.count()):
+            w = self.res_list_layout.itemAt(i).widget()
+            if isinstance(w, ResourceRow):
+                rows.append(w)
+                
+        if sort_idx == 0:
+            rows.sort(key=lambda w: getattr(w.material, "created_at", getattr(w.material, "updated_at", None)), reverse=True)
+        elif sort_idx == 1:
+            rows.sort(key=lambda w: getattr(w.material, "filename", getattr(w.material, "title", getattr(w.material, "name", ""))).lower())
+        elif sort_idx == 2:
+            rows.sort(key=lambda w: "Video" if hasattr(w.material, "video_url") else ("Notebook" if not hasattr(w.material, "file_path") else getattr(w.material, "resource_type", "PDF")))
+            
+        for w in rows:
+            self.res_list_layout.removeWidget(w)
+            
+        for w in rows:
+            self.res_list_layout.addWidget(w)
+            mat = w.material
+            name = getattr(mat, "filename", getattr(mat, "title", getattr(mat, "name", ""))).lower()
+            if query and query not in name:
+                w.setVisible(False)
+                continue
+                
+            is_video = hasattr(mat, "video_url")
+            is_nb = not hasattr(mat, "file_path") and not is_video
+            res_type = "Videos" if is_video else ("Notebooks" if is_nb else ("Images" if getattr(mat, "resource_type", None) == "IMAGE" else "PDFs"))
+            if type_flt != "All Types" and res_type != type_flt:
+                w.setVisible(False)
+                continue
+                
+            if status_flt != "All Status":
+                status = getattr(mat, "ingestion_status", "READY")
+                is_proc = status in ("REGISTERED", "EXTRACTING", "INDEXING")
+                if status_flt == "Processing" and not is_proc:
+                    w.setVisible(False)
+                    continue
+                if status_flt == "Ready" and status not in ("READY", "PARTIAL"):
+                    w.setVisible(False)
+                    continue
+                if status_flt == "Needs attention" and status != "FAILED":
+                    w.setVisible(False)
+                    continue
+            
+            w.setVisible(True)

@@ -117,6 +117,10 @@ class CanvasScene(QGraphicsScene):
         self._remote_cursors: dict = {}
         self._last_cursor_emit_time = 0.0
         self._item_pos_before_drag: dict = {}
+        self.notebook_id = None
+
+    def set_notebook_id(self, notebook_id: str):
+        self.notebook_id = notebook_id
 
     def _on_theme_changed(self, theme_name: str):
         is_dark = theme_name == "dark"

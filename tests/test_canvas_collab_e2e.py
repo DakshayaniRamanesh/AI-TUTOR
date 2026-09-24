@@ -36,8 +36,8 @@ def test_canvas_e2e_collaboration():
 
     # 1. Setup Host Environment
     host_scene = CanvasScene()
-    scene.set_notebook_id("test_notebook")
-    scene.board_id = "test_board"
+    host_scene.set_notebook_id("test_notebook")
+    host_scene.board_id = "test_board"
     host_server = CollabServer(host="127.0.0.1", port=test_port, host_display_ip="127.0.0.1")
     host_server.canvas_sync_provider = lambda: {
         "items": host_scene.to_dict_list(),
@@ -62,8 +62,8 @@ def test_canvas_e2e_collaboration():
 
     # 2. Setup Guest Environment
     guest_scene = CanvasScene()
-    scene.set_notebook_id("test_notebook")
-    scene.board_id = "test_board"
+    guest_scene.set_notebook_id("test_notebook")
+    guest_scene.board_id = "test_board"
     guest_client = CollabClient(user_name="Student")
     sync_done = []
     guest_client.sync_received.connect(lambda b: (guest_scene.apply_remote_sync(b), sync_done.append(True)))

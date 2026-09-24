@@ -93,7 +93,7 @@ class SubjectVectorStore:
                 print(f"[SubjectVectorStore] Created collection '{COLLECTION}' (dim={EMBEDDING_DIM})")
 
             # Keyword indexes for fast filtered queries
-            for field in ("subject_id", "content_type"):
+            for field in ("subject_id", "content_type", "material_id"):
                 try:
                     self.client.create_payload_index(
                         collection_name=COLLECTION,
@@ -108,7 +108,7 @@ class SubjectVectorStore:
 
     # ── Ingest ─────────────────────────────────────────────────────────────────
 
-    def ingest_chunks(self, chunks: list[dict]) -> int:
+    def ingest_chunks(self, chunks: list[dict], cancel_check=None) -> int:
         """
         Embed and upsert a list of chunk dicts into Qdrant.
         Each chunk must contain the 7 fields from PdfHierarchicalParser.
@@ -119,6 +119,9 @@ class SubjectVectorStore:
 
         points = []
         for chunk in chunks:
+            if cancel_check and cancel_check():
+                raise Exception("Cancelled during vectorization")
+            
             text = chunk.get("text", "").strip()
             if not text:
                 continue
@@ -129,13 +132,16 @@ class SubjectVectorStore:
                     id=str(uuid.uuid4()),
                     vector=vector,
                     payload={
+                        "chunk_id":       chunk.get("id", ""),
                         "subject_id":     chunk.get("subject_id", ""),
+                        "material_id":    chunk.get("material_id", ""),
                         "document_title": chunk.get("document_title", ""),
                         "chapter":        chunk.get("chapter", ""),
                         "section":        chunk.get("section", ""),
                         "page_number":    chunk.get("page_number", 0),
                         "content_type":   chunk.get("content_type", "text"),
                         "text":           text,
+                        "content_hash":   chunk.get("content_hash", ""),
                     },
                 )
             )
@@ -208,6 +214,24 @@ class SubjectVectorStore:
         return Filter(must=conditions)
 
     # ── Utility ────────────────────────────────────────────────────────────────
+
+    def delete_by_material(self, subject_id: str, material_id: str) -> bool:
+        """Deletes all chunks for a specific material from Qdrant."""
+        try:
+            self.client.delete(
+                collection_name=COLLECTION,
+                points_selector=Filter(
+                    must=[
+                        FieldCondition(key="subject_id", match=MatchValue(value=subject_id)),
+                        FieldCondition(key="material_id", match=MatchValue(value=material_id))
+                    ]
+                )
+            )
+            print(f"[SubjectVectorStore] Deleted points for material {material_id} in subject {subject_id}")
+            return True
+        except Exception as e:
+            print(f"[SubjectVectorStore] Failed to delete points for material {material_id}: {e}")
+            return False
 
     def count(self, subject_id: str) -> int:
         """Returns the number of chunks stored for a given subject."""
