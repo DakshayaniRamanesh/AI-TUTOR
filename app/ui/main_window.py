@@ -70,6 +70,7 @@ from app.services.reasoning.latex_client import request_latex_generation, LatexP
 from shared.contracts.latex import LatexGenerationRequest, LatexGenerationMode, LatexSourceAnchor
 from shared.contracts.common import CanvasBBox
 from ..collaboration.collab_session_manager import CollabSessionManager
+from shared.ai_client import ai_client
 
 # ── Autosave Configuration ─────────────────────────────────────────────────────
 # Delay (ms) after the last scene change before autosave fires to disk.
@@ -1388,9 +1389,147 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_magic_orb_triggered(self):
-        started = self.scene.trigger_ai_on_dirty_ink()
-        if not started:
+        if getattr(self, '_visual_feather_worker', None) is not None:
+            return  # Prevent second request
+
+        # Stale result safety captures
+        self._feather_context = {
+            "subject_id": self.current_subject_id,
+            "notebook_id": self._current_notebook_id,
+            "attempt_id": self.current_attempt_id,
+            "scene_revision": getattr(self.scene, 'revision', 0)
+        }
+
+        self.magic_orb.set_state("thinking", "Looking at your canvas...")
+        image_b64 = self._capture_visible_canvas_for_feather()
+        if not image_b64:
+            self.magic_orb.set_state("error", "Nothing visible to analyze.")
+            QTimer.singleShot(2500, lambda: self.magic_orb.set_state("idle", ""))
+            return
+
+        # Find center of visible viewport to place the answer bubble near the right side
+        rect = self.view.mapToScene(self.view.viewport().rect()).boundingRect()
+        anchor_position = rect.topRight() + QPointF(-400, 100)
+
+        self._start_visual_feather_request(image_b64, anchor_position)
+
+    def _capture_visible_canvas_for_feather(self) -> str | None:
+        rect = self.view.mapToScene(self.view.viewport().rect()).boundingRect()
+        items_in_view = self.scene.items(rect)
+        if not items_in_view:
+            return None
+
+        from .items.answer_bubble import AnswerBubble
+        from .items.video_float_item import VideoFloatItem
+        from .items.group_selection import GroupSelection
+        from .items.remote_cursor import RemoteCollaboratorCursor
+
+        hidden_items = []
+        for item in self.scene.items():
+            if not item.isVisible():
+                continue
+            if isinstance(item, (AnswerBubble, VideoFloatItem, GroupSelection, RemoteCollaboratorCursor)):
+                item.setVisible(False)
+                hidden_items.append(item)
+
+        try:
+            size = rect.size().toSize()
+            if size.width() <= 0 or size.height() <= 0:
+                return None
+
+            # Limit dimension
+            if size.width() > 2000 or size.height() > 2000:
+                scale_factor = 2000.0 / max(size.width(), size.height())
+                size = (rect.size() * scale_factor).toSize()
+
+            pixmap = QPixmap(size)
+            pixmap.fill(Qt.GlobalColor.white)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            self.scene.render(painter, target=QRectF(pixmap.rect()), source=rect)
+            painter.end()
+
+            buffer = QBuffer()
+            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+            pixmap.save(buffer, "PNG")
+            return base64.b64encode(buffer.data().data()).decode('utf-8')
+        finally:
+            for item in hidden_items:
+                item.setVisible(True)
+
+    def _start_visual_feather_request(self, image_b64: str, anchor_position: QPointF):
+        from PyQt6.QtCore import QThread, pyqtSignal
+
+        class VisualFeatherWorker(QThread):
+            finished = pyqtSignal(str)
+            error = pyqtSignal(str)
+
+            def __init__(self, img_b64: str, parent=None):
+                super().__init__(parent)
+                self.img_b64 = img_b64
+
+            def run(self):
+                try:
+                    prompt = "Look at the currently visible Kestrel canvas and give the student the most useful concise answer or correction."
+                    system_instruction = (
+                        "You are Kestrel, a visual AI tutor looking at the student's current notebook canvas.\n\n"
+                        "Inspect all visible handwriting, equations, typed notes, images and diagrams.\n\n"
+                        "Give the most useful response to what is visible:\n"
+                        "- If there is a written question, answer it directly.\n"
+                        "- If there is one equation, solve or explain it concisely.\n"
+                        "- If there are multiple mathematical steps, check the latest step against the previous one.\n"
+                        "- If a step is wrong, identify the exact error and show the corrected step.\n"
+                        "- If the work is correct, confirm it and give the next useful step.\n"
+                        "- If the canvas contains notes rather than a question, briefly explain or summarize the visible concept.\n"
+                        "- Keep the response under 120 words.\n"
+                        "- Use clear mathematical notation.\n"
+                        "- Do not return JSON.\n"
+                        "- Do not use generic filler such as \"I can see your work\", \"First step captured\", or \"What should we do next?\"\n"
+                        "- Only say the content is unreadable if it is genuinely impossible to interpret."
+                    )
+                    from shared.ai_client import ai_client
+                    response = ai_client.generate_content(
+                        prompt=prompt,
+                        system_instruction=system_instruction,
+                        image_b64=self.img_b64,
+                        temperature=0.1
+                    )
+                    self.finished.emit(response)
+                except Exception as e:
+                    self.error.emit(str(e))
+
+        self._visual_feather_worker = VisualFeatherWorker(image_b64, parent=self)
+
+        def _on_finished(response_text: str):
+            self._visual_feather_worker = None
             self.magic_orb.set_state("idle")
+
+            ctx = getattr(self, '_feather_context', {})
+            if ctx.get("subject_id") != self.current_subject_id or \
+               ctx.get("notebook_id") != self._current_notebook_id or \
+               ctx.get("attempt_id") != self.current_attempt_id or \
+               ctx.get("scene_revision") != getattr(self.scene, 'revision', 0):
+                return
+
+            response_text = response_text.strip() if response_text else ""
+            if not response_text:
+                return
+
+            from .items.answer_bubble import AnswerBubble
+            clean_pos = self._find_non_overlapping_pos(anchor_position, width=400.0, height=200.0)
+            bubble = AnswerBubble(title="Kestrel", full_text=response_text)
+            bubble.setPos(clean_pos)
+            self.scene.addItem(bubble)
+
+        def _on_error(err_msg: str):
+            print(f"VisualFeatherWorker error: {err_msg}")
+            self._visual_feather_worker = None
+            self.magic_orb.set_state("error", "Kestrel could not analyze the canvas. Check the AI connection and try again.")
+            QTimer.singleShot(3500, lambda: self.magic_orb.set_state("idle", ""))
+
+        self._visual_feather_worker.finished.connect(_on_finished)
+        self._visual_feather_worker.error.connect(_on_error)
+        self._visual_feather_worker.start()
 
     def _on_auto_ai_failed(self, error_msg: str):
         self.magic_orb.set_state("error", error_msg)

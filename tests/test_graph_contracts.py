@@ -50,3 +50,26 @@ def test_graph_dto_json_roundtrip():
     assert snapshot_restored.nodes[0].node_type == NodeType.CONCEPT
     assert snapshot_restored.edges[0].relation_type == RelationType.PART_OF
     assert snapshot_restored.nodes[0].evidence[0].material_id == "m1"
+
+def test_semantic_node_and_edge_without_evidence_raises():
+    with pytest.raises(ValidationError, match="Semantic nodes require valid chunk_id evidence."):
+        GraphNodeDTO(
+            id="n_semantic",
+            subject_id="s1",
+            canonical_key="test_semantic",
+            display_name="Test Semantic",
+            node_type=NodeType.CONCEPT,
+            extraction_mode="ONLINE_STRUCTURED",
+            evidence=[]
+        )
+
+    with pytest.raises(ValidationError, match="Semantic edges require valid chunk_id evidence."):
+        GraphEdgeDTO(
+            id="e_semantic",
+            subject_id="s1",
+            source_node_id="n1",
+            target_node_id="n2",
+            relation_type=RelationType.PREREQUISITE_OF,
+            extraction_mode="ONLINE_STRUCTURED",
+            evidence=[]
+        )

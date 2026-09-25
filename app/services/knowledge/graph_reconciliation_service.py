@@ -136,22 +136,7 @@ class GraphReconciliationService:
                     node_id_map[raw_clean] = existing_name.id
                     return existing_name.id
 
-                # Create concept node dynamically so edges are always anchored to real nodes
-                new_node = ConceptNode(
-                    id=uuid.uuid4().hex,
-                    subject_id=subject_id,
-                    canonical_key=c_key,
-                    display_name=raw_clean,
-                    node_type="CONCEPT",
-                    description=f"Key educational concept for {raw_clean}.",
-                    extraction_method="ONLINE_STRUCTURED",
-                    evidence_count=1,
-                    aliases_json=json.dumps([raw_clean])
-                )
-                session.add(new_node)
-                session.flush()
-                node_id_map[raw_clean] = new_node.id
-                return new_node.id
+                return None
 
             # 3. Upsert Edges
             for edge_dto in new_edges:

@@ -1,8 +1,11 @@
 from typing import List, Optional
 import json
+import logging
 from sqlalchemy.orm import Session
 from app.storage.database import get_session_factory, Subject, ConceptNode, ConceptEdge, GraphEvidence, GraphLayout
 from shared.contracts.graph_contracts import GraphSnapshot, GraphNodeDTO, GraphEdgeDTO, GraphEvidenceDTO, NodeType, RelationType, GraphLayoutStateDTO
+
+logger = logging.getLogger(__name__)
 
 GLOBAL_NODE_CAP = 100
 SUBJECT_NODE_CAP = 12
@@ -39,16 +42,23 @@ class GraphQueryService:
                 edges = session.query(ConceptEdge).filter(ConceptEdge.subject_id == subject_id).all()
             
             node_dtos = []
+            included_node_ids = set()
             for n in nodes:
                 try: node_type = NodeType(n.node_type)
                 except ValueError: node_type = NodeType.CONCEPT
                 
+                evidence = self._evidence(session, node_id=n.id)
+                mode = n.extraction_method if n.extraction_method in ("ONLINE_STRUCTURED", "ONLINE_SEMANTIC", "OFFLINE_STRUCTURAL", "PARTIAL", "FAILED") else "OFFLINE_STRUCTURAL"
+                if mode in ("ONLINE_STRUCTURED", "ONLINE_SEMANTIC") and node_type.value not in ("SUBJECT", "RESOURCE", "NOTEBOOK"):
+                    if not evidence or not any(ev.chunk_id for ev in evidence):
+                        logger.warning("Skipping invalid legacy semantic node %s (%s) lacking chunk evidence", n.id, n.display_name)
+                        continue
+
                 aliases = []
                 if n.aliases_json:
                     try: aliases = json.loads(n.aliases_json)
                     except: pass
                 
-                mode = n.extraction_method if n.extraction_method in ("ONLINE_STRUCTURED", "OFFLINE_STRUCTURAL", "PARTIAL", "FAILED") else "OFFLINE_STRUCTURAL"
                 node_dtos.append(GraphNodeDTO(
                     id=n.id,
                     subject_id=n.subject_id,
@@ -59,15 +69,25 @@ class GraphQueryService:
                     aliases=aliases,
                     evidence_counts=n.evidence_count or 0,
                     extraction_mode=mode,
-                    evidence=self._evidence(session, node_id=n.id),
+                    evidence=evidence,
                 ))
+                included_node_ids.add(n.id)
 
             edge_dtos = []
             for e in edges:
+                if e.source_node_id not in included_node_ids or e.target_node_id not in included_node_ids:
+                    continue
+
                 try: relation_type = RelationType(e.relation_type)
                 except ValueError: relation_type = RelationType.RELATED_TO
                 
-                e_mode = e.extraction_method if e.extraction_method in ("ONLINE_STRUCTURED", "OFFLINE_STRUCTURAL", "PARTIAL", "FAILED") else "OFFLINE_STRUCTURAL"
+                e_mode = e.extraction_method if e.extraction_method in ("ONLINE_STRUCTURED", "ONLINE_SEMANTIC", "OFFLINE_STRUCTURAL", "PARTIAL", "FAILED") else "OFFLINE_STRUCTURAL"
+                edge_evidence = self._evidence(session, edge_id=e.id)
+                if e_mode in ("ONLINE_STRUCTURED", "ONLINE_SEMANTIC") and relation_type != RelationType.PART_OF:
+                    if not edge_evidence or not any(ev.chunk_id for ev in edge_evidence):
+                        logger.warning("Skipping invalid legacy semantic edge %s lacking chunk evidence", e.id)
+                        continue
+
                 edge_dtos.append(GraphEdgeDTO(
                     id=e.id,
                     subject_id=e.subject_id,
@@ -76,7 +96,7 @@ class GraphQueryService:
                     relation_type=relation_type,
                     evidence_counts=e.evidence_count or 0,
                     extraction_mode=e_mode,
-                    evidence=self._evidence(session, edge_id=e.id),
+                    evidence=edge_evidence,
                 ))
 
             layouts = session.query(GraphLayout).filter(GraphLayout.scope_type == "SUBJECT", GraphLayout.scope_id == subject_id).all()
@@ -99,6 +119,7 @@ class GraphQueryService:
             subjects = session.query(Subject).all()
             node_dtos = []
             edge_dtos = []
+            included_node_ids = set()
 
             # Helper to rank concepts deterministically
             def rank_node(n):
@@ -118,6 +139,7 @@ class GraphQueryService:
                     description=f"Subject: {subj.name}",
                     extraction_mode="OFFLINE_STRUCTURAL"
                 ))
+                included_node_ids.add(subj_node_id)
 
                 # Fetch nodes and rank them
                 nodes = session.query(ConceptNode).filter(ConceptNode.subject_id == subj.id).all()
@@ -136,11 +158,18 @@ class GraphQueryService:
                 try: node_type = NodeType(n.node_type)
                 except ValueError: node_type = NodeType.CONCEPT
                 
+                cand_ev = self._evidence(session, node_id=n.id)
+                cand_mode = n.extraction_method if n.extraction_method in ("ONLINE_STRUCTURED", "ONLINE_SEMANTIC", "OFFLINE_STRUCTURAL", "PARTIAL", "FAILED") else "OFFLINE_STRUCTURAL"
+                if cand_mode in ("ONLINE_STRUCTURED", "ONLINE_SEMANTIC") and node_type.value not in ("SUBJECT", "RESOURCE", "NOTEBOOK"):
+                    if not cand_ev or not any(ev.chunk_id for ev in cand_ev):
+                        logger.warning("Skipping invalid legacy semantic node %s (%s) lacking chunk evidence in global snapshot", n.id, n.display_name)
+                        continue
+
                 aliases = []
                 if n.aliases_json:
                     try: aliases = json.loads(n.aliases_json)
                     except: pass
-                
+
                 node_dtos.append(GraphNodeDTO(
                     id=n.id,
                     subject_id=n.subject_id,
@@ -150,18 +179,20 @@ class GraphQueryService:
                     description=n.description,
                     aliases=aliases,
                     evidence_counts=n.evidence_count or 0,
-                    extraction_mode=n.extraction_method,
-                    evidence=self._evidence(session, node_id=n.id),
+                    extraction_mode=cand_mode,
+                    evidence=cand_ev,
                 ))
+                included_node_ids.add(n.id)
                 
-                edge_dtos.append(GraphEdgeDTO(
-                    id=f"g_edge_{subj.id}_{n.id}",
-                    subject_id=subj.id,
-                    source_node_id=subj_node_id,
-                    target_node_id=n.id,
-                    relation_type=RelationType.CONTAINS,
-                    extraction_mode="OFFLINE_STRUCTURAL"
-                ))
+                if subj_node_id in included_node_ids and n.id in included_node_ids:
+                    edge_dtos.append(GraphEdgeDTO(
+                        id=f"g_edge_{subj.id}_{n.id}",
+                        subject_id=subj.id,
+                        source_node_id=subj_node_id,
+                        target_node_id=n.id,
+                        relation_type=RelationType.CONTAINS,
+                        extraction_mode="OFFLINE_STRUCTURAL"
+                    ))
 
             layouts = session.query(GraphLayout).filter(GraphLayout.scope_type == "GLOBAL").all()
             layout_dict = {
