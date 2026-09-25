@@ -322,13 +322,13 @@ async def generate_latex(
 ):
     job_id = request.request_id
     
-    # We still convert the new contract to the internal LatexJob
+    # Convert the contract to the internal LatexJob
     job = LatexJob(
         job_id=job_id,
         image_b64=request.image_b64,
-        template_type="Document" if request.mode == LatexGenerationMode.VIEWPORT_DOCUMENT else "Selection",
+        template_type=request.template_type or ("Document" if request.mode == LatexGenerationMode.VIEWPORT_DOCUMENT else "Selection"),
         mode=request.mode.value,
-        classroom_action="Export LaTeX"
+        classroom_action=request.classroom_action or "Solve Question"
     )
     latex_jobs_store[job_id] = job
 
@@ -477,34 +477,6 @@ async def test_tectonic():
     return JSONResponse({"status": "error", "message": "Tectonic binary not found"}, status_code=500)
 
 
-if __name__ == "__main__":
-    import uvicorn
-    import socket
-
-    def _is_port_bindable(p: int, host: str = "0.0.0.0") -> bool:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind((host, p))
-                return True
-            except OSError:
-                return False
-
-    desired_port = config.BACKEND_PORT
-    selected_port = desired_port
-
-    if not _is_port_bindable(selected_port):
-        # On Windows, ports like 8000 are frequently blocked by Windows NAT / Hyper-V exclusion ranges (WinError 10013)
-        fallbacks = [8888, 5050, 5000, 9000]
-        for fb in fallbacks:
-            if _is_port_bindable(fb):
-                print(f"[LocalServer] Port {selected_port} is blocked/unavailable. Automatically falling back to port {fb}.")
-                selected_port = fb
-                os.environ["PORT"] = str(fb)
-                config.BACKEND_URL = f"http://localhost:{fb}"
-                break
-
-    uvicorn.run(app, host="0.0.0.0", port=selected_port)
-
 
 from pydantic import BaseModel
 
@@ -564,3 +536,33 @@ async def ask_ai(req: AskRequest):
         return JSONResponse({"status": "error", "message": "All LLM backends failed or no keys configured."}, status_code=500)
 
     return {"status": "ok", "raw_output": raw_output, "asked_explain": asked_explain}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import socket
+
+    def _is_port_bindable(p: int, host: str = "0.0.0.0") -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, p))
+                return True
+            except OSError:
+                return False
+
+    desired_port = config.BACKEND_PORT
+    selected_port = desired_port
+
+    if not _is_port_bindable(selected_port):
+        # On Windows, ports like 8000 are frequently blocked by Windows NAT / Hyper-V exclusion ranges (WinError 10013)
+        fallbacks = [8888, 5050, 5000, 9000]
+        for fb in fallbacks:
+            if _is_port_bindable(fb):
+                print(f"[LocalServer] Port {selected_port} is blocked/unavailable. Automatically falling back to port {fb}.")
+                selected_port = fb
+                os.environ["PORT"] = str(fb)
+                config.BACKEND_URL = f"http://localhost:{fb}"
+                break
+
+    uvicorn.run(app, host="0.0.0.0", port=selected_port)
+

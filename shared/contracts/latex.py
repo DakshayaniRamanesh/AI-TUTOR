@@ -22,6 +22,8 @@ class LatexGenerationRequest(ContractModel):
     mode: LatexGenerationMode
     anchor: LatexSourceAnchor
     image_b64: str
+    template_type: Optional[str] = "Homework"
+    classroom_action: Optional[str] = "Solve Question"
     evidence_ids: List[StableId] = Field(default_factory=list)
     created_at: float = Field(default_factory=lambda: 0.0)
 

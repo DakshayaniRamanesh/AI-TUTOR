@@ -92,6 +92,8 @@ class GraphReconciliationService:
                         db_node.aliases_json = json.dumps(aliases)
                 
                 node_id_map[node_dto.id] = db_node.id
+                node_id_map[canonical_key] = db_node.id
+                node_id_map[node_dto.display_name.lower().strip()] = db_node.id
                 
                 # Add node evidence
                 for ev_dto in node_dto.evidence:
@@ -109,15 +111,55 @@ class GraphReconciliationService:
                     )
                     session.add(db_ev)
 
+            def _resolve_or_create_node_id(raw_ref: str) -> Optional[str]:
+                if not raw_ref:
+                    return None
+                raw_clean = str(raw_ref).strip()
+                if raw_clean in node_id_map:
+                    return node_id_map[raw_clean]
+                if raw_clean.lower() in node_id_map:
+                    return node_id_map[raw_clean.lower()]
+
+                # Check if matches existing DB node id
+                existing = session.query(ConceptNode).filter(ConceptNode.id == raw_clean).first()
+                if existing:
+                    node_id_map[raw_clean] = existing.id
+                    return existing.id
+
+                # Check by canonical_key or display_name
+                c_key = generate_canonical_key(subject_id, "CONCEPT", raw_clean)
+                existing_name = session.query(ConceptNode).filter(
+                    ConceptNode.subject_id == subject_id,
+                    (ConceptNode.canonical_key == c_key) | (ConceptNode.display_name.ilike(raw_clean))
+                ).first()
+                if existing_name:
+                    node_id_map[raw_clean] = existing_name.id
+                    return existing_name.id
+
+                # Create concept node dynamically so edges are always anchored to real nodes
+                new_node = ConceptNode(
+                    id=uuid.uuid4().hex,
+                    subject_id=subject_id,
+                    canonical_key=c_key,
+                    display_name=raw_clean,
+                    node_type="CONCEPT",
+                    description=f"Key educational concept for {raw_clean}.",
+                    extraction_method="ONLINE_STRUCTURED",
+                    evidence_count=1,
+                    aliases_json=json.dumps([raw_clean])
+                )
+                session.add(new_node)
+                session.flush()
+                node_id_map[raw_clean] = new_node.id
+                return new_node.id
+
             # 3. Upsert Edges
             for edge_dto in new_edges:
-                source_db_id = node_id_map.get(edge_dto.source_node_id, edge_dto.source_node_id)
-                target_db_id = node_id_map.get(edge_dto.target_node_id, edge_dto.target_node_id)
+                source_db_id = _resolve_or_create_node_id(edge_dto.source_node_id)
+                target_db_id = _resolve_or_create_node_id(edge_dto.target_node_id)
                 
-                if source_db_id == target_db_id:
-                    continue # Reject self-edges
-                    
-                # Reject unsupported enums (handled by Pydantic, but double check)
+                if not source_db_id or not target_db_id or source_db_id == target_db_id:
+                    continue # Reject self-edges or unresolvable endpoints
                 
                 db_edge = session.query(ConceptEdge).filter(
                     ConceptEdge.subject_id == subject_id,
@@ -155,26 +197,27 @@ class GraphReconciliationService:
                     )
                     session.add(db_ev)
             
-            # 4. Clean up orphans
-            # Find nodes with 0 evidence
+            # 4. Clean up orphans safely
             session.flush()
             all_subject_nodes = session.query(ConceptNode).filter(ConceptNode.subject_id == subject_id).all()
             for n in all_subject_nodes:
                 ev_count = session.query(GraphEvidence).filter(GraphEvidence.node_id == n.id).count()
                 n.evidence_count = ev_count
-                
-                # We only delete orphans if they are not SUBJECT nodes
-                if ev_count == 0 and n.node_type != "SUBJECT":
-                    # Delete edges connected to this node
-                    session.query(ConceptEdge).filter((ConceptEdge.source_node_id == n.id) | (ConceptEdge.target_node_id == n.id)).delete()
-                    session.delete(n)
+                # Only prune stale temporary resource/module containers from old deleted materials
+                if ev_count == 0 and n.node_type in ("RESOURCE", "MODULE"):
+                    has_edges = session.query(ConceptEdge).filter(
+                        (ConceptEdge.source_node_id == n.id) | (ConceptEdge.target_node_id == n.id)
+                    ).first()
+                    if not has_edges:
+                        session.delete(n)
 
-            # Update edge evidence counts and remove orphan edges
+            # Update edge evidence counts and prune only dangling edges whose endpoints were deleted
             all_subject_edges = session.query(ConceptEdge).filter(ConceptEdge.subject_id == subject_id).all()
+            existing_node_ids = {n.id for n in session.query(ConceptNode.id).filter(ConceptNode.subject_id == subject_id).all()}
             for e in all_subject_edges:
                 ev_count = session.query(GraphEvidence).filter(GraphEvidence.edge_id == e.id).count()
                 e.evidence_count = ev_count
-                if ev_count == 0:
+                if e.source_node_id not in existing_node_ids or e.target_node_id not in existing_node_ids:
                     session.delete(e)
 
             session.commit()

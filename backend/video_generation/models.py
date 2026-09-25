@@ -263,7 +263,7 @@ class LatexJob:
     image_b64: str = ""
     template_type: str = "Homework"
     mode: str = "study"
-    classroom_action: str = "Solve Question"
+    classroom_action: Optional[str] = None
 
     status: JobStatus = JobStatus.PENDING
     step: str = "init"

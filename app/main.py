@@ -86,6 +86,7 @@ def main():
         def _on_imports_ready():
             """Called on the MAIN THREAD via Qt signal — safe to build widgets."""
             thread.quit()
+            thread.wait(2000)
             from app.ui.main_window import MainWindow   # already cached; instant
             w = MainWindow()
             window_ref.append(w)

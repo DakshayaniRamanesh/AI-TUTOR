@@ -44,10 +44,9 @@ PDFS_DIR = os.path.join(WORKSPACE_DIR, "pdfs")
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 os.makedirs(PDFS_DIR, exist_ok=True)
 
-# --- VOICE NARRATION (optional plugin) ---
-# Set VOICE_ENABLED=true in .env to enable Edge TTS narration.
-# When false (default), the existing silent video pipeline is used unchanged.
-VOICE_ENABLED = os.getenv("VOICE_ENABLED", "false").strip().lower() == "true"
+# --- VOICE NARRATION (Edge TTS narration) ---
+# When true (default), Edge TTS narration is synthesized and muxed with video frames.
+VOICE_ENABLED = os.getenv("VOICE_ENABLED", "true").strip().lower() == "true"
 # TTS provider identifier — extensible for future providers.
 VOICE_PROVIDER = os.getenv("VOICE_PROVIDER", "edge_tts")
 # Edge TTS neural voice name. Warm, expressive British English professional teacher voice:

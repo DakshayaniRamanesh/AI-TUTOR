@@ -137,9 +137,10 @@ class SubjectIngestionService:
                 graph_service = KnowledgeGraphExtractionService()
                 snapshot = graph_service.extract_structural_graph(subject_id, material_id)
                 
-                # Optional Semantic Extraction
-                semantic_edges = SemanticGraphExtractor().extract_semantic_edges(subject_id, material_id, db_chunks)
-                snapshot.edges.extend(semantic_edges)
+                # Semantic Concept & Edge Extraction
+                sem_nodes, sem_edges = SemanticGraphExtractor().extract_semantic_graph(subject_id, material_id, db_chunks)
+                snapshot.nodes.extend(sem_nodes)
+                snapshot.edges.extend(sem_edges)
                 
                 # Stale check before applying
                 with get_session_factory()() as session:

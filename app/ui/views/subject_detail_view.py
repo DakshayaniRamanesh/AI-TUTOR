@@ -185,6 +185,7 @@ class SubjectDetailView(QWidget):
     go_back = pyqtSignal()
     open_notebook = pyqtSignal(str)
     open_pdf_in_viewer = pyqtSignal(str)
+    ask_tutor_requested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -241,6 +242,7 @@ class SubjectDetailView(QWidget):
         
         self.graph_view = GraphCanvas()
         self.graph_view.node_layout_changed.connect(save_node_layout_async)
+        self.graph_view.ask_tutor_requested.connect(self.ask_tutor_requested.emit)
         
         self.resources_tab = QWidget()
         self.resources_layout = QVBoxLayout(self.resources_tab)

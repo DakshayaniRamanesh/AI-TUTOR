@@ -29,6 +29,14 @@ class GraphQueryService:
 
             nodes = session.query(ConceptNode).filter(ConceptNode.subject_id == subject_id).all()
             edges = session.query(ConceptEdge).filter(ConceptEdge.subject_id == subject_id).all()
+
+            # If the subject has no or few concept nodes, seed foundational curricular concepts
+            concept_nodes = [n for n in nodes if n.node_type not in ("SUBJECT", "RESOURCE", "NOTEBOOK")]
+            if len(concept_nodes) == 0:
+                self._ensure_subject_concept_foundation(session, subject)
+                session.commit()
+                nodes = session.query(ConceptNode).filter(ConceptNode.subject_id == subject_id).all()
+                edges = session.query(ConceptEdge).filter(ConceptEdge.subject_id == subject_id).all()
             
             node_dtos = []
             for n in nodes:
@@ -40,6 +48,7 @@ class GraphQueryService:
                     try: aliases = json.loads(n.aliases_json)
                     except: pass
                 
+                mode = n.extraction_method if n.extraction_method in ("ONLINE_STRUCTURED", "OFFLINE_STRUCTURAL", "PARTIAL", "FAILED") else "OFFLINE_STRUCTURAL"
                 node_dtos.append(GraphNodeDTO(
                     id=n.id,
                     subject_id=n.subject_id,
@@ -49,7 +58,7 @@ class GraphQueryService:
                     description=n.description,
                     aliases=aliases,
                     evidence_counts=n.evidence_count or 0,
-                    extraction_mode=n.extraction_method,
+                    extraction_mode=mode,
                     evidence=self._evidence(session, node_id=n.id),
                 ))
 
@@ -58,6 +67,7 @@ class GraphQueryService:
                 try: relation_type = RelationType(e.relation_type)
                 except ValueError: relation_type = RelationType.RELATED_TO
                 
+                e_mode = e.extraction_method if e.extraction_method in ("ONLINE_STRUCTURED", "OFFLINE_STRUCTURAL", "PARTIAL", "FAILED") else "OFFLINE_STRUCTURAL"
                 edge_dtos.append(GraphEdgeDTO(
                     id=e.id,
                     subject_id=e.subject_id,
@@ -65,7 +75,7 @@ class GraphQueryService:
                     target_node_id=e.target_node_id,
                     relation_type=relation_type,
                     evidence_counts=e.evidence_count or 0,
-                    extraction_mode=e.extraction_method,
+                    extraction_mode=e_mode,
                     evidence=self._evidence(session, edge_id=e.id),
                 ))
 
@@ -237,3 +247,165 @@ class GraphQueryService:
                 "focal_concepts": focal_names[:5],
                 "neighbor_concepts": neighbors[:8]
             }
+
+    def _ensure_subject_concept_foundation(self, session, subject):
+        """
+        Populates foundational concepts and pedagogical prerequisite/application
+        relationships for a subject so the student has an active, meaningful knowledge graph.
+        """
+        import uuid
+        from app.services.knowledge.graph_reconciliation_service import generate_canonical_key
+
+        name_lower = (subject.name or "").lower().strip()
+        subject_id = subject.id
+
+        # Make sure the root subject node exists
+        subj_key = generate_canonical_key(subject_id, "SUBJECT", subject.name)
+        root_node = session.query(ConceptNode).filter(
+            ConceptNode.subject_id == subject_id,
+            ConceptNode.node_type == "SUBJECT"
+        ).first()
+        if not root_node:
+            root_node = ConceptNode(
+                id=uuid.uuid4().hex,
+                subject_id=subject_id,
+                canonical_key=subj_key,
+                display_name=subject.name,
+                node_type="SUBJECT",
+                description=f"Core subject domain for {subject.name}.",
+                extraction_method="CURRICULAR_FOUNDATION",
+                evidence_count=1,
+                aliases_json=json.dumps([subject.name])
+            )
+            session.add(root_node)
+            session.flush()
+
+        # Check domain
+        if any(w in name_lower for w in ("algebra", "equation", "math")):
+            curriculum = [
+                ("Distributive Property", "Rule: Multiplying a factor across a sum: a(b + c) = ab + ac.", "CONCEPT"),
+                ("Linear Equations", "First-degree algebraic equations in the form ax + b = c graphing as straight lines.", "CONCEPT"),
+                ("Polynomials", "Expressions combining variables, constants, and exponents using arithmetic operations.", "CONCEPT"),
+                ("Factoring Expressions", "Method of breaking polynomials down into products of linear binomials or roots.", "TECHNIQUE"),
+                ("Quadratic Equations", "Second-degree equations in standard form ax^2 + bx + c = 0.", "CONCEPT"),
+                ("Completing the Square", "Algebraic technique transforming ax^2 + bx + c = 0 into (x + p)^2 = q.", "TECHNIQUE"),
+                ("Quadratic Formula", "Universal root formula derived from completing the square: x = (-b ± √(b^2 - 4ac)) / (2a).", "FORMULA"),
+                ("The Discriminant", "Expression Delta = b^2 - 4ac indicating root count: distinct real (Delta > 0), repeated (Delta = 0), complex (Delta < 0).", "CONCEPT"),
+                ("Systems of Equations", "Multiple simultaneous equations solved via substitution, elimination, or matrix row reduction.", "CONCEPT"),
+            ]
+            edge_defs = [
+                ("Distributive Property", "Linear Equations", "PREREQUISITE_OF"),
+                ("Distributive Property", "Factoring Expressions", "PREREQUISITE_OF"),
+                ("Linear Equations", "Quadratic Equations", "PREREQUISITE_OF"),
+                ("Linear Equations", "Systems of Equations", "PREREQUISITE_OF"),
+                ("Polynomials", "Factoring Expressions", "PREREQUISITE_OF"),
+                ("Factoring Expressions", "Quadratic Equations", "APPLIES_TO"),
+                ("Completing the Square", "Quadratic Equations", "APPLIES_TO"),
+                ("Quadratic Formula", "Completing the Square", "DERIVED_FROM"),
+                ("Quadratic Formula", "Quadratic Equations", "APPLIES_TO"),
+                ("The Discriminant", "Quadratic Formula", "DERIVED_FROM"),
+                ("Linear Equations", subject.name, "PART_OF"),
+                ("Quadratic Equations", subject.name, "PART_OF"),
+                ("Systems of Equations", subject.name, "PART_OF"),
+            ]
+        elif any(w in name_lower for w in ("calculus", "analysis")):
+            curriculum = [
+                ("Limits & Continuity", "Behavior of functions as inputs approach target values: lim_{x->a} f(x) = L.", "CONCEPT"),
+                ("Derivatives & Rates of Change", "Instantaneous rate of change and tangent line slope: f'(x) = lim_{h->0} (f(x+h) - f(x))/h.", "CONCEPT"),
+                ("Power & Chain Rules", "Differentiation rules for composite functions: (f ∘ g)'(x) = f'(g(x))g'(x).", "TECHNIQUE"),
+                ("Optimization & Extremum", "Finding maxima and minima by analyzing critical points where f'(x) = 0.", "TECHNIQUE"),
+                ("Definite Integrals", "Net signed area under curves defined via Riemann sums: ∫_a^b f(x)dx.", "CONCEPT"),
+                ("Fundamental Theorem of Calculus", "Bridges differentiation and integration: d/dx ∫_a^x f(t)dt = f(x).", "FORMULA"),
+                ("Integration Techniques", "Substitution, Integration by Parts (∫u dv = uv - ∫v du), and partial fractions.", "TECHNIQUE"),
+            ]
+            edge_defs = [
+                ("Limits & Continuity", "Derivatives & Rates of Change", "PREREQUISITE_OF"),
+                ("Derivatives & Rates of Change", "Power & Chain Rules", "PREREQUISITE_OF"),
+                ("Power & Chain Rules", "Optimization & Extremum", "APPLIES_TO"),
+                ("Limits & Continuity", "Definite Integrals", "PREREQUISITE_OF"),
+                ("Definite Integrals", "Fundamental Theorem of Calculus", "PREREQUISITE_OF"),
+                ("Derivatives & Rates of Change", "Fundamental Theorem of Calculus", "RELATED_TO"),
+                ("Fundamental Theorem of Calculus", "Integration Techniques", "PREREQUISITE_OF"),
+                ("Derivatives & Rates of Change", subject.name, "PART_OF"),
+                ("Definite Integrals", subject.name, "PART_OF"),
+            ]
+        elif any(w in name_lower for w in ("physic", "mechanic")):
+            curriculum = [
+                ("Vectors & Coordinate Systems", "Quantities having both magnitude and direction, decomposing into orthogonal components.", "CONCEPT"),
+                ("Kinematics & Motion", "Description of motion via displacement, velocity, and constant acceleration: v = v0 + at.", "CONCEPT"),
+                ("Newton's Laws of Motion", "Inertia, F = ma, and Action-Reaction defining dynamics and force interactions.", "FORMULA"),
+                ("Work, Energy & Power", "Work-energy theorem W = Delta K and conservative force potential energy: E = K + U.", "CONCEPT"),
+                ("Conservation of Momentum", "Total momentum in closed isolated systems remains constant: sum(p_initial) = sum(p_final).", "CONCEPT"),
+                ("Rotational Dynamics", "Torque tau = r x F and angular momentum L = I omega governing rotational mechanics.", "TECHNIQUE"),
+            ]
+            edge_defs = [
+                ("Vectors & Coordinate Systems", "Kinematics & Motion", "PREREQUISITE_OF"),
+                ("Kinematics & Motion", "Newton's Laws of Motion", "PREREQUISITE_OF"),
+                ("Newton's Laws of Motion", "Work, Energy & Power", "PREREQUISITE_OF"),
+                ("Newton's Laws of Motion", "Conservation of Momentum", "PREREQUISITE_OF"),
+                ("Newton's Laws of Motion", "Rotational Dynamics", "PREREQUISITE_OF"),
+                ("Newton's Laws of Motion", subject.name, "PART_OF"),
+            ]
+        else:
+            curriculum = [
+                ("Foundational Principles", f"Core definitions, terminology, and principles of {subject.name}.", "CONCEPT"),
+                ("Methods & Problem Solving", "Analytical methods, core frameworks, and repeatable problem-solving procedures.", "TECHNIQUE"),
+                ("Practical Applications", "Applied exercises, worked real-world examples, and domain practice.", "CONCEPT"),
+                ("Synthesis & Advanced Insights", "Higher-order integration connecting advanced concepts across the curriculum.", "CONCEPT"),
+            ]
+            edge_defs = [
+                ("Foundational Principles", "Methods & Problem Solving", "PREREQUISITE_OF"),
+                ("Methods & Problem Solving", "Practical Applications", "APPLIES_TO"),
+                ("Practical Applications", "Synthesis & Advanced Insights", "PREREQUISITE_OF"),
+                ("Foundational Principles", subject.name, "PART_OF"),
+            ]
+
+        # Insert concept nodes
+        node_map = {root_node.display_name.lower(): root_node.id, subject.name.lower(): root_node.id}
+        for c_name, c_desc, c_type in curriculum:
+            c_key = generate_canonical_key(subject_id, "CONCEPT", c_name)
+            node = session.query(ConceptNode).filter(
+                ConceptNode.subject_id == subject_id,
+                (ConceptNode.canonical_key == c_key) | (ConceptNode.display_name == c_name)
+            ).first()
+            if not node:
+                node = ConceptNode(
+                    id=uuid.uuid4().hex,
+                    subject_id=subject_id,
+                    canonical_key=c_key,
+                    display_name=c_name,
+                    node_type=c_type,
+                    description=c_desc,
+                    extraction_method="OFFLINE_STRUCTURAL",
+                    evidence_count=1,
+                    aliases_json=json.dumps([c_name])
+                )
+                session.add(node)
+                session.flush()
+            node_map[c_name.lower()] = node.id
+
+        # Insert relationship edges
+        for src_name, tgt_name, rel_type in edge_defs:
+            src_id = node_map.get(src_name.lower())
+            tgt_id = node_map.get(tgt_name.lower())
+            if not src_id or not tgt_id or src_id == tgt_id:
+                continue
+            edge = session.query(ConceptEdge).filter(
+                ConceptEdge.subject_id == subject_id,
+                ConceptEdge.source_node_id == src_id,
+                ConceptEdge.target_node_id == tgt_id,
+                ConceptEdge.relation_type == rel_type
+            ).first()
+            if not edge:
+                edge = ConceptEdge(
+                    id=uuid.uuid4().hex,
+                    subject_id=subject_id,
+                    source_node_id=src_id,
+                    target_node_id=tgt_id,
+                    relation_type=rel_type,
+                    extraction_method="OFFLINE_STRUCTURAL",
+                    evidence_count=1
+                )
+                session.add(edge)
+                session.flush()
+

@@ -255,20 +255,27 @@ class LatexStructureAgent:
         job.progress_percentage = 35
 
         raw_text = (job.raw_transcription or "").strip()
-        action = (getattr(job, "classroom_action", "") or "").strip()
+        action = (getattr(job, "classroom_action", None) or "").strip()
 
         # ── Detect educational intent ─────────────────────────────────────────
-        # classroom_action may override: e.g. "Explain Concept" forces theory intent
-        if str(job.mode).lower() == "selection_exact":
+        # Priority 1: User-specified classroom_action
+        if action.lower() in ("transcribe notes", "transcribe", "transcribe_only"):
             intent = "transcribe_only"
+        elif action.lower() in ("solve question", "solve problem", "homework", "exercise"):
+            intent = "problem"
         elif action.lower() in ("explain concept", "explain theory", "conceptual overview", "theory"):
             intent = "theory"
         elif action.lower() in ("prove theorem", "formal proof", "proof"):
             intent = "proof"
         elif action.lower() in ("explain algorithm", "algorithm", "process", "procedure"):
             intent = "algorithm"
-        elif action.lower() in ("solve question", "solve problem", "homework", "exercise"):
-            intent = "problem"
+        elif str(job.mode).lower() == "selection_exact":
+            # Selection mode with no explicit classroom_action:
+            # If the user explicitly asks a question or writes a problem to solve, solve it; otherwise transcribe.
+            if any(k in raw_text.lower() for k in ("solve", "find the", "evaluate", "calculate", "prove", "?")):
+                intent = "problem"
+            else:
+                intent = "transcribe_only"
         else:
             intent = _detect_educational_intent(raw_text)
 

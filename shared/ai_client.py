@@ -37,15 +37,39 @@ class AIClient:
         api_key = self.config.get_api_key()
         model_id = self.config.model_id
 
-        if not api_key:
-            raise ValueError(f"API key not found for provider {provider}")
+        # Primary call with graceful fallback across providers and models
+        errors = []
+        
+        # 1. Try primary configured call
+        if api_key:
+            try:
+                if provider == "groq":
+                    return self._call_groq(api_key, model_id, prompt, system_instruction, image_b64, json_schema, temperature)
+                elif provider in ["gemini", "google"]:
+                    return self._call_gemini(api_key, model_id, prompt, system_instruction, image_b64, json_schema, temperature)
+            except Exception as e:
+                errors.append(f"Primary ({provider}/{model_id}): {e}")
 
-        if provider == "groq":
-            return self._call_groq(api_key, model_id, prompt, system_instruction, image_b64, json_schema, temperature)
-        elif provider in ["gemini", "google"]:
-            return self._call_gemini(api_key, model_id, prompt, system_instruction, image_b64, json_schema, temperature)
-        else:
-            raise NotImplementedError(f"Provider {provider} not supported in unified AI client.")
+        # 2. Try alternative Gemini models if Gemini was used or available
+        gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if gemini_key:
+            for alt_gemini in ["gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-flash-latest"]:
+                if alt_gemini == model_id and provider in ["gemini", "google"]:
+                    continue
+                try:
+                    return self._call_gemini(gemini_key, alt_gemini, prompt, system_instruction, image_b64, json_schema, temperature)
+                except Exception as e:
+                    errors.append(f"Gemini ({alt_gemini}): {e}")
+
+        # 3. Fallback to Groq if not already attempted or failed
+        groq_key = os.getenv("GROQ_API_KEY")
+        if groq_key and not (provider == "groq" and model_id == "qwen/qwen3.8-27b"):
+            try:
+                return self._call_groq(groq_key, "qwen/qwen3.8-27b", prompt, system_instruction, image_b64, json_schema, temperature)
+            except Exception as e:
+                errors.append(f"Groq (qwen/qwen3.8-27b): {e}")
+
+        raise RuntimeError(f"All AI generation providers failed:\n" + "\n".join(errors))
 
     def _call_groq(self, api_key: str, model_id: str, prompt: str, system_prompt: str, image_b64: str, json_schema: dict, temperature: float) -> str:
         headers = {

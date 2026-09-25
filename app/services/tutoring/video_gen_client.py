@@ -11,6 +11,7 @@ import os
 import sys
 import uuid
 import requests
+from typing import Optional
 from PyQt6.QtCore import QThread, pyqtSignal
 from shared.contracts.video import VideoGenerationRequest
 
@@ -48,8 +49,29 @@ def _get_active_server() -> str:
     return LOCAL_SERVERS[0] if LOCAL_SERVERS else "http://localhost:8000"
 
 
-def request_video_generation(request: VideoGenerationRequest) -> str:
+def request_video_generation(
+    request: Optional[VideoGenerationRequest] = None,
+    *,
+    selected_text: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    selection_payload: Optional[dict] = None,
+    notebook_id: Optional[str] = None,
+    user_instruction: Optional[str] = None,
+    **kwargs
+) -> str:
     """Queue a request immediately; network submission happens in the poll worker."""
+    if request is None:
+        goal = (selected_text or user_instruction or "").strip() or "Explain the selected content."
+        request = VideoGenerationRequest(
+            request_id=f"job_{uuid.uuid4().hex[:8]}",
+            explanation_goal=goal,
+            recognized_content=selected_text or "",
+            subject_id=subject_id or None,
+            notebook_id=notebook_id or None,
+            selection_payload=selection_payload,
+            **{k: v for k, v in kwargs.items() if hasattr(VideoGenerationRequest, k)}
+        )
+
     job_id = request.request_id
     _PENDING_JOBS[job_id] = {
         "prompt": request.explanation_goal,
@@ -104,6 +126,9 @@ def _submit_video_request(job_id: str, job_info: dict) -> tuple[str, dict]:
     return job_id, job_info
 
 
+_ACTIVE_WORKERS = set()
+
+
 class ManimVideoPollWorker(QThread):
     """Executes or polls video generation without blocking the Qt event loop."""
 
@@ -112,14 +137,20 @@ class ManimVideoPollWorker(QThread):
     video_failed = pyqtSignal(str, str)
 
     def __init__(self, job_id: str, prompt: str, parent=None):
-        super().__init__(parent)
+        # Always initialize with parent=None: QThreads must never be owned by QWidgets
+        super().__init__(None)
         self.job_id = job_id
         self.prompt = prompt
         self._running = True
+        _ACTIVE_WORKERS.add(self)
+        self.finished.connect(self._on_worker_finished)
+
+    def _on_worker_finished(self):
+        _ACTIVE_WORKERS.discard(self)
+        self.deleteLater()
 
     def stop(self):
         self._running = False
-        self.wait(1000)
 
     def run(self):
         job_info = _PENDING_JOBS.get(self.job_id, {})

@@ -16,10 +16,11 @@ from typing import List, Dict, Any, Optional, Tuple
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, QGraphicsRectItem,
-    QGraphicsTextItem, QGraphicsItem, QFrame, QSplitter, QToolTip
+    QGraphicsTextItem, QGraphicsItem, QFrame, QSplitter, QToolTip,
+    QGraphicsPolygonItem, QScrollArea
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF
-from PyQt6.QtGui import QColor, QPen, QBrush, QFont, QPainter
+from PyQt6.QtGui import QColor, QPen, QBrush, QFont, QPainter, QPolygonF
 
 from shared.contracts.graph_contracts import GraphNodeDTO, GraphEdgeDTO, GraphSnapshot
 from app.ui.theme_manager import ThemeManager
@@ -53,12 +54,11 @@ class DraggableNode(QGraphicsEllipseItem):
         self._start_pos = None
 
 
-
-
 class GraphCanvas(QWidget):
     open_notebook_requested = pyqtSignal(str)  # notebook_id
     open_source_requested = pyqtSignal(object) # GraphEvidenceDTO
     node_layout_changed = pyqtSignal(str, str, str, float, float) # node_id, scope_type, scope_id, x, y
+    ask_tutor_requested = pyqtSignal(str) # prompt query for AI tutor
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -97,7 +97,7 @@ class GraphCanvas(QWidget):
 
         # Category Filter Pills
         self.filter_buttons = []
-        filter_tags = ["All", "Concepts", "Notebooks", "Tags"]
+        filter_tags = ["All", "Concepts", "Techniques", "Formulas", "Notebooks"]
         for idx, tag in enumerate(filter_tags):
             btn = QPushButton(tag, self.header_bar)
             btn.setCheckable(True)
@@ -160,7 +160,7 @@ class GraphCanvas(QWidget):
 
         # Bottom Legend / Status
         self.lbl_legend = QLabel(
-            "● Core Hubs (Slate)  •  ● Tags (Amber)  •  ● Notes & Modules (Sky Blue)  —  [Click node to inspect  •  Drag canvas to pan  •  Wheel to zoom]",
+            "● Core Domain (Slate)  •  ● Concepts (Amber)  •  ● Techniques (Emerald)  •  ● Formulas (Violet)  •  ➔ Prerequisites / Flow  —  [Click node to inspect & ask tutor  •  Drag to pan  •  Wheel to zoom]",
             graph_container
         )
         self.lbl_legend.setStyleSheet("padding: 4px 14px; font-size: 10px;")
@@ -171,7 +171,7 @@ class GraphCanvas(QWidget):
         # Right: Node Inspector Sidebar
         self.inspector_panel = self._create_inspector_panel()
         self.splitter.addWidget(self.inspector_panel)
-        self.splitter.setSizes([880, 320])
+        self.splitter.setSizes([860, 340])
 
         root_layout.addWidget(self.splitter, 1)
 
@@ -179,51 +179,124 @@ class GraphCanvas(QWidget):
         self.set_snapshot(GraphSnapshot(scope="GLOBAL", scope_id=None, revision=0))
 
     def _create_inspector_panel(self) -> QWidget:
-        panel = QWidget(self.splitter)
-        panel.setObjectName("InspectorPanel")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(14)
+        container = QWidget(self.splitter)
+        container.setObjectName("InspectorPanel")
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(0, 0, 0, 0)
+        c_layout.setSpacing(0)
+
+        # Scroll Area for clean presentation of rich learning material
+        scroll = QScrollArea(container)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        content = QWidget()
+        content.setObjectName("InspectorContent")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
 
         # Header Badge
         h_box = QHBoxLayout()
-        self.lbl_insp_badge = QLabel("NODE INSPECTOR", panel)
+        self.lbl_insp_badge = QLabel("KNOWLEDGE INSPECTOR", content)
         self.lbl_insp_badge.setObjectName("lbl_insp_badge")
         h_box.addWidget(self.lbl_insp_badge)
         h_box.addStretch()
-        self.lbl_insp_status = QLabel("● Grounded", panel)
+        self.lbl_insp_status = QLabel("● Active", content)
         self.lbl_insp_status.setObjectName("lbl_insp_status")
         h_box.addWidget(self.lbl_insp_status)
         layout.addLayout(h_box)
 
         # Title & Subtitle
-        self.lbl_node_title = QLabel("Select a concept...", panel)
+        self.lbl_node_title = QLabel("Select a concept...", content)
         self.lbl_node_title.setObjectName("lbl_node_title")
         self.lbl_node_title.setWordWrap(True)
         layout.addWidget(self.lbl_node_title)
 
-        self.lbl_node_subtitle = QLabel("Knowledge Graph Node", panel)
+        self.lbl_node_subtitle = QLabel("Knowledge Graph Node", content)
         self.lbl_node_subtitle.setObjectName("lbl_node_subtitle")
         layout.addWidget(self.lbl_node_subtitle)
 
-
+        # Formula / Core Rule Box
+        self.formula_frame = QFrame(content)
+        self.formula_frame.setObjectName("FormulaBox")
+        ff_layout = QVBoxLayout(self.formula_frame)
+        ff_layout.setContentsMargins(10, 8, 10, 8)
+        self.lbl_formula_heading = QLabel("CORE PRINCIPLE / FORMULA", self.formula_frame)
+        self.lbl_formula_heading.setObjectName("lbl_formula_heading")
+        self.lbl_formula_val = QLabel("", self.formula_frame)
+        self.lbl_formula_val.setObjectName("lbl_formula")
+        self.lbl_formula_val.setWordWrap(True)
+        ff_layout.addWidget(self.lbl_formula_heading)
+        ff_layout.addWidget(self.lbl_formula_val)
+        self.formula_frame.hide()
+        layout.addWidget(self.formula_frame)
 
         # Description text
         self.lbl_concept_desc = QLabel(
-            "Core Concept: Select any node in the knowledge graph to view its definition, "
-            "interconnected relationships, and derivations.",
-            panel
+            "Select any node in the knowledge graph to view its definition, "
+            "interconnected learning pathway, and prerequisite formulas.",
+            content
         )
         self.lbl_concept_desc.setObjectName("lbl_concept_desc")
         self.lbl_concept_desc.setWordWrap(True)
         layout.addWidget(self.lbl_concept_desc)
 
+        # ── Connected Learning Pathway Section ──
+        self.pathway_frame = QFrame(content)
+        self.pathway_frame.setObjectName("PathwayFrame")
+        pf_layout = QVBoxLayout(self.pathway_frame)
+        pf_layout.setContentsMargins(0, 4, 0, 4)
+        pf_layout.setSpacing(10)
+
+        # Prerequisites sub-box
+        self.box_prereqs = QWidget(self.pathway_frame)
+        bp_layout = QVBoxLayout(self.box_prereqs)
+        bp_layout.setContentsMargins(0, 0, 0, 0)
+        bp_layout.setSpacing(4)
+        self.lbl_prereqs_title = QLabel("PREREQUISITES TO LEARN FIRST", self.box_prereqs)
+        self.lbl_prereqs_title.setObjectName("SectionHeader")
+        self.prereqs_chip_layout = QHBoxLayout()
+        self.prereqs_chip_layout.setSpacing(6)
+        bp_layout.addWidget(self.lbl_prereqs_title)
+        bp_layout.addLayout(self.prereqs_chip_layout)
+        pf_layout.addWidget(self.box_prereqs)
+
+        # Unlocks sub-box
+        self.box_unlocks = QWidget(self.pathway_frame)
+        bu_layout = QVBoxLayout(self.box_unlocks)
+        bu_layout.setContentsMargins(0, 0, 0, 0)
+        bu_layout.setSpacing(4)
+        self.lbl_unlocks_title = QLabel("UNLOCKS & BUILDS INTO", self.box_unlocks)
+        self.lbl_unlocks_title.setObjectName("SectionHeader")
+        self.unlocks_chip_layout = QHBoxLayout()
+        self.unlocks_chip_layout.setSpacing(6)
+        bu_layout.addWidget(self.lbl_unlocks_title)
+        bu_layout.addLayout(self.unlocks_chip_layout)
+        pf_layout.addWidget(self.box_unlocks)
+
+        # Applications / Derivations sub-box
+        self.box_apps = QWidget(self.pathway_frame)
+        ba_layout = QVBoxLayout(self.box_apps)
+        ba_layout.setContentsMargins(0, 0, 0, 0)
+        ba_layout.setSpacing(4)
+        self.lbl_apps_title = QLabel("APPLICATIONS & DERIVATIONS", self.box_apps)
+        self.lbl_apps_title.setObjectName("SectionHeader")
+        self.apps_chip_layout = QHBoxLayout()
+        self.apps_chip_layout.setSpacing(6)
+        ba_layout.addWidget(self.lbl_apps_title)
+        ba_layout.addLayout(self.apps_chip_layout)
+        pf_layout.addWidget(self.box_apps)
+
+        layout.addWidget(self.pathway_frame)
+
         # Clean Key-Value Details (Borderless, Modern Stat Rows)
-        self.meta_frame = QFrame(panel)
+        self.meta_frame = QFrame(content)
         self.meta_frame.setObjectName("MetaFrame")
         mf_layout = QVBoxLayout(self.meta_frame)
-        mf_layout.setContentsMargins(0, 8, 0, 8)
-        mf_layout.setSpacing(8)
+        mf_layout.setContentsMargins(0, 6, 0, 6)
+        mf_layout.setSpacing(6)
 
         def make_stat_row(label_text: str):
             row = QHBoxLayout()
@@ -245,22 +318,38 @@ class GraphCanvas(QWidget):
         layout.addWidget(self.meta_frame)
 
         layout.addStretch()
-        
-        self.btn_open_source = QPushButton("Open Evidence Source", panel)
+
+        # Action Buttons
+        self.btn_ask_tutor = QPushButton("✦ Ask AI Tutor About Concept", content)
+        self.btn_ask_tutor.setObjectName("btn_ask_tutor")
+        self.btn_ask_tutor.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ask_tutor.clicked.connect(self._on_ask_tutor_clicked)
+        layout.addWidget(self.btn_ask_tutor)
+
+        self.btn_open_board = QPushButton("Focus / Center On Concept", content)
+        self.btn_open_board.setObjectName("btn_open_board")
+        self.btn_open_board.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_open_board.clicked.connect(self._on_drill_down_clicked)
+        layout.addWidget(self.btn_open_board)
+
+        self.btn_open_source = QPushButton("Open Evidence Source", content)
         self.btn_open_source.setObjectName("btn_open_source")
         self.btn_open_source.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_open_source.clicked.connect(self._on_open_source_clicked)
         self.btn_open_source.hide()
         layout.addWidget(self.btn_open_source)
 
-        # Action Button
-        self.btn_open_board = QPushButton("Drill Down Into Concept", panel)
-        self.btn_open_board.setObjectName("btn_open_board")
-        self.btn_open_board.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_open_board.clicked.connect(self._on_drill_down_clicked)
-        layout.addWidget(self.btn_open_board)
+        scroll.setWidget(content)
+        c_layout.addWidget(scroll)
+        return container
 
-        return panel
+    def _clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
 
     # ── Graph Data Aggregation & Rendering ─────────────────────────────────
 
@@ -290,10 +379,9 @@ class GraphCanvas(QWidget):
             if node_id in node_names
         }
         pinned_nodes = {
-            node_id for node_id, state in self.current_snapshot.layout.items()
-            if state.pinned
+            node_id for node_id, state in getattr(self.current_snapshot, "layout", {}).items()
+            if getattr(state, "pinned", False)
         }
-        node_types = {n.id: n.node_type for n in nodes}
 
         # Identify major hub nodes (subjects or high-degree nodes)
         degrees = {name: 0 for name in node_names}
@@ -306,7 +394,7 @@ class GraphCanvas(QWidget):
                 adj[e.target_node_id].append(e.source_node_id)
 
         # Hubs are subjects or nodes with high degree
-        hubs = [n.id for n in nodes if getattr(n.node_type, "value", n.node_type) == "SUBJECT" or degrees[n.id] >= 5]
+        hubs = [n.id for n in nodes if getattr(n.node_type, "value", str(n.node_type)).upper() == "SUBJECT" or degrees[n.id] >= 5]
         if not hubs:
             hubs = sorted(node_names, key=lambda n: degrees[n], reverse=True)[:4]
 
@@ -329,17 +417,17 @@ class GraphCanvas(QWidget):
                 primary_hub = connected_hubs[0]
                 hx, hy = positions[primary_hub]
                 # Orbit around primary hub
-                orbit_r = random.uniform(80.0, 160.0)
+                orbit_r = random.uniform(90.0, 170.0)
                 orbit_angle = random.uniform(0, 2.0 * math.pi)
                 positions[name] = [hx + orbit_r * math.cos(orbit_angle), hy + orbit_r * math.sin(orbit_angle)]
             else:
                 # Place in outer orbit
-                r = random.uniform(150.0, 350.0)
+                r = random.uniform(160.0, 360.0)
                 a = random.uniform(0, 2.0 * math.pi)
                 positions[name] = [r * math.cos(a), r * math.sin(a)]
 
         # 3. Force-Directed Relaxation (50 iterations)
-        k = 120.0  # optimal distance
+        k = 130.0  # optimal distance
         for iteration in range(50):
             temp = max(0.5, 1.0 - (iteration / 50.0)) * 12.0
             disp = {name: [0.0, 0.0] for name in node_names}
@@ -392,13 +480,13 @@ class GraphCanvas(QWidget):
         return {name: (pos[0], pos[1]) for name, pos in positions.items()}
 
     def render_graph(self, nodes: List[GraphNodeDTO], edges: List[GraphEdgeDTO]):
-        """Renders the knowledge graph in Obsidian Graph View style."""
+        """Renders the knowledge graph in Obsidian Graph View style with pedagogical direction."""
         self.scene.clear()
         c = ThemeManager.instance().get_colors()
         is_dark = ThemeManager.instance().is_dark()
 
         if not nodes:
-            # Honest empty state
+            # Empty state
             txt = self.scene.addText("No connected knowledge yet")
             txt.setDefaultTextColor(QColor(c['text_primary']))
             txt.setFont(QFont(DISPLAY_FONT, 16, QFont.Weight.Bold))
@@ -438,34 +526,106 @@ class GraphCanvas(QWidget):
         self.node_radii = {}
         self.node_summaries = {}
 
-        # 4. Color Palette Matching Obsidian Graph Reference:
-        # Hubs / Subjects: Dark Slate Gray (#64748b / #94a3b8)
-        # Tags: Warm Amber / Gold (#d97706 / #d4a373)
-        # Notes / Modules: Delicate Sky Blue (#38bdf8 / #7dd3fc)
+        # 4. Color Palette & Radius Calculation
         color_hub = QColor("#64748b") if not is_dark else QColor("#94a3b8")
         color_hub_border = QColor("#475569") if not is_dark else QColor("#cbd5e1")
 
         color_tag = QColor("#d97706") if not is_dark else QColor("#fbbf24")
         color_tag_border = QColor("#b45309") if not is_dark else QColor("#f59e0b")
 
-        color_note = QColor("#38bdf8") if not is_dark else QColor("#7dd3fc")
-        color_note_border = QColor("#0284c7") if not is_dark else QColor("#38bdf8")
+        color_note = QColor("#0284c7") if not is_dark else QColor("#38bdf8")
+        color_note_border = QColor("#0369a1") if not is_dark else QColor("#7dd3fc")
 
-        # 5. Draw Clean, Thin Edge Lines (Z=0, No Heavy Black Boxes)
-        edge_line_color = QColor(203, 213, 225, 180) if not is_dark else QColor(71, 85, 105, 160)
-        edge_pen = QPen(edge_line_color, 0.9, Qt.PenStyle.SolidLine)
-        edge_pen.setCosmetic(True)
+        for node in current_nodes:
+            name = node.id
+            ntype = getattr(node.node_type, "value", str(node.node_type)).upper()
+            deg = degrees.get(name, 0)
+            if ntype == "SUBJECT" or deg >= 6:
+                r = 9.0
+            elif ntype in ("FORMULA", "THEOREM"):
+                r = 6.5
+            elif ntype in ("TECHNIQUE", "MODULE"):
+                r = 6.0
+            else:
+                r = 5.0
+            self.node_radii[name] = r
+            self.node_summaries[name] = node.description
 
+        # 5. Draw Distinctive Pedagogical Edges with Directional Cues
         drawn_pairs = set()
         for edge in visible_edges:
-            if edge.source_node_id in self.node_positions and edge.target_node_id in self.node_positions:
-                pair = tuple(sorted([edge.source_node_id, edge.target_node_id]))
-                if pair not in drawn_pairs:
-                    drawn_pairs.add(pair)
-                    x1, y1 = self.node_positions[edge.source_node_id]
-                    x2, y2 = self.node_positions[edge.target_node_id]
-                    line = self.scene.addLine(x1, y1, x2, y2, edge_pen)
-                    line.setZValue(0)
+            if edge.source_node_id not in self.node_positions or edge.target_node_id not in self.node_positions:
+                continue
+
+            rel = getattr(edge.relation_type, "value", str(edge.relation_type)).upper()
+            pair_key = (edge.source_node_id, edge.target_node_id, rel)
+            if pair_key in drawn_pairs:
+                continue
+            drawn_pairs.add(pair_key)
+
+            x1, y1 = self.node_positions[edge.source_node_id]
+            x2, y2 = self.node_positions[edge.target_node_id]
+
+            # Style based on pedagogical relationship
+            if rel == "PREREQUISITE_OF":
+                edge_color = QColor("#d97706") if not is_dark else QColor("#f59e0b")
+                pen = QPen(edge_color, 1.5, Qt.PenStyle.SolidLine)
+                has_arrow = True
+                arrow_to_target = True
+            elif rel == "APPLIES_TO":
+                edge_color = QColor("#0284c7") if not is_dark else QColor("#38bdf8")
+                pen = QPen(edge_color, 1.3, Qt.PenStyle.SolidLine)
+                has_arrow = True
+                arrow_to_target = True
+            elif rel == "DERIVED_FROM":
+                edge_color = QColor("#7c3aed") if not is_dark else QColor("#a78bfa")
+                pen = QPen(edge_color, 1.3, Qt.PenStyle.DashDotLine)
+                has_arrow = True
+                arrow_to_target = False  # Points from origin
+            elif rel == "PART_OF":
+                edge_color = QColor(148, 163, 184, 150) if not is_dark else QColor(100, 116, 139, 150)
+                pen = QPen(edge_color, 1.0, Qt.PenStyle.DashLine)
+                has_arrow = False
+                arrow_to_target = True
+            else:
+                edge_color = QColor(203, 213, 225, 140) if not is_dark else QColor(71, 85, 105, 140)
+                pen = QPen(edge_color, 1.0, Qt.PenStyle.SolidLine)
+                has_arrow = False
+                arrow_to_target = True
+
+            pen.setCosmetic(True)
+            line = self.scene.addLine(x1, y1, x2, y2, pen)
+            line.setZValue(0)
+
+            # Draw crisp directional arrowhead
+            if has_arrow:
+                dx = x2 - x1 if arrow_to_target else x1 - x2
+                dy = y2 - y1 if arrow_to_target else y1 - y2
+                dist = math.sqrt(dx * dx + dy * dy)
+                if dist > 20.0:
+                    ux = dx / dist
+                    uy = dy / dist
+                    tgt_id = edge.target_node_id if arrow_to_target else edge.source_node_id
+                    r_tgt = self.node_radii.get(tgt_id, 5.0)
+                    tgt_x = x2 if arrow_to_target else x1
+                    tgt_y = y2 if arrow_to_target else y1
+                    
+                    tip_x = tgt_x - ux * (r_tgt + 2.5)
+                    tip_y = tgt_y - uy * (r_tgt + 2.5)
+                    arrow_len = 7.5
+                    arrow_w = 3.5
+                    bx = tip_x - ux * arrow_len
+                    by = tip_y - uy * arrow_len
+                    px = -uy * arrow_w
+                    py = ux * arrow_w
+
+                    poly = QPolygonF([
+                        QPointF(tip_x, tip_y),
+                        QPointF(bx + px, by + py),
+                        QPointF(bx - px, by - py)
+                    ])
+                    arrow_item = self.scene.addPolygon(poly, QPen(edge_color, 0.5), QBrush(edge_color))
+                    arrow_item.setZValue(1)
 
         # 6. Draw Elegant Color-Coded Dots & Crisp Labels (Z=2 & Z=3)
         for node in current_nodes:
@@ -475,33 +635,40 @@ class GraphCanvas(QWidget):
 
             x, y = self.node_positions[name]
             deg = degrees.get(name, 0)
-            ntype = getattr(node.node_type, "value", node.node_type)
-            self.node_summaries[name] = node.description
+            ntype = getattr(node.node_type, "value", str(node.node_type)).upper()
+            r = self.node_radii[name]
 
             # Node Classification & Sizing
             if ntype == "SUBJECT" or deg >= 6:
-                # Major Core Hub
-                r = 8.5
+                # Major Core Hub: Slate
                 brush = QBrush(color_hub)
                 pen = QPen(color_hub_border, 1.2)
                 font = QFont("Consolas", 8, QFont.Weight.DemiBold)
                 text_color = QColor("#1e293b") if not is_dark else QColor("#f8fafc")
+            elif ntype in ("FORMULA", "THEOREM"):
+                # Formulas / Theorems: Violet
+                brush = QBrush(QColor("#7c3aed") if not is_dark else QColor("#a78bfa"))
+                pen = QPen(QColor("#6d28d9") if not is_dark else QColor("#c4b5fd"), 1.2)
+                font = QFont("Consolas", 8, QFont.Weight.DemiBold)
+                text_color = QColor("#5b21b6") if not is_dark else QColor("#ddd6fe")
+            elif ntype == "TECHNIQUE":
+                # Techniques: Emerald Green
+                brush = QBrush(QColor("#059669") if not is_dark else QColor("#34d399"))
+                pen = QPen(QColor("#047857") if not is_dark else QColor("#6ee7b7"), 1.1)
+                font = QFont("Consolas", 8, QFont.Weight.Normal)
+                text_color = QColor("#065f46") if not is_dark else QColor("#a7f3d0")
             elif ntype == "MODULE" or name.startswith("#"):
-                # Tag / Category Node
-                r = 5.5
+                # Tag / Module: Warm Amber
                 brush = QBrush(color_tag)
                 pen = QPen(color_tag_border, 1.0)
                 font = QFont("Consolas", 8, QFont.Weight.Normal)
                 text_color = QColor("#92400e") if not is_dark else QColor("#fde68a")
             else:
-                # Standard Note / Board / Module
-                r = 4.5
+                # Standard Concept: Sky Blue
                 brush = QBrush(color_note)
                 pen = QPen(color_note_border, 1.0)
                 font = QFont("Consolas", 7, QFont.Weight.Normal)
-                text_color = QColor("#475569") if not is_dark else QColor("#94a3b8")
-
-            self.node_radii[name] = r
+                text_color = QColor("#0369a1") if not is_dark else QColor("#bae6fd")
 
             # Node Dot Item
             ellipse = DraggableNode(name, self.current_snapshot.scope, self.current_snapshot.scope_id or "", x, y, r, self)
@@ -537,6 +704,26 @@ class GraphCanvas(QWidget):
         self.btn_back.hide()
         self._apply_current_filters()
 
+    def select_and_focus_node(self, node_id_or_name: str):
+        """Selects a node from connected chips or search and centers the viewport."""
+        node = next((n for n in self.all_nodes if n.id == node_id_or_name or n.display_name.lower() == node_id_or_name.lower()), None)
+        if not node:
+            return
+        self.selected_node_name = node.id
+        self._update_inspector_by_name(node.id)
+        if node.id in self.node_positions:
+            pos = self.node_positions[node.id]
+            self.view.centerOn(pos[0], pos[1])
+
+    def _on_ask_tutor_clicked(self):
+        """Invokes the AI tutor with a targeted contextual explanation query."""
+        if not getattr(self, 'selected_node_name', None):
+            return
+        node = next((n for n in self.all_nodes if n.id == self.selected_node_name), None)
+        name = node.display_name if node else self.selected_node_name
+        prompt = f"Can you explain {name} in detail, showing its core principles, formulas, and how it connects to its prerequisites?"
+        self.ask_tutor_requested.emit(prompt)
+
     def _on_open_source_clicked(self):
         if not getattr(self, 'selected_node_name', None): return
         node = next((n for n in self.all_nodes if n.id == self.selected_node_name), None)
@@ -546,7 +733,9 @@ class GraphCanvas(QWidget):
     def _on_drill_down_clicked(self):
         if self.selected_node_name:
             self.active_node = self.selected_node_name
-            self.btn_back.setText(f"← Back (Viewing: {self.active_node})")
+            node = next((n for n in self.all_nodes if n.id == self.selected_node_name), None)
+            dname = node.display_name if node else self.active_node
+            self.btn_back.setText(f"← Back (Viewing: {dname})")
             self.btn_back.adjustSize()
             self.btn_back.show()
             self._apply_current_filters()
@@ -570,7 +759,9 @@ class GraphCanvas(QWidget):
                 self.go_back_to_main()
             else:
                 self.active_node = node_name
-                self.btn_back.setText(f"← Back (Viewing: {node_name})")
+                node = next((n for n in self.all_nodes if n.id == node_name), None)
+                dname = node.display_name if node else node_name
+                self.btn_back.setText(f"← Back (Viewing: {dname})")
                 self.btn_back.adjustSize()
                 self.btn_back.show()
                 self._apply_current_filters()
@@ -606,11 +797,13 @@ class GraphCanvas(QWidget):
 
         filtered_nodes = self.all_nodes
         if tag == "Concepts":
-            filtered_nodes = [n for n in filtered_nodes if getattr(n.node_type, "value", n.node_type) == "CONCEPT"]
+            filtered_nodes = [n for n in filtered_nodes if getattr(n.node_type, "value", str(n.node_type)).upper() == "CONCEPT"]
+        elif tag == "Techniques":
+            filtered_nodes = [n for n in filtered_nodes if getattr(n.node_type, "value", str(n.node_type)).upper() == "TECHNIQUE"]
+        elif tag == "Formulas":
+            filtered_nodes = [n for n in filtered_nodes if getattr(n.node_type, "value", str(n.node_type)).upper() in ("FORMULA", "THEOREM")]
         elif tag == "Notebooks":
-            filtered_nodes = [n for n in filtered_nodes if getattr(n.node_type, "value", n.node_type) == "NOTEBOOK"]
-        elif tag == "Tags":
-            filtered_nodes = [n for n in filtered_nodes if getattr(n.node_type, "value", n.node_type) in ("MODULE", "RESOURCE")]
+            filtered_nodes = [n for n in filtered_nodes if getattr(n.node_type, "value", str(n.node_type)).upper() == "NOTEBOOK"]
 
         if query:
             filtered_nodes = [n for n in filtered_nodes if
@@ -623,33 +816,130 @@ class GraphCanvas(QWidget):
         self.render_graph(filtered_nodes, filtered_edges)
 
     def _update_inspector_by_name(self, name: str):
-        node = next((n for n in self.all_nodes if n.id == name), None)
+        node = next((n for n in self.all_nodes if n.id == name or n.display_name.lower() == name.lower()), None)
         if not node:
             return
 
-        self.selected_node_name = name
+        self.selected_node_name = node.id
         self.lbl_node_title.setText(node.display_name)
 
-        node_type = getattr(node.node_type, "value", node.node_type)
+        node_type = getattr(node.node_type, "value", str(node.node_type)).upper()
         type_display = {
             "SUBJECT": "Subject Domain",
             "NOTEBOOK": "Notebook Board",
             "MODULE": "Module",
             "RESOURCE": "Document Resource",
-            "CONCEPT": "Concept Node",
+            "CONCEPT": "Core Concept",
+            "TECHNIQUE": "Solving Technique",
+            "FORMULA": "Mathematical Formula",
+            "THEOREM": "Theorem & Law",
             "EXERCISE": "Exercise",
             "EXAMPLE": "Worked Example",
         }.get(node_type, str(node_type).title())
 
         self.lbl_node_subtitle.setText(f"Type: {type_display} • Knowledge Graph")
 
-        self.lbl_concept_desc.setText(node.description or f"Key relational knowledge node for '{name}'.")
+        desc = node.description or f"Key relational knowledge node for '{node.display_name}'."
+        self.lbl_concept_desc.setText(desc)
+
+        # Check for formula or rule equations in description
+        if any(sym in desc for sym in ("=", "lim", "Delta", "tau", "^2", "ax", "∫", "√")):
+            self.formula_frame.show()
+            self.lbl_formula_val.setText(desc)
+        else:
+            self.formula_frame.hide()
 
         # Connection counts
-        conns = sum(1 for e in self.all_edges if e.source_node_id == name or e.target_node_id == name)
+        conns = sum(1 for e in self.all_edges if e.source_node_id == node.id or e.target_node_id == node.id)
         self.lbl_val_connections.setText(f"{conns} {'Edge' if conns == 1 else 'Edges'}")
         self.lbl_val_type.setText(type_display)
-        
+
+        # ── Populate Connected Learning Pathway ──
+        self._clear_layout(self.prereqs_chip_layout)
+        self._clear_layout(self.unlocks_chip_layout)
+        self._clear_layout(self.apps_chip_layout)
+
+        c = ThemeManager.instance().get_colors()
+
+        def make_chip(target_id: str, label_text: str):
+            btn = QPushButton(label_text)
+            btn.setObjectName("ConceptChip")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(f"""
+                QPushButton#ConceptChip {{
+                    background-color: {c['panel_card_bg']};
+                    color: {c['text_primary']};
+                    border: 1px solid {c['border_color']};
+                    border-radius: 10px;
+                    padding: 3px 8px;
+                    font-family: {MONO_FONT};
+                    font-size: 10px;
+                    font-weight: 500;
+                }}
+                QPushButton#ConceptChip:hover {{
+                    border-color: {c['accent']};
+                    background-color: {c['bg_card']};
+                }}
+            """)
+            btn.clicked.connect(lambda _, tid=target_id: self.select_and_focus_node(tid))
+            return btn
+
+        # Map IDs to display names
+        node_name_map = {n.id: n.display_name for n in self.all_nodes}
+
+        # 1. Prerequisites (where target == node.id and rel == PREREQUISITE_OF, or source == node.id and rel == DERIVED_FROM)
+        prereq_ids = []
+        for e in self.all_edges:
+            rel = getattr(e.relation_type, "value", str(e.relation_type)).upper()
+            if e.target_node_id == node.id and rel == "PREREQUISITE_OF":
+                prereq_ids.append(e.source_node_id)
+            elif e.source_node_id == node.id and rel == "DERIVED_FROM":
+                prereq_ids.append(e.target_node_id)
+
+        if prereq_ids:
+            self.box_prereqs.show()
+            for pid in set(prereq_ids):
+                p_name = node_name_map.get(pid, pid)
+                self.prereqs_chip_layout.addWidget(make_chip(pid, p_name))
+            self.prereqs_chip_layout.addStretch()
+        else:
+            self.box_prereqs.hide()
+
+        # 2. Unlocks / Next (where source == node.id and rel == PREREQUISITE_OF)
+        unlock_ids = []
+        for e in self.all_edges:
+            rel = getattr(e.relation_type, "value", str(e.relation_type)).upper()
+            if e.source_node_id == node.id and rel == "PREREQUISITE_OF":
+                unlock_ids.append(e.target_node_id)
+
+        if unlock_ids:
+            self.box_unlocks.show()
+            for uid in set(unlock_ids):
+                u_name = node_name_map.get(uid, uid)
+                self.unlocks_chip_layout.addWidget(make_chip(uid, u_name))
+            self.unlocks_chip_layout.addStretch()
+        else:
+            self.box_unlocks.hide()
+
+        # 3. Applications & Derivations
+        app_ids = []
+        for e in self.all_edges:
+            rel = getattr(e.relation_type, "value", str(e.relation_type)).upper()
+            if rel == "APPLIES_TO":
+                if e.source_node_id == node.id:
+                    app_ids.append(e.target_node_id)
+                elif e.target_node_id == node.id:
+                    app_ids.append(e.source_node_id)
+
+        if app_ids:
+            self.box_apps.show()
+            for aid in set(app_ids):
+                a_name = node_name_map.get(aid, aid)
+                self.apps_chip_layout.addWidget(make_chip(aid, a_name))
+            self.apps_chip_layout.addStretch()
+        else:
+            self.box_apps.hide()
+
         if node.evidence:
             ev = node.evidence[0]
             if ev.chunk_id:
@@ -660,10 +950,10 @@ class GraphCanvas(QWidget):
                 self.lbl_val_evidence.setText("Structural DB")
             self.btn_open_source.show()
         else:
-            self.lbl_val_evidence.setText("None")
+            self.lbl_val_evidence.setText("Curricular Grounding")
             self.btn_open_source.hide()
-            
-        self.btn_open_board.setText(f"Drill Down Into '{name}'")
+
+        self.btn_open_board.setText(f"Center On '{node.display_name}'")
 
     # ── Theme Application ─────────────────────────────────────────────────
 
@@ -731,6 +1021,9 @@ class GraphCanvas(QWidget):
                 background-color: {c['bg_card']};
                 border-left: 1px solid {c['border_color']};
             }}
+            QWidget#InspectorContent {{
+                background-color: {c['bg_card']};
+            }}
             QLabel#lbl_insp_badge {{
                 font-family: {MONO_FONT};
                 font-size: 10px;
@@ -750,11 +1043,25 @@ class GraphCanvas(QWidget):
                 border-left: 3px solid {c['accent']};
                 border-radius: 4px;
             }}
-            QFrame#FormulaBox QLabel#lbl_formula {{
+            QLabel#lbl_formula_heading {{
+                font-family: {MONO_FONT};
+                font-size: 9px;
+                font-weight: 700;
+                letter-spacing: 1px;
+                color: {c['accent']};
+            }}
+            QLabel#lbl_formula {{
                 font-family: {MONO_FONT};
                 font-size: 11px;
                 font-weight: bold;
                 color: {c['text_primary']};
+            }}
+            QLabel#SectionHeader {{
+                font-family: {MONO_FONT};
+                font-size: 9px;
+                font-weight: 700;
+                letter-spacing: 0.8px;
+                color: {c['text_secondary']};
             }}
             QFrame#MetaFrame {{
                 background-color: transparent;
@@ -770,6 +1077,18 @@ class GraphCanvas(QWidget):
                 font-size: 11px;
                 font-weight: 700;
                 color: {c['text_primary']};
+            }}
+            QPushButton#btn_ask_tutor {{
+                background-color: #2563eb;
+                color: #ffffff;
+                border: 1px solid #1d4ed8;
+                border-radius: 6px;
+                padding: 9px 14px;
+                font-size: 12px;
+                font-weight: 700;
+            }}
+            QPushButton#btn_ask_tutor:hover {{
+                background-color: #1d4ed8;
             }}
         """)
 
@@ -794,7 +1113,7 @@ class GraphCanvas(QWidget):
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         """)
 
-        self.btn_open_board.setStyleSheet(primary_button_qss(c))
+        self.btn_open_board.setStyleSheet(ghost_button_qss(c, radius=6))
 
         # Re-render current graph with updated theme colors
         if self.all_nodes:

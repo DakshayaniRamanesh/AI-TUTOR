@@ -479,6 +479,7 @@ class MainWindow(QMainWindow):
 
         self.subject_detail_view.open_notebook.connect(self._on_load_notebook_requested)
         self.subject_detail_view.open_pdf_in_viewer.connect(self._on_subject_pdf_requested)
+        self.subject_detail_view.ask_tutor_requested.connect(self._on_ask_tutor_concept_requested)
 
         self.main_stack.addWidget(self.home_view)
         self.main_stack.addWidget(self.subjects_list_view)
@@ -1743,6 +1744,18 @@ class MainWindow(QMainWindow):
         bubble.setPos(center_pos)
         self.scene.addItem(bubble)
 
+    def _on_ask_tutor_concept_requested(self, query: str):
+        """
+        Triggered when student clicks '✦ Ask AI Tutor About Concept' in Knowledge Graph.
+        Navigates to the canvas whiteboard and focuses the AskBar with the concept query ready.
+        """
+        self.main_stack.setCurrentWidget(self._canvas_wrapper)
+        self._set_sidebar_active_button("canvas")
+        if hasattr(self, "ask_bar"):
+            self.ask_bar.input_field.setText(query)
+            self.ask_bar.input_field.setFocus()
+            self.ask_bar.input_field.selectAll()
+
     def _toggle_sidebar(self):
         if self.sidebar.isVisible():
             self.sidebar.hide()
@@ -2657,7 +2670,9 @@ class MainWindow(QMainWindow):
                 image_width=size.width(),
                 image_height=size.height()
             ),
-            image_b64=image_b64
+            image_b64=image_b64,
+            template_type=template_type,
+            classroom_action=self.classroom_action_combo.currentText() if hasattr(self, "classroom_action_combo") else "Solve Question",
         )
 
         if hasattr(self, 'speedometer_widget'):

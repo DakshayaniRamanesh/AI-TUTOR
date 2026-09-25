@@ -4,8 +4,10 @@ import datetime
 from typing import List, Optional
 from sqlalchemy.orm import joinedload
 
-# Assuming you rename databse.py to database.py
-from .database import SessionLocal, User, Subject, Notebook, Material, Video, ConceptNode, ConceptEdge, SubjectChunk
+from .database import (
+    SessionLocal, User, Subject, Notebook, Material, Video, 
+    ConceptNode, ConceptEdge, SubjectChunk, GraphEvidence, GraphLayout, GraphLayoutState
+)
 from app.services.knowledge.graph_reconciliation_service import GraphReconciliationService
 
 def get_or_create_user(username: str) -> User:
@@ -77,12 +79,62 @@ def create_notebook(name: str, subject_id: Optional[str] = None, override_id: st
         return notebook
 
 def delete_subject(subject_id: str):
-    """Deletes a subject and all its related cascades (notebooks, etc) from the DB."""
+    """Deletes a subject and all its related cascades (notebooks, sessions, graph, materials) from the DB."""
+    from sqlalchemy import text
+    from .models.learning import LearningSession, ProblemAttempt, ReasoningStep, LearnerObservation, CanvasAnchorRecord, ValidationEvent
+
     with SessionLocal() as db:
         subject = db.query(Subject).filter(Subject.id == subject_id).first()
-        if subject:
-            db.delete(subject)
-            db.commit()
+        if not subject:
+            return
+
+        # 1. Collect all notebooks belonging to this subject
+        notebook_ids = [row[0] for row in db.query(Notebook.id).filter(Notebook.subject_id == subject_id).all()]
+
+        # 2. Collect all learning sessions associated with this subject or its notebooks
+        session_filter = (LearningSession.subject_id == subject_id)
+        if notebook_ids:
+            session_filter = session_filter | (LearningSession.notebook_id.in_(notebook_ids))
+        session_ids = [row[0] for row in db.query(LearningSession.id).filter(session_filter).all()]
+
+        if session_ids:
+            attempt_ids = [row[0] for row in db.query(ProblemAttempt.id).filter(ProblemAttempt.learning_session_id.in_(session_ids)).all()]
+            if attempt_ids:
+                step_ids = [row[0] for row in db.query(ReasoningStep.id).filter(ReasoningStep.attempt_id.in_(attempt_ids)).all()]
+                if step_ids:
+                    db.query(CanvasAnchorRecord).filter(CanvasAnchorRecord.reasoning_step_id.in_(step_ids)).delete(synchronize_session=False)
+                    db.query(ValidationEvent).filter(ValidationEvent.reasoning_step_id.in_(step_ids)).delete(synchronize_session=False)
+                    for att_id in attempt_ids:
+                        db.execute(text("UPDATE reasoning_steps SET previous_step_id = NULL, replaces_step_id = NULL WHERE attempt_id = :att_id"), {"att_id": att_id})
+                    db.query(ReasoningStep).filter(ReasoningStep.attempt_id.in_(attempt_ids)).delete(synchronize_session=False)
+                db.query(ProblemAttempt).filter(ProblemAttempt.learning_session_id.in_(session_ids)).delete(synchronize_session=False)
+            db.query(LearningSession).filter(LearningSession.id.in_(session_ids)).delete(synchronize_session=False)
+
+        # 3. Clean up learner observations
+        db.query(LearnerObservation).filter(LearnerObservation.subject_id == subject_id).delete(synchronize_session=False)
+
+        # 4. Clean up graph evidence, layouts, edges, and nodes
+        db.query(GraphEvidence).filter(GraphEvidence.subject_id == subject_id).delete(synchronize_session=False)
+        db.query(GraphLayout).filter(GraphLayout.scope_id == subject_id).delete(synchronize_session=False)
+        db.query(GraphLayoutState).filter(GraphLayoutState.scope_id == subject_id).delete(synchronize_session=False)
+        db.query(ConceptEdge).filter(ConceptEdge.subject_id == subject_id).delete(synchronize_session=False)
+        db.query(ConceptNode).filter(ConceptNode.subject_id == subject_id).delete(synchronize_session=False)
+
+        # 5. Clean up subject_chunks (and FTS)
+        try:
+            db.execute(text("DELETE FROM subject_chunks_fts WHERE rowid IN (SELECT rowid FROM subject_chunks WHERE subject_id = :sid)"), {"sid": subject_id})
+        except Exception:
+            pass
+        db.query(SubjectChunk).filter(SubjectChunk.subject_id == subject_id).delete(synchronize_session=False)
+
+        # 6. Clean up materials, videos, notebooks
+        db.query(Material).filter(Material.subject_id == subject_id).delete(synchronize_session=False)
+        db.query(Video).filter(Video.subject_id == subject_id).delete(synchronize_session=False)
+        db.query(Notebook).filter(Notebook.subject_id == subject_id).delete(synchronize_session=False)
+
+        # 7. Finally delete the Subject
+        db.delete(subject)
+        db.commit()
 
 def add_material(subject_id: str, filename: str, file_path: str, resource_type: str = "PDF") -> Material:
     """Logs an uploaded PDF/document under a subject."""
@@ -104,11 +156,31 @@ def add_video(subject_id: str, title: str, video_url: str) -> Video:
 
 def delete_notebook_record(notebook_id: str):
     """Deletes a notebook record from the DB. Does NOT delete the JSON board file."""
+    from sqlalchemy import text
+    from .models.learning import LearningSession, ProblemAttempt, ReasoningStep, CanvasAnchorRecord, ValidationEvent
+
     with SessionLocal() as db:
         nb = db.query(Notebook).filter(Notebook.id == notebook_id).first()
-        if nb:
-            db.delete(nb)
-            db.commit()
+        if not nb:
+            return
+
+        # Clean up learning sessions attached to this notebook
+        session_ids = [row[0] for row in db.query(LearningSession.id).filter(LearningSession.notebook_id == notebook_id).all()]
+        if session_ids:
+            attempt_ids = [row[0] for row in db.query(ProblemAttempt.id).filter(ProblemAttempt.learning_session_id.in_(session_ids)).all()]
+            if attempt_ids:
+                step_ids = [row[0] for row in db.query(ReasoningStep.id).filter(ReasoningStep.attempt_id.in_(attempt_ids)).all()]
+                if step_ids:
+                    db.query(CanvasAnchorRecord).filter(CanvasAnchorRecord.reasoning_step_id.in_(step_ids)).delete(synchronize_session=False)
+                    db.query(ValidationEvent).filter(ValidationEvent.reasoning_step_id.in_(step_ids)).delete(synchronize_session=False)
+                    for att_id in attempt_ids:
+                        db.execute(text("UPDATE reasoning_steps SET previous_step_id = NULL, replaces_step_id = NULL WHERE attempt_id = :att_id"), {"att_id": att_id})
+                    db.query(ReasoningStep).filter(ReasoningStep.attempt_id.in_(attempt_ids)).delete(synchronize_session=False)
+                db.query(ProblemAttempt).filter(ProblemAttempt.learning_session_id.in_(session_ids)).delete(synchronize_session=False)
+            db.query(LearningSession).filter(LearningSession.id.in_(session_ids)).delete(synchronize_session=False)
+
+        db.delete(nb)
+        db.commit()
 
 def delete_material(material_id: str) -> Optional[str]:
     """Deletes a material record from the DB and its vector points. Returns the file_path."""
