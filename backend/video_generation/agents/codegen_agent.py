@@ -151,6 +151,10 @@ _SUBJECT_VISUAL_HINTS = {
 class CodeGenAgent:
     def __init__(self):
         self._template_lib = SceneTemplateLibrary()
+        from shared.ai_config import get_model_config
+        self.api_key = get_model_config.get_api_key()
+        self.google_api_key = self.api_key if get_model_config.provider in ("gemini", "google") else None
+        self.groq_api_key = self.api_key if get_model_config.provider == "groq" else None
 
     def _generate(self, prompt: str) -> tuple[str, str]:
         """Returns (generated_text, model_name_used)."""

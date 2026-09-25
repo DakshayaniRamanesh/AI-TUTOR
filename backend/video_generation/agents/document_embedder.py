@@ -106,12 +106,8 @@ TEXT:
                 job.document_text = job.document_text or ""
                 return job
 
-            mock_text = f"Topic content for: {job.user_prompt}. Explaining concepts, formulas, and visual proofs."
-            job.document_text = mock_text
-            material_id = self.rag_store.compute_content_hash(mock_text, "mock")
-            job.material_id = material_id
-            if not self.rag_store.has_material(material_id):
-                self.rag_store.upsert_chunks([{"text": mock_text, "page": 1}], material_id)
+            # Never manufacture evidence when no source document exists.
+            job.document_text = ""
             return job
 
         try:

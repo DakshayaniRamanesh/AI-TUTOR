@@ -49,8 +49,8 @@ def _get_active_server() -> str:
 
 
 def request_video_generation(request: VideoGenerationRequest) -> str:
+    """Queue a request immediately; network submission happens in the poll worker."""
     job_id = request.request_id
-
     _PENDING_JOBS[job_id] = {
         "prompt": request.explanation_goal,
         "subject_id": request.subject_id,
@@ -60,46 +60,48 @@ def request_video_generation(request: VideoGenerationRequest) -> str:
         "output_type": request.output_type,
         "selection_payload": request.selection_payload,
         "is_local_direct": True,
+        "needs_submit": True,
+        "request_payload": request.model_dump(mode="json"),
     }
+    return job_id
 
-    # 1. Try local server
+
+def _submit_video_request(job_id: str, job_info: dict) -> tuple[str, dict]:
+    payload = job_info["request_payload"]
     for server_url in LOCAL_SERVERS:
         try:
             resp = requests.post(
                 f"{server_url}/generate",
-                json=request.model_dump(mode='json'),
+                json=payload,
                 timeout=2.5,
             )
             if resp.status_code in [200, 201, 202]:
                 data = resp.json()
                 ret_id = data.get("job_id", job_id)
-                _PENDING_JOBS[ret_id] = _PENDING_JOBS.get(job_id, {})
-                _PENDING_JOBS[ret_id]["is_local_direct"] = False
-                _PENDING_JOBS[ret_id]["server_url"] = server_url
-                _PENDING_JOBS[ret_id]["status_url"] = data.get("status_url") or f"{server_url}/status/{ret_id}"
-                return ret_id
+                job_info.update(is_local_direct=False, needs_submit=False, server_url=server_url,
+                                status_url=data.get("status_url") or f"{server_url}/status/{ret_id}")
+                _PENDING_JOBS[ret_id] = job_info
+                return ret_id, job_info
         except Exception:
             continue
 
-    # 2. Try Modal Cloud fallback
     try:
         resp = requests.post(
             MODAL_VIDEO_GENERATE_URL,
-            json=request.model_dump(mode='json'),
+            json=payload,
             timeout=3.5,
         )
         if resp.status_code in [200, 201, 202]:
             data = resp.json()
             ret_id = data.get("job_id", job_id)
-            _PENDING_JOBS[ret_id] = _PENDING_JOBS.get(job_id, {})
-            _PENDING_JOBS[ret_id]["is_local_direct"] = False
-            _PENDING_JOBS[ret_id]["status_url"] = data.get("status_url") or f"{MODAL_VIDEO_STATUS_URL.rstrip('/')}/{ret_id}"
-            return ret_id
+            job_info.update(is_local_direct=False, needs_submit=False,
+                            status_url=data.get("status_url") or f"{MODAL_VIDEO_STATUS_URL.rstrip('/')}/{ret_id}")
+            _PENDING_JOBS[ret_id] = job_info
+            return ret_id, job_info
     except Exception:
         pass
-
-    # No backend server running: will run in-process directly in worker
-    return job_id
+    job_info["needs_submit"] = False
+    return job_id, job_info
 
 
 class ManimVideoPollWorker(QThread):
@@ -121,6 +123,9 @@ class ManimVideoPollWorker(QThread):
 
     def run(self):
         job_info = _PENDING_JOBS.get(self.job_id, {})
+        if job_info.get("needs_submit"):
+            self.status_updated.emit(self.job_id, "Connecting to Video Engine...", 5)
+            self.job_id, job_info = _submit_video_request(self.job_id, job_info)
         is_direct = job_info.get("is_local_direct", True)
         server_url = job_info.get("server_url") or _get_active_server()
         status_url = job_info.get("status_url")
@@ -208,4 +213,3 @@ class ManimVideoPollWorker(QThread):
             self.video_ready.emit(self.job_id, final_job.video_path)
         except Exception as e:
             self.video_failed.emit(self.job_id, f"Video generation failed: {e}")
-

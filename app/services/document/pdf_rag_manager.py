@@ -130,28 +130,21 @@ class PdfRAGManager:
             f"Format a structured, highly educational study response:"
         )
 
-        # Call Gemini API
-        if GOOGLE_API_KEY:
-            models = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]
-            payload = {"contents": [{"parts": [{"text": prompt}]}]}
-            for model in models:
-                try:
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GOOGLE_API_KEY}"
-                    resp = requests.post(url, json=payload, timeout=9)
-                    if resp.status_code == 200:
-                        ans = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                        return ans
-                except Exception as err:
-                    print(f"[PdfRAGManager] API Notice ({model}): {err}")
+        try:
+            from shared.ai_client import ai_client
+            ans = ai_client.generate_content(prompt, temperature=0.0).strip()
+            if ans:
+                return ans
+        except Exception as err:
+            print(f"[PdfRAGManager] Active model unavailable: {err}")
 
         # Fallback local grounded response
         c_first = chunks[0] if chunks else {"page": 1, "text": "Document text reference."}
         return (
             f"📖 Textbook Reference: {self.doc_title} [Page {c_first['page']}]\n"
             f"\"{c_first['text'][:250]}...\"\n\n"
-            f"💡 Concept Explanation:\n"
-            f"• Core Mechanism: {query} processes input step-by-step to extract meaningful representations.\n"
-            f"• Key Insight: Refer to [Page {c_first['page']}] in {self.doc_title} for the full formal derivation."
+            "The configured AI model is unavailable, so Kestrel is showing the closest "
+            "source passage without inventing an explanation."
         )
 
     def generate_grounded_summary(self) -> str:
@@ -179,16 +172,13 @@ class PdfRAGManager:
             f"3. 🧠 Summary Conclusion"
         )
 
-        if GOOGLE_API_KEY:
-            for m in ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]:
-                try:
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={GOOGLE_API_KEY}"
-                    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-                    resp = requests.post(url, json=payload, timeout=10)
-                    if resp.status_code == 200:
-                        return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                except Exception as err:
-                    print(f"[PdfRAGManager] Summary API Notice ({m}): {err}")
+        try:
+            from shared.ai_client import ai_client
+            summary = ai_client.generate_content(prompt, temperature=0.0).strip()
+            if summary:
+                return summary
+        except Exception as err:
+            print(f"[PdfRAGManager] Summary active model unavailable: {err}")
 
         # Fallback summary
         first_page = self.pages_text[0] if self.pages_text else (1, "Document content")

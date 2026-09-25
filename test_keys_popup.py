@@ -43,7 +43,7 @@ class ApiTester(QThread):
             self.result_signal.emit("gemini", "ERROR: GEMINI_API_KEY not found in .env")
             return
             
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={api_key}"
         payload = {
             "contents": [{"parts": [{"text": "Reply with only the word SUCCESS."}]}]
         }
@@ -67,9 +67,8 @@ class ApiTester(QThread):
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        # Using llama-3.3-70b-versatile or llama-3.1-8b-instant
         payload = {
-            "model": "llama-3.1-8b-instant",
+            "model": "qwen/qwen3.8-27b",
             "messages": [{"role": "user", "content": "Reply with only the word SUCCESS."}],
             "max_tokens": 10
         }

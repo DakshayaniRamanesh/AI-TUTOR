@@ -128,7 +128,7 @@ class LatexPollWorker(QThread):
     def __init__(
         self,
         request: LatexGenerationRequest,
-        is_local_direct: bool = False,
+        is_local_direct: bool | None = False,
         parent=None
     ):
         super().__init__(parent)
@@ -141,6 +141,14 @@ class LatexPollWorker(QThread):
         self._running = False
 
     def run(self):
+        # Submission belongs in the worker as well; probing HTTP backends must
+        # never freeze the PyQt event loop.
+        if self.is_local_direct is None:
+            try:
+                self.job_id, self.is_local_direct = request_latex_generation(self.request)
+            except Exception as exc:
+                self.pdf_failed.emit(self.job_id, f"Could not start LaTeX generation: {exc}")
+                return
         if self.is_local_direct:
             self._run_direct_local()
             return
@@ -265,4 +273,3 @@ class LatexPollWorker(QThread):
         except Exception as e:
             import traceback
             self.pdf_failed.emit(self.job_id, f"In-process LaTeX generation error: {str(e)}\n{traceback.format_exc()}")
-

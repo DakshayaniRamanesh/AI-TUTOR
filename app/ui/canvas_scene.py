@@ -1336,7 +1336,14 @@ class CanvasScene(QGraphicsScene):
         )
 
         self._ocr_in_flight = True
-        # Keep the recent-stroke buffer until a later stroke replaces it; this permits a retry after OCR failure.
+        # Consume only the submitted buffer entries. Scene ink remains intact,
+        # so retry is still possible by selecting it, while future recognition
+        # cannot accidentally include an older equation.
+        submitted_ids = set(group.stroke_ids)
+        self._recent_ink_strokes = [
+            stroke for stroke in self._recent_ink_strokes
+            if getattr(stroke, "item_id", None) not in submitted_ids
+        ]
         self.recognition_requested.emit(req, target_pos)
         return True
 

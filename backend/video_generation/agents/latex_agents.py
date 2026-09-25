@@ -259,7 +259,7 @@ class LatexStructureAgent:
 
         # ── Detect educational intent ─────────────────────────────────────────
         # classroom_action may override: e.g. "Explain Concept" forces theory intent
-        if job.mode == "selection_exact":
+        if str(job.mode).lower() == "selection_exact":
             intent = "transcribe_only"
         elif action.lower() in ("explain concept", "explain theory", "conceptual overview", "theory"):
             intent = "theory"

@@ -54,7 +54,7 @@ class TutorOrchestrator:
             ))
 
         # 2. Dispatch according to TutorMode
-        if mode == TutorMode.CHECK_STEP:
+        if mode in (TutorMode.CHECK_STEP, TutorMode.AUTO_CHECK):
             response = self._handle_check_step(request, bundle, current_text, anchors, citation_chips)
         elif mode in [TutorMode.EXPLAIN, TutorMode.ASK]:
             response = self._handle_explain_or_ask(request, bundle, current_text, anchors, citation_chips, mode)
@@ -158,9 +158,12 @@ class TutorOrchestrator:
                 recognized_latex=current_parsed.latex if hasattr(current_parsed, 'latex') else None,
                 content_type="EQUATION" if current_parsed.is_equation else "EXPRESSION",
                 group_id=request.semantic_block_id,
+                group_revision=request.group_revision,
                 previous_step_id=previous_step.id if previous_step else None
             )
             self.repo.update_step_validation(step_id, verdict.value, explanation)
+
+        explanation = f"I read: {current_text}\n{explanation}"
 
         return TutorResponse(
             request_id=request.request_id,
@@ -170,7 +173,7 @@ class TutorOrchestrator:
             attempt_id=request.attempt_id,
             canvas_revision=request.canvas_revision,
             semantic_block_id=request.semantic_block_id,
-            tutor_mode=TutorMode.CHECK_STEP,
+            tutor_mode=TutorMode.AUTO_CHECK if str(request.tutor_mode) == TutorMode.AUTO_CHECK.value else TutorMode.CHECK_STEP,
             verdict=verdict,
             feedback_text=explanation,
             socratic_hints=socratic_hints,
@@ -195,14 +198,27 @@ class TutorOrchestrator:
 
         if bundle.retrieved_evidence:
             source_mode = "HYBRID_RAG"
-            best_ev = bundle.retrieved_evidence[0]
-            doc_name = best_ev.document_title or "Subject Notes"
-            page_info = f" (Page {best_ev.page_number})" if best_ev.page_number else ""
-            
-            feedback_lines.append(f"Based on {doc_name}{page_info}:")
-            feedback_lines.append(best_ev.snippet[:300] + ("..." if len(best_ev.snippet) > 300 else ""))
-            if len(bundle.retrieved_evidence) > 1:
-                feedback_lines.append(f"\nReferenced {len(bundle.retrieved_evidence)} sections from your subject materials.")
+            evidence_text = "\n\n".join(
+                f"[{index}] {ev.document_title or 'Subject material'}"
+                f"{f', page {ev.page_number}' if ev.page_number else ''}: {ev.snippet}"
+                for index, ev in enumerate(bundle.retrieved_evidence, 1)
+            )
+            try:
+                from shared.ai_client import ai_client
+                answer = ai_client.generate_content(
+                    f"Student question: {current_text}\n\nEvidence:\n{evidence_text}\n\n"
+                    "Explain clearly and step-by-step using only the evidence. Reference sources as [1], [2]. "
+                    "If the evidence is insufficient, say exactly what is missing.",
+                    system_instruction="You are Kestrel, a concise Socratic tutor grounded in the learner's subject materials.",
+                    temperature=0.0,
+                ).strip()
+                if answer:
+                    feedback_lines.append(answer)
+            except Exception:
+                best_ev = bundle.retrieved_evidence[0]
+                feedback_lines.append(
+                    f"Based on {best_ev.document_title or 'Subject Notes'}: {best_ev.snippet[:500]}"
+                )
         else:
             # Fallback to local mathematical analysis or general explanation
             parsed = parse_math(current_text)

@@ -114,17 +114,7 @@ class AskBar(QWidget):
         self._set_mic_state(_STATE_IDLE)
 
         # ── DIAGNOSTIC PRINTS (Immediate & Post-Layout) ────────────────────────
-        print("\n" + "="*50)
-        print("[AskBar DIAGNOSTIC - Immediate _init_ui]")
-        print(f"AskBar main_layout count: {main_layout.count()}")
-        print(f"btn_mic object: {self.btn_mic}")
-        print(f"btn_mic isVisible (pre-show): {self.btn_mic.isVisible()}")
-        print(f"btn_mic geometry: x={self.btn_mic.x()}, y={self.btn_mic.y()}, w={self.btn_mic.width()}, h={self.btn_mic.height()}")
-        print(f"btn_mic active stylesheet:\n{self.btn_mic.styleSheet()}")
-        print("="*50 + "\n")
-
-        # Delayed inspection after main window completes layout and renders
-        QTimer.singleShot(1500, self._print_runtime_diagnostics)
+        # Detailed runtime checks are available from Settings; keep startup quiet.
 
     def _print_runtime_diagnostics(self):
         print("\n" + "#"*60)
@@ -535,5 +525,4 @@ class AskBar(QWidget):
         """)
         # Re-apply mic button style for current state
         self._set_mic_state(self._mic_state)
-
 

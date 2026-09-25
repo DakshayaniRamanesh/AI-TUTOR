@@ -88,6 +88,24 @@ class MemoryRepository:
             db.commit()
             return session.id
 
+    def bind_session_context(
+        self,
+        session_id: str,
+        notebook_id: Optional[str],
+        subject_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Attach an existing scratch session to the notebook created on save."""
+        with self.Session() as db:
+            session = db.query(LearningSession).filter(LearningSession.id == session_id).first()
+            if not session:
+                raise ValueError(f"Learning session not found: {session_id}")
+            session.notebook_id = notebook_id
+            session.subject_id = subject_id
+            if user_id:
+                session.user_id = user_id
+            db.commit()
+
     def get_or_create_active_attempt(self, session_id: str, problem_text: Optional[str] = None) -> str:
         with self.Session() as db:
             attempt = db.query(ProblemAttempt).filter(

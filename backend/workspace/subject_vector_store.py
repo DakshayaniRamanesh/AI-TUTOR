@@ -40,6 +40,7 @@ except ImportError:
 COLLECTION      = "kestrel-subject-brain-v1"
 EMBEDDING_DIM   = 3072   # models/gemini-embedding-2
 _LOCAL_MEMORY_CLIENT = None
+_LOCAL_PERSISTENT_CLIENTS = {}
 
 
 def _shared_memory_client() -> QdrantClient:
@@ -47,6 +48,14 @@ def _shared_memory_client() -> QdrantClient:
     if _LOCAL_MEMORY_CLIENT is None:
         _LOCAL_MEMORY_CLIENT = QdrantClient(location=":memory:")
     return _LOCAL_MEMORY_CLIENT
+
+
+def _shared_local_client(path: str) -> QdrantClient:
+    path = os.path.abspath(path)
+    if path not in _LOCAL_PERSISTENT_CLIENTS:
+        os.makedirs(path, exist_ok=True)
+        _LOCAL_PERSISTENT_CLIENTS[path] = QdrantClient(path=path)
+    return _LOCAL_PERSISTENT_CLIENTS[path]
 
 
 class SubjectVectorStore:
@@ -68,7 +77,7 @@ class SubjectVectorStore:
     # ── Connection ─────────────────────────────────────────────────────────────
 
     def _connect(self) -> QdrantClient:
-        qdrant_url = os.getenv("QDRANT_URL", ":memory:")
+        qdrant_url = os.getenv("QDRANT_URL") or os.path.join(ROOT, "storage_data", "qdrant")
         qdrant_key = os.getenv("QDRANT_API_KEY", "")
 
         if qdrant_url == ":memory:":
@@ -76,14 +85,15 @@ class SubjectVectorStore:
             return _shared_memory_client()
 
         try:
-            client = QdrantClient(
-                url=qdrant_url,
-                api_key=qdrant_key or None,
-                timeout=5,
-                check_compatibility=False,
-            )
+            if qdrant_url.startswith(("http://", "https://")):
+                client = QdrantClient(
+                    url=qdrant_url, api_key=qdrant_key or None,
+                    timeout=5, check_compatibility=False,
+                )
+            else:
+                client = _shared_local_client(qdrant_url)
             client.get_collections()  # probe
-            print(f"[SubjectVectorStore] Connected to remote Qdrant at {qdrant_url}")
+            print(f"[SubjectVectorStore] Connected to Qdrant at {qdrant_url}")
             return client
         except Exception as e:
             print(f"[SubjectVectorStore] Remote unreachable ({e}); using in-memory fallback")

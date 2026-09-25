@@ -33,7 +33,7 @@ class ApiTester(QThread):
             self.result_signal.emit("gemini", "ERROR: GEMINI_API_KEY not found in .env")
             return
             
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={api_key}"
         payload = {
             "contents": [{"parts": [{"text": "Reply with only the word SUCCESS."}]}]
         }
@@ -61,7 +61,7 @@ class ApiTester(QThread):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "llama-3.1-8b-instant",
+            "model": "qwen/qwen3.8-27b",
             "messages": [{"role": "user", "content": "Reply with only the word SUCCESS."}],
             "max_tokens": 10
         }
@@ -134,10 +134,12 @@ class SettingsDialog(QDialog):
         self.btn_gemini = QPushButton("Test Gemini API")
         self.btn_groq = QPushButton("Test Groq API")
         self.btn_tectonic = QPushButton("Test Tectonic")
+        self.btn_active_model = QPushButton("Test Active Kestrel Model")
         
         self.btn_gemini.setStyleSheet(primary_button_qss(c))
         self.btn_groq.setStyleSheet(primary_button_qss(c))
         self.btn_tectonic.setStyleSheet(primary_button_qss(c))
+        self.btn_active_model.setStyleSheet(primary_button_qss(c))
         
         self.btn_gemini.setMinimumHeight(40)
         self.btn_groq.setMinimumHeight(40)
@@ -146,11 +148,13 @@ class SettingsDialog(QDialog):
         self.btn_gemini.clicked.connect(lambda: self.run_test("gemini"))
         self.btn_groq.clicked.connect(lambda: self.run_test("groq"))
         self.btn_tectonic.clicked.connect(lambda: self.run_test("tectonic"))
+        self.btn_active_model.clicked.connect(lambda: self.run_test("active_model"))
         
         btn_layout.addWidget(self.btn_gemini)
         btn_layout.addWidget(self.btn_groq)
         btn_layout.addWidget(self.btn_tectonic)
         layout.addLayout(btn_layout)
+        layout.addWidget(self.btn_active_model)
         
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
@@ -164,6 +168,14 @@ class SettingsDialog(QDialog):
 
     def run_test(self, target):
         self.log_box.append(f"\n--- Running test: {target.upper()} ---")
+        if target == "active_model":
+            from app.workers.model_readiness_worker import ModelReadinessWorker
+            self.btn_active_model.setEnabled(False)
+            self.btn_active_model.setText("TESTING COMPLETE PIPELINE...")
+            self.model_worker = ModelReadinessWorker(self)
+            self.model_worker.finished.connect(self._on_model_readiness_finished)
+            self.model_worker.start()
+            return
         if target == "gemini":
             self.btn_gemini.setEnabled(False)
             self.btn_gemini.setText("TESTING...")
@@ -189,3 +201,13 @@ class SettingsDialog(QDialog):
         else:
             self.btn_tectonic.setEnabled(True)
             self.btn_tectonic.setText("Test Tectonic")
+
+    def _on_model_readiness_finished(self, result: dict):
+        self.btn_active_model.setEnabled(True)
+        self.btn_active_model.setText("Test Active Kestrel Model")
+        state = "READY" if result.get("overall_ready") else "NOT READY"
+        self.log_box.append(f"Active model: {result.get('provider')} / {result.get('model_id')} — {state}")
+        for name, details in result.get("tests", {}).items():
+            mark = "PASS" if details.get("pass") else "FAIL"
+            error = f" — {details.get('error')}" if details.get("error") else ""
+            self.log_box.append(f"  {mark}: {name} ({details.get('latency', 0):.2f}s){error}")

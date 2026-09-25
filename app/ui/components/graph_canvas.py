@@ -266,8 +266,10 @@ class GraphCanvas(QWidget):
 
     def set_snapshot(self, snapshot: GraphSnapshot):
         """Replaces the current graph with a new snapshot and re-renders."""
+        self.current_snapshot = snapshot
         self.all_nodes = list(snapshot.nodes)
         self.all_edges = list(snapshot.edges)
+        self.node_positions = {}
         
         # Merge layout states if any
         if snapshot.layout:
@@ -281,8 +283,16 @@ class GraphCanvas(QWidget):
         import random
         random.seed(42)
 
-        positions: Dict[str, List[float]] = {}
         node_names = [n.id for n in nodes]
+        positions: Dict[str, List[float]] = {
+            node_id: [float(pos[0]), float(pos[1])]
+            for node_id, pos in self.node_positions.items()
+            if node_id in node_names
+        }
+        pinned_nodes = {
+            node_id for node_id, state in self.current_snapshot.layout.items()
+            if state.pinned
+        }
         node_types = {n.id: n.node_type for n in nodes}
 
         # Identify major hub nodes (subjects or high-degree nodes)
@@ -296,7 +306,7 @@ class GraphCanvas(QWidget):
                 adj[e.target_node_id].append(e.source_node_id)
 
         # Hubs are subjects or nodes with high degree
-        hubs = [n.id for n in nodes if n.node_type == "subject" or degrees[n.id] >= 5]
+        hubs = [n.id for n in nodes if getattr(n.node_type, "value", n.node_type) == "SUBJECT" or degrees[n.id] >= 5]
         if not hubs:
             hubs = sorted(node_names, key=lambda n: degrees[n], reverse=True)[:4]
 
@@ -305,7 +315,7 @@ class GraphCanvas(QWidget):
         hub_radius = 280.0 if num_hubs <= 4 else 380.0
         for idx, hub_name in enumerate(hubs):
             angle = idx * ((2.0 * math.pi) / num_hubs)
-            positions[hub_name] = [hub_radius * math.cos(angle), hub_radius * math.sin(angle)]
+            positions.setdefault(hub_name, [hub_radius * math.cos(angle), hub_radius * math.sin(angle)])
 
         # 2. Place child nodes around their primary connected hub
         for node in nodes:
@@ -465,18 +475,18 @@ class GraphCanvas(QWidget):
 
             x, y = self.node_positions[name]
             deg = degrees.get(name, 0)
-            ntype = node.node_type
+            ntype = getattr(node.node_type, "value", node.node_type)
             self.node_summaries[name] = node.description
 
             # Node Classification & Sizing
-            if ntype == "subject" or deg >= 6:
+            if ntype == "SUBJECT" or deg >= 6:
                 # Major Core Hub
                 r = 8.5
                 brush = QBrush(color_hub)
                 pen = QPen(color_hub_border, 1.2)
                 font = QFont("Consolas", 8, QFont.Weight.DemiBold)
                 text_color = QColor("#1e293b") if not is_dark else QColor("#f8fafc")
-            elif ntype == "tag" or name.startswith("#"):
+            elif ntype == "MODULE" or name.startswith("#"):
                 # Tag / Category Node
                 r = 5.5
                 brush = QBrush(color_tag)
@@ -501,7 +511,7 @@ class GraphCanvas(QWidget):
             self.scene.addItem(ellipse)
 
             # Node Label Item (placed cleanly beside the circle)
-            text = QGraphicsTextItem(name)
+            text = QGraphicsTextItem(node.display_name)
             text.setFont(font)
             text.setDefaultTextColor(text_color)
             text.setPos(x + r + 3.0, y - 8.0)
@@ -515,7 +525,7 @@ class GraphCanvas(QWidget):
             self.view.centerOn(0, 0)
 
         # Update Inspector with the active or first node
-        target_inspect = self.active_node or (current_nodes[0].name if current_nodes else None)
+        target_inspect = self.active_node or (current_nodes[0].id if current_nodes else None)
         if target_inspect:
             self._update_inspector_by_name(target_inspect)
 
@@ -596,14 +606,16 @@ class GraphCanvas(QWidget):
 
         filtered_nodes = self.all_nodes
         if tag == "Concepts":
-            filtered_nodes = [n for n in filtered_nodes if n.node_type == "concept"]
+            filtered_nodes = [n for n in filtered_nodes if getattr(n.node_type, "value", n.node_type) == "CONCEPT"]
         elif tag == "Notebooks":
-            filtered_nodes = [n for n in filtered_nodes if n.node_type == "board"]
+            filtered_nodes = [n for n in filtered_nodes if getattr(n.node_type, "value", n.node_type) == "NOTEBOOK"]
         elif tag == "Tags":
-            filtered_nodes = [n for n in filtered_nodes if n.node_type in ("tag", "note")]
+            filtered_nodes = [n for n in filtered_nodes if getattr(n.node_type, "value", n.node_type) in ("MODULE", "RESOURCE")]
 
         if query:
-            filtered_nodes = [n for n in filtered_nodes if query in n.id.lower() or query in n.description.lower()]
+            filtered_nodes = [n for n in filtered_nodes if
+                              query in n.display_name.lower() or
+                              query in (n.description or "").lower()]
 
         filtered_names = {n.id for n in filtered_nodes}
         filtered_edges = [e for e in self.all_edges if e.source_node_id in filtered_names and e.target_node_id in filtered_names]
@@ -616,15 +628,18 @@ class GraphCanvas(QWidget):
             return
 
         self.selected_node_name = name
-        self.lbl_node_title.setText(name)
+        self.lbl_node_title.setText(node.display_name)
 
+        node_type = getattr(node.node_type, "value", node.node_type)
         type_display = {
-            "subject": "Subject Domain",
-            "board": "Notebook Board",
-            "tag": "Topic Category",
-            "note": "Document Note",
-            "concept": "Concept Node"
-        }.get(node.node_type, node.node_type.capitalize())
+            "SUBJECT": "Subject Domain",
+            "NOTEBOOK": "Notebook Board",
+            "MODULE": "Module",
+            "RESOURCE": "Document Resource",
+            "CONCEPT": "Concept Node",
+            "EXERCISE": "Exercise",
+            "EXAMPLE": "Worked Example",
+        }.get(node_type, str(node_type).title())
 
         self.lbl_node_subtitle.setText(f"Type: {type_display} • Knowledge Graph")
 

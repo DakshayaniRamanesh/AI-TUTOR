@@ -49,9 +49,19 @@ class SubjectIngestionService:
             file_size = os.path.getsize(file_path)
             content_hash = self._compute_hash(file_path)
 
-            # Check if unchanged (unless forced)
-            # In real system, we'd read DB here to check old hash, but we just always update for safety if forced
-            # Or we let DB caller decide `force_reindex`
+            if not force_reindex:
+                from app.storage.database import get_session_factory, Material
+                with get_session_factory()() as session:
+                    existing = session.query(Material).filter_by(id=material_id).first()
+                    if (existing and existing.content_hash == content_hash and
+                            existing.ingestion_status in ("READY", "PARTIAL")):
+                        return {
+                            "status": existing.ingestion_status,
+                            "material_id": material_id,
+                            "chunks_extracted": existing.chunk_count or 0,
+                            "chunks_vectorized": 0,
+                            "unchanged": True,
+                        }
             
             update_material_status(material_id, "EXTRACTING", content_hash=content_hash, file_size=file_size)
             

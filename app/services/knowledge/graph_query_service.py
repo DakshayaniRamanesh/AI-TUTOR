@@ -11,6 +11,16 @@ class GraphQueryService:
     def __init__(self, session_factory=None):
         self.session_factory = session_factory or get_session_factory()
 
+    @staticmethod
+    def _evidence(session, *, node_id=None, edge_id=None):
+        query = session.query(GraphEvidence)
+        query = query.filter(GraphEvidence.node_id == node_id) if node_id else query.filter(GraphEvidence.edge_id == edge_id)
+        return [GraphEvidenceDTO(
+            id=e.id, subject_id=e.subject_id, material_id=e.material_id,
+            chunk_id=e.chunk_id, page_number=e.page_number,
+            snippet=e.snippet, confidence=e.confidence,
+        ) for e in query.all()]
+
     def get_subject_snapshot(self, subject_id: str) -> GraphSnapshot:
         with self.session_factory() as session:
             subject = session.query(Subject).filter(Subject.id == subject_id).first()
@@ -40,6 +50,7 @@ class GraphQueryService:
                     aliases=aliases,
                     evidence_counts=n.evidence_count or 0,
                     extraction_mode=n.extraction_method,
+                    evidence=self._evidence(session, node_id=n.id),
                 ))
 
             edge_dtos = []
@@ -55,6 +66,7 @@ class GraphQueryService:
                     relation_type=relation_type,
                     evidence_counts=e.evidence_count or 0,
                     extraction_mode=e.extraction_method,
+                    evidence=self._evidence(session, edge_id=e.id),
                 ))
 
             layouts = session.query(GraphLayout).filter(GraphLayout.scope_type == "SUBJECT", GraphLayout.scope_id == subject_id).all()
@@ -129,6 +141,7 @@ class GraphQueryService:
                     aliases=aliases,
                     evidence_counts=n.evidence_count or 0,
                     extraction_mode=n.extraction_method,
+                    evidence=self._evidence(session, node_id=n.id),
                 ))
                 
                 edge_dtos.append(GraphEdgeDTO(
@@ -140,7 +153,7 @@ class GraphQueryService:
                     extraction_mode="OFFLINE_STRUCTURAL"
                 ))
 
-            layouts = session.query(GraphLayoutState).filter(GraphLayoutState.scope_type == "GLOBAL").all()
+            layouts = session.query(GraphLayout).filter(GraphLayout.scope_type == "GLOBAL").all()
             layout_dict = {
                 l.node_id: GraphLayoutStateDTO(node_id=l.node_id, x=l.x, y=l.y, pinned=l.pinned)
                 for l in layouts

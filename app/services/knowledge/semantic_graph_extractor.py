@@ -29,7 +29,7 @@ class SemanticGraphExtractor:
             prompt += f"Chunk {c['id']}: {c['text']}\\n"
             
         payload = {
-            "model": "llama-3.1-8b-instant",
+            "model": "qwen/qwen3.8-27b",
             "messages": [
                 {"role": "system", "content": "You extract knowledge graph edges. Return JSON like {'edges': [{'source_name': '...', 'target_name': '...', 'relation_type': 'EXPLAINS', 'chunk_id': '...'}]}"},
                 {"role": "user", "content": prompt}

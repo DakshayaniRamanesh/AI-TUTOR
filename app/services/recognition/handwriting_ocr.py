@@ -1,138 +1,54 @@
-"""
-Handwriting Recognition & Multimodal Vision OCR Backend Client.
-Converts canvas ink strokes and diagrams to clean text/formulas using Groq Vision (primary) and Gemini Vision (fallback).
-"""
+"""Handwriting recognition through Kestrel's single configured AI model."""
 
-import os
+import json
 import re
-import requests
-from dotenv import load_dotenv
 
-load_dotenv()
-load_dotenv("backend/.env")
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", "backend", ".env"))
+from shared.ai_client import ai_client
+
+
+_OCR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "content_type": {"type": "string", "enum": ["EQUATION", "TEXT", "DIAGRAM", "UNKNOWN"]},
+        "text": {"type": "string"},
+        "latex": {"type": "string"},
+        "confidence": {"type": "number"},
+    },
+    "required": ["content_type", "text", "confidence"],
+}
 
 
 def recognize_handwriting(input_text_or_path: str = "", b64_image: str = "", stroke_count: int = 0) -> dict:
-    """
-    Recognizes handwritten text, equations, or chemical structures from canvas.
-    Uses Groq Vision or Gemini to output a structured JSON dict.
-    """
-    last_error = None
     if input_text_or_path and not input_text_or_path.startswith("Recognized"):
         return {"text": input_text_or_path.strip(), "content_type": "TEXT", "confidence": 1.0}
-
     if not b64_image:
-        return {}
+        raise ValueError("No handwriting image was supplied.")
 
     prompt = (
-        "You are an expert OCR transcription engine for mathematics and science handwriting.\n"
-        "Transcribe the handwritten text, formula, question, or diagram topic shown in this canvas image.\n"
-        "Output ONLY valid JSON matching this schema:\n"
-        "{\n"
-        '  "content_type": "EQUATION" | "TEXT" | "DIAGRAM" | "UNKNOWN",\n'
-        '  "text": "plain text representation",\n'
-        '  "latex": "latex representation if equation",\n'
-        '  "confidence": 0.0 to 1.0\n'
-        "}\n"
-        "Do NOT output markdown blocks or backticks. Start directly with {."
+        "Transcribe the handwriting exactly. Do not solve, simplify, correct, or infer a next step. "
+        "Preserve brackets, exponents, operators, equals signs, and line order. "
+        "Classify it as EQUATION, TEXT, DIAGRAM, or UNKNOWN. Return only JSON with "
+        "content_type, text, latex, and confidence. Use UNKNOWN and low confidence when uncertain."
     )
-
-    # 1. PRIMARY: Groq Vision (fast, high accuracy, active API key)
-    groq_key = (
-        os.environ.get("GROQ_API_KEY", "").strip() or
-        os.getenv("GROQ_API_KEY", "").strip()
-    )
-    if groq_key and not groq_key.startswith("your_"):
-        for model in ["qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]:
-            try:
-                resp = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {groq_key}"},
-                    json={
-                        "model": model,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": prompt},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}}
-                                ]
-                            }
-                        ],
-                        "response_format": {"type": "json_object"},
-                        "temperature": 0.1,
-                        "max_tokens": 300
-                    },
-                    timeout=8.0
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                choices = data.get("choices", [])
-                if choices:
-                    raw = choices[0].get("message", {}).get("content", "").strip()
-                    if raw:
-                        try:
-                            import json
-                            parsed = json.loads(raw)
-                            return parsed
-                        except json.JSONDecodeError:
-                            return {"text": raw, "content_type": "UNKNOWN", "confidence": 0.5}
-            except requests.exceptions.Timeout as e:
-                print(f"[Handwriting OCR Groq Vision] Timeout for model {model}: {e}")
-                last_error = e
-                continue
-            except Exception as e:
-                print(f"[Handwriting OCR Groq Vision] Error for model {model}: {e}")
-                last_error = e
-                continue
-
-    # 2. SECONDARY / FALLBACK: Google Gemini Vision
-    gemini_key = (
-        os.environ.get("GEMINI_API_KEY", "").strip() or
-        os.environ.get("GOOGLE_API_KEY", "").strip() or
-        os.getenv("GOOGLE_API_KEY", "").strip()
-    )
-    if gemini_key and not gemini_key.startswith("your_"):
-        models = ["gemini-flash-latest", "gemini-flash-lite-latest"]
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": "image/png",
-                                "data": b64_image
-                            }
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "responseMimeType": "application/json"
-            }
-        }
-        for model in models:
-            try:
-                api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
-                resp = requests.post(api_url, json=payload, timeout=6.0)
-                if resp.status_code == 200:
-                    text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    try:
-                        import json
-                        parsed = json.loads(text)
-                        return parsed
-                    except json.JSONDecodeError:
-                        return {"text": text, "content_type": "UNKNOWN", "confidence": 0.5}
-            except requests.exceptions.Timeout as e:
-                last_error = e
-                continue
-            except Exception as e:
-                last_error = e
-                continue
-
-    if last_error:
-        raise last_error
-    raise RuntimeError("All OCR providers failed or no valid transcription was generated.")
+    raw = ai_client.generate_content(
+        prompt,
+        system_instruction="You are a precise mathematics and science handwriting OCR engine.",
+        image_b64=b64_image,
+        json_schema=_OCR_SCHEMA,
+        temperature=0.0,
+    ).strip()
+    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE | re.DOTALL)
+    parsed = json.loads(raw)
+    content_type = str(parsed.get("content_type", "UNKNOWN")).upper()
+    if content_type not in {"EQUATION", "TEXT", "DIAGRAM", "UNKNOWN"}:
+        content_type = "UNKNOWN"
+    text = str(parsed.get("text", "")).strip()
+    if not text:
+        raise ValueError("The OCR model returned no transcription.")
+    confidence = max(0.0, min(1.0, float(parsed.get("confidence", 0.0))))
+    return {
+        "content_type": content_type,
+        "text": text,
+        "latex": str(parsed.get("latex") or text).strip(),
+        "confidence": confidence,
+    }

@@ -268,6 +268,7 @@ class LatexVideoPipeline:
             "cannot read",
             "could not be transcribed",
             "image was not provided",
+            "transcribed content",
         ]
         for phrase in refusal_phrases:
             if phrase in low:

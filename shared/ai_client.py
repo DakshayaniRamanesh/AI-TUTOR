@@ -11,6 +11,12 @@ from .ai_config import get_model_config
 
 import requests
 
+
+def _image_mime(image_b64: str) -> str:
+    if image_b64.startswith("iVBOR"):
+        return "image/png"
+    return "image/jpeg"
+
 class AIClient:
     def __init__(self):
         self.config = get_model_config
@@ -59,7 +65,7 @@ class AIClient:
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_b64}"
+                            "url": f"data:{_image_mime(image_b64)};base64,{image_b64}"
                         }
                     }
                 ]
@@ -96,7 +102,7 @@ class AIClient:
         if image_b64:
             user_parts.append({
                 "inline_data": {
-                    "mime_type": "image/jpeg",
+                    "mime_type": _image_mime(image_b64),
                     "data": image_b64
                 }
             })

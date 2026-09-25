@@ -92,6 +92,9 @@ def classify_subject(user_prompt: str, story_script: str = "") -> str:
 class StoryAgent:
     def __init__(self, rag_store):
         self.rag_store = rag_store
+        from shared.ai_config import get_model_config
+        self.google_api_key = get_model_config.get_api_key() if get_model_config.provider in ("gemini", "google") else None
+        self.groq_api_key = get_model_config.get_api_key() if get_model_config.provider == "groq" else None
 
     def _generate(self, prompt: str) -> tuple[str, str]:
         from shared.ai_client import ai_client

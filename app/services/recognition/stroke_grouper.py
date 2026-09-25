@@ -5,7 +5,9 @@ from shared.contracts.ink import InkGroup
 from shared.contracts.common import CanvasBBox, CoordinateSpace
 
 class StrokeGroupingConfig(BaseModel):
-    max_temporal_gap_ms: int = 1200
+    # A handwritten equation often includes short pauses for exponents,
+    # brackets, or thinking without becoming a separate reasoning step.
+    max_temporal_gap_ms: int = 2500
     max_horizontal_gap_px: float = 80.0
     vertical_baseline_tolerance_px: float = 40.0
 

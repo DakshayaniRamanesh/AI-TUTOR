@@ -445,6 +445,17 @@ class MainWindow(QMainWindow):
             self.current_board = BoardModel("Untitled Notebook")
             self.title_edit.setText(self.current_board.title)
             self.scene.reset_context(notebook_id=None, clear_items=True)
+            # Reasoning and memory must work before the first manual save.
+            self.current_learning_session_id = self.memory_repo.start_learning_session(
+                notebook_id=None,
+                user_id=getattr(self, "current_user_id", None),
+                subject_id=None,
+            )
+            self.current_attempt_id = self.memory_repo.start_problem_attempt(
+                self.current_learning_session_id
+            )
+            self.learning_controller.current_session_id = self.current_learning_session_id
+            self.learning_controller.current_attempt_id = self.current_attempt_id
             self._update_context_indicator()
             self.main_stack.setCurrentWidget(canvas_wrapper)
             self._set_sidebar_active_button("canvas")
@@ -1127,6 +1138,12 @@ class MainWindow(QMainWindow):
                 worker.deleteLater()
                 return
             self._complete_active_request("recognition", getattr(payload, "request_id", None))
+            if getattr(result, "confidence", 0.0) < 0.45:
+                self._on_auto_ai_failed(
+                    f"Low-confidence reading: {getattr(result, 'plain_text', '')}. Select the equation and try Feather again."
+                )
+                worker.deleteLater()
+                return
             self._on_auto_ai_requested(result, target_pos)
             worker.deleteLater()
             
@@ -1308,7 +1325,8 @@ class MainWindow(QMainWindow):
             canvas_context=canvas_context,
             source_stroke_ids=source_stroke_ids,
             recognized_content=query_text,
-            recognition_confidence=getattr(query, 'confidence', None)
+            recognition_confidence=getattr(query, 'confidence', None),
+            group_revision=getattr(query, 'group_revision', None)
         )
 
         self._register_active_request("check_step", context_req)
@@ -1946,10 +1964,18 @@ class MainWindow(QMainWindow):
                 self.current_board.title = meta["name"]
                 self.title_edit.setText(meta["name"])
                 self.scene.set_notebook_id(meta["id"])
-                self.current_learning_session_id = self.memory_repo.get_or_create_active_session(
-                    notebook_id=meta["id"], user_id=self.current_user_id, subject_id=self.current_subject_id
-                )
-                self.current_attempt_id = self.memory_repo.get_or_create_active_attempt(self.current_learning_session_id)
+                if self.current_learning_session_id:
+                    self.memory_repo.bind_session_context(
+                        self.current_learning_session_id,
+                        notebook_id=meta["id"],
+                        user_id=self.current_user_id,
+                        subject_id=self.current_subject_id,
+                    )
+                else:
+                    self.current_learning_session_id = self.memory_repo.get_or_create_active_session(
+                        notebook_id=meta["id"], user_id=self.current_user_id, subject_id=self.current_subject_id
+                    )
+                    self.current_attempt_id = self.memory_repo.get_or_create_active_attempt(self.current_learning_session_id)
                 self.learning_controller.current_session_id = self.current_learning_session_id
                 self.learning_controller.current_attempt_id = self.current_attempt_id
             except Exception as err:
@@ -2206,7 +2232,10 @@ class MainWindow(QMainWindow):
         job_id = request_video_generation(
             VideoGenerationRequest(
                 request_id=f"job_{uuid.uuid4().hex[:8]}",
-                explanation_goal=selected_text
+                explanation_goal=selected_text,
+                recognized_content=selected_text,
+                subject_id=self.current_subject_id,
+                notebook_id=self._current_notebook_id,
             )
         )
         center_pos = self.view.mapToScene(self.view.viewport().rect().center())
@@ -2234,6 +2263,7 @@ class MainWindow(QMainWindow):
                 request_id=f"job_{uuid.uuid4().hex[:8]}",
                 explanation_goal="Explain this document.",
                 subject_id=current_subject or None,
+                notebook_id=self._current_notebook_id,
                 tutor_mode="EXPLAIN",
                 pdf_path=pdf_path,
                 page_range=page_range or None,
@@ -2549,12 +2579,12 @@ class MainWindow(QMainWindow):
                 return
         else:
             # Mode 1: Selection -> Exact
-            if selected:
-                rect = selected[0].sceneBoundingRect()
-                for item in selected[1:]:
-                    rect = rect.united(item.sceneBoundingRect())
-            else:
-                rect = self.scene.itemsBoundingRect()
+            if not selected:
+                QMessageBox.information(self, "Select Content", "Select the exact ink or items to convert to LaTeX.")
+                return
+            rect = selected[0].sceneBoundingRect()
+            for item in selected[1:]:
+                rect = rect.united(item.sceneBoundingRect())
             rect.adjust(-20, -20, 20, 20)
 
         if rect.isEmpty():
@@ -2614,8 +2644,13 @@ class MainWindow(QMainWindow):
 
         request = LatexGenerationRequest(
             request_id=f"latex_{uuid.uuid4().hex[:8]}",
+            subject_id=self.current_subject_id,
+            notebook_id=self._current_notebook_id,
+            canvas_revision=self.scene.revision,
             mode=LatexGenerationMode.VIEWPORT_DOCUMENT if template_type == "Document" else LatexGenerationMode.SELECTION_EXACT,
             anchor=LatexSourceAnchor(
+                selected_item_ids=[getattr(item, "item_id", str(id(item))) for item in selected],
+                selected_stroke_ids=[getattr(item, "item_id", str(id(item))) for item in selected if hasattr(item, "path")],
                 scene_bbox=CanvasBBox(
                     x=rect.x(), y=rect.y(), width=rect.width(), height=rect.height()
                 ),
@@ -2625,20 +2660,13 @@ class MainWindow(QMainWindow):
             image_b64=image_b64
         )
 
-        try:
-            job_id, is_local_direct = request_latex_generation(request)
-        except Exception as e:
-            QMessageBox.warning(self, "API Connection Error",
-                f"Could not connect to the backend server.\n"
-                f"Please ensure you are running the backend local server.\n\nError: {e}")
-            return
-
         if hasattr(self, 'speedometer_widget'):
             self.speedometer_widget.start_task(f"Generating {template_type}...")
+        self._register_active_request("latex", request)
 
         self.latex_worker = LatexPollWorker(
             request=request,
-            is_local_direct=is_local_direct,
+            is_local_direct=None,
             parent=self
         )
         self.latex_worker.status_updated.connect(self._on_latex_status_updated)
@@ -2716,6 +2744,9 @@ class MainWindow(QMainWindow):
         self._show_or_update_tab(self.pdf_viewer_widget, tab_title)
 
     def _on_latex_ready(self, job_id, latex_code):
+        request = getattr(self, "_active_requests", {}).get("latex")
+        if not request or job_id != request.request_id or self._is_request_stale("latex", request):
+            return
         if hasattr(self, 'speedometer_widget'):
             self.speedometer_widget.finish_success("LaTeX Ready!")
         self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
@@ -2725,11 +2756,18 @@ class MainWindow(QMainWindow):
         self._show_or_update_tab(self.latex_editor_widget, "Editable LaTeX")
 
     def _on_latex_status_updated(self, job_id, stage, progress):
+        request = getattr(self, "_active_requests", {}).get("latex")
+        if not request or job_id != request.request_id:
+            return
         if hasattr(self, 'speedometer_widget'):
             self.speedometer_widget.update_progress(stage, progress)
         self.ask_bar.input_field.setPlaceholderText(f"{stage} ({progress}%)")
         
     def _on_latex_pdf_ready(self, job_id, pdf_url, pdf_b64):
+        request = getattr(self, "_active_requests", {}).get("latex")
+        if not request or job_id != request.request_id or self._is_request_stale("latex", request):
+            return
+        self._complete_active_request("latex", job_id)
         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
             self.progress_dialog.finish_success()
         self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")
@@ -2750,7 +2788,8 @@ class MainWindow(QMainWindow):
                 f.write(base64.b64decode(pdf_b64))
         else:
             try:
-                r = requests.get(pdf_url)
+                r = requests.get(pdf_url, timeout=15)
+                r.raise_for_status()
                 with open(save_path, "wb") as f:
                     f.write(r.content)
             except Exception as e:
@@ -2761,6 +2800,7 @@ class MainWindow(QMainWindow):
         self._show_or_update_tab(self.pdf_viewer_widget, f"PDF: {filename}")
 
     def _on_latex_failed(self, job_id, error_msg):
+        self._complete_active_request("latex", job_id)
         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
             self.progress_dialog.finish_error(error_msg)
         self.ask_bar.input_field.setPlaceholderText("Ask Kestrel a question or paste a link...")

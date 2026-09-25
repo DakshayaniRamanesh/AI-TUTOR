@@ -3,7 +3,7 @@ import os
 class AIModelConfig:
     def __init__(self):
         self.provider = os.getenv("KESTREL_AI_PROVIDER", "gemini").lower()
-        self.model_id = os.getenv("KESTREL_AI_MODEL", "gemini-2.5-flash")
+        self.model_id = os.getenv("KESTREL_AI_MODEL", "gemini-flash-lite-latest")
         
         # Determine the api key env var name based on provider
         if self.provider == "gemini" or self.provider == "google":

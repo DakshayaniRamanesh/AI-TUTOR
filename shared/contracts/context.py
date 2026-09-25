@@ -93,6 +93,7 @@ class ContextRequest(RequestTrace):
     recognized_content: Optional[str] = None
     recognition_ambiguities: List[str] = Field(default_factory=list)
     recognition_confidence: Optional[float] = None
+    group_revision: Optional[int] = None
 
 class ContextBundle(ContractModel):
     request_id: StableId

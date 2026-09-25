@@ -1,6 +1,7 @@
 import re
 import threading
 from typing import Optional, Callable
+from PyQt6.QtCore import QObject, pyqtSignal
 from backend.latex_video.narration_planner import _LatexToSpeech
 
 def clean_text_for_speech(text: str) -> str:
@@ -25,7 +26,7 @@ def clean_text_for_speech(text: str) -> str:
     spoken = re.sub(r'\s+', ' ', spoken).strip()
     return spoken
 
-class VoiceNarrationService:
+class VoiceNarrationService(QObject):
     """
     Asynchronous text-to-speech service for Kestrel.
     Speaks the exact feedback shown on screen, translated to conversational mathematics.
@@ -33,6 +34,7 @@ class VoiceNarrationService:
     """
 
     _instance: Optional['VoiceNarrationService'] = None
+    narration_finished = pyqtSignal()
 
     @classmethod
     def instance(cls) -> 'VoiceNarrationService':
@@ -41,6 +43,7 @@ class VoiceNarrationService:
         return cls._instance
 
     def __init__(self):
+        super().__init__()
         self._current_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._is_playing = False
@@ -67,6 +70,15 @@ class VoiceNarrationService:
             if on_finished:
                 on_finished()
             return
+
+        if on_finished:
+            def _once():
+                try:
+                    self.narration_finished.disconnect(_once)
+                except (TypeError, RuntimeError):
+                    pass
+                on_finished()
+            self.narration_finished.connect(_once)
 
         with self._lock:
             self._stop_event.clear()
@@ -96,8 +108,7 @@ class VoiceNarrationService:
                 finally:
                     with self._lock:
                         self._is_playing = False
-                    if on_finished:
-                        on_finished()
+                    self.narration_finished.emit()
 
             self._current_thread = threading.Thread(target=_run, daemon=True)
             self._current_thread.start()

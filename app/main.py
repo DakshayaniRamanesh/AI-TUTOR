@@ -40,11 +40,8 @@ class _ImportPreloader(QObject):
     def run(self):
         try:
             self.status.emit("Setting up database…")
-            try:
-                from app.storage.database_ops import bootstrap_db
-                bootstrap_db()
-            except Exception as e:
-                print(f"[DB] Migration failed: {e}")
+            from app.storage.database_ops import bootstrap_db
+            bootstrap_db()
 
             self.status.emit("Loading modules…")
             # Trigger the slow imports now (qdrant_client, sqlalchemy, etc.)

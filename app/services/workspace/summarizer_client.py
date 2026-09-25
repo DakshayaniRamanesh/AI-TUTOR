@@ -71,9 +71,8 @@ def summarize_url(url: str, title: str = "") -> str:
 
     combined_text = "\n".join(paragraphs[:30]) # Up to 30 paragraphs
 
-    # 1. Try Gemini Models for deep AI explanation
-    if GOOGLE_API_KEY and combined_text:
-        models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"]
+    # 1. Use the same tested model as the rest of Kestrel.
+    if combined_text:
         prompt = (
             f"You are Kestrel AI Tutor, an expert professor. Create an IN-DEPTH, TEXTBOOK-GRADE STUDY GUIDE "
             f"for a student's notebook based on this reference:\n\n"
@@ -88,18 +87,13 @@ def summarize_url(url: str, title: str = "") -> str:
             f"5. ✎ Practice Exercises for Self-Testing\n\n"
             f"Make it thorough, detailed, and rich with information for studying!"
         )
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-
-        for model in models:
-            try:
-                api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GOOGLE_API_KEY}"
-                resp = requests.post(api_url, json=payload, timeout=8)
-                if resp.status_code == 200:
-                    result_json = resp.json()
-                    ai_text = result_json["candidates"][0]["content"]["parts"][0]["text"]
-                    return f"Study Guide: {display_title}\nSource: {url}\n\n{to_pretty_math(ai_text)}"
-            except Exception:
-                continue
+        try:
+            from shared.ai_client import ai_client
+            ai_text = ai_client.generate_content(prompt, temperature=0.0).strip()
+            if ai_text:
+                return f"Study Guide: {display_title}\nSource: {url}\n\n{to_pretty_math(ai_text)}"
+        except Exception as err:
+            print(f"[Summarizer] Active model unavailable: {err}")
 
     # 2. In-Depth Structured Fallback Study Guide (Uses all scraped headings & 30+ paragraphs)
     study_sections = []
@@ -175,4 +169,3 @@ class UrlSummarizerWorker(QThread):
     def run(self):
         summary = summarize_url(self.url, title=self.title)
         self.finished.emit(self.url, self.title, summary)
-

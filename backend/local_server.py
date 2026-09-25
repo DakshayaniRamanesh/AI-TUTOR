@@ -154,7 +154,12 @@ async def generate(
     cache_data = {
         "prompt": job.user_prompt,
         "subject_id": job.subject_id,
-        "bbox": request.anchor_bbox.model_dump(mode='json') if request.anchor_bbox else None
+        "bbox": request.anchor_bbox.model_dump(mode='json') if request.anchor_bbox else None,
+        "pdf_path": request.pdf_path,
+        "page_range": request.page_range,
+        "emphasis_note": request.emphasis_note,
+        "output_type": request.output_type,
+        "selection_payload": request.selection_payload,
     }
     cache_key = hashlib.md5(json.dumps(cache_data, sort_keys=True).encode()).hexdigest()
     job.metadata["cache_key"] = cache_key
@@ -559,4 +564,3 @@ async def ask_ai(req: AskRequest):
         return JSONResponse({"status": "error", "message": "All LLM backends failed or no keys configured."}, status_code=500)
 
     return {"status": "ok", "raw_output": raw_output, "asked_explain": asked_explain}
-
