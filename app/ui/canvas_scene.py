@@ -885,8 +885,17 @@ class CanvasScene(QGraphicsScene):
             start_ts = time.time() * 1000.0
             end_ts = time.time() * 1000.0
             if hasattr(final_item, "raw_stroke") and final_item.raw_stroke:
-                start_ts = final_item.raw_stroke[0].get("timestamp", start_ts)
-                end_ts = final_item.raw_stroke[-1].get("timestamp", end_ts)
+                first_pt = final_item.raw_stroke[0]
+                last_pt = final_item.raw_stroke[-1]
+                if isinstance(first_pt, dict):
+                    start_ts = first_pt.get("timestamp", start_ts)
+                elif isinstance(first_pt, (tuple, list)) and len(first_pt) > 3:
+                    start_ts = first_pt[3]
+
+                if isinstance(last_pt, dict):
+                    end_ts = last_pt.get("timestamp", end_ts)
+                elif isinstance(last_pt, (tuple, list)) and len(last_pt) > 3:
+                    end_ts = last_pt[3]
                 
             rect = final_item.sceneBoundingRect()
             stroke_data = StrokeData(

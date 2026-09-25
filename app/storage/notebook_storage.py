@@ -330,6 +330,13 @@ class NotebookStorage:
         index = cls.get_index()
         new_index = [entry for entry in index if entry["id"] != notebook_id]
         cls._save_index(new_index)
+
+        try:
+            from app.storage.database_ops import delete_notebook_record
+            delete_notebook_record(notebook_id)
+        except Exception as err:
+            print(f"[NotebookStorage] Notice deleting DB record: {err}")
+
         return True
 
     # ─── Breadcrumb ───────────────────────────────────────────────────────────

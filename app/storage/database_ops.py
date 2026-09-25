@@ -77,11 +77,51 @@ def create_notebook(name: str, subject_id: Optional[str] = None, override_id: st
 
 def delete_subject(subject_id: str):
     """Deletes a subject and all its related cascades (notebooks, etc) from the DB."""
+    from sqlalchemy import text
+    from app.storage.notebook_storage import NotebookStorage
     with SessionLocal() as db:
-        subject = db.query(Subject).filter(Subject.id == subject_id).first()
-        if subject:
-            db.delete(subject)
-            db.commit()
+        # 1. Fetch notebook IDs to delete their files too
+        nb_ids = [r[0] for r in db.execute(
+            text("SELECT id FROM notebooks WHERE subject_id = :sid"),
+            {"sid": subject_id}
+        ).fetchall()]
+
+        # 2. Nullify references in learning_sessions
+        if nb_ids:
+            for n_id in nb_ids:
+                db.execute(text("UPDATE learning_sessions SET notebook_id = NULL WHERE notebook_id = :nid"), {"nid": n_id})
+        db.execute(text("UPDATE learning_sessions SET subject_id = NULL WHERE subject_id = :sid"), {"sid": subject_id})
+
+        # 3. Delete learner observations
+        db.execute(text("DELETE FROM learner_observations WHERE subject_id = :sid"), {"sid": subject_id})
+
+        # 4. Delete graph evidence
+        db.execute(text("DELETE FROM graph_evidence WHERE subject_id = :sid"), {"sid": subject_id})
+
+        # 5. Delete concept edges and nodes
+        db.execute(text("DELETE FROM concept_edges WHERE subject_id = :sid"), {"sid": subject_id})
+        db.execute(text("DELETE FROM concept_nodes WHERE subject_id = :sid"), {"sid": subject_id})
+
+        # 6. Delete subject chunks
+        db.execute(text("DELETE FROM subject_chunks WHERE subject_id = :sid"), {"sid": subject_id})
+
+        # 7. Delete materials and videos
+        db.execute(text("DELETE FROM materials WHERE subject_id = :sid"), {"sid": subject_id})
+        db.execute(text("DELETE FROM videos WHERE subject_id = :sid"), {"sid": subject_id})
+
+        # 8. Delete notebooks
+        db.execute(text("DELETE FROM notebooks WHERE subject_id = :sid"), {"sid": subject_id})
+
+        # 9. Delete subject itself
+        db.execute(text("DELETE FROM subjects WHERE id = :sid"), {"sid": subject_id})
+        db.commit()
+
+        # 10. Clean up physical notebook files
+        for n_id in nb_ids:
+            try:
+                NotebookStorage.delete_notebook(n_id)
+            except Exception:
+                pass
 
 def add_material(subject_id: str, filename: str, file_path: str, resource_type: str = "PDF") -> Material:
     """Logs an uploaded PDF/document under a subject."""
@@ -103,15 +143,21 @@ def add_video(subject_id: str, title: str, video_url: str) -> Video:
 
 def delete_notebook_record(notebook_id: str):
     """Deletes a notebook record from the DB. Does NOT delete the JSON board file."""
+    from sqlalchemy import text
     with SessionLocal() as db:
+        db.execute(
+            text("UPDATE learning_sessions SET notebook_id = NULL WHERE notebook_id = :nb_id"),
+            {"nb_id": notebook_id}
+        )
         nb = db.query(Notebook).filter(Notebook.id == notebook_id).first()
         if nb:
             db.delete(nb)
-            db.commit()
+        db.commit()
 
 def delete_material(material_id: str) -> Optional[str]:
     """Deletes a material record from the DB and its vector points. Returns the file_path."""
     from backend.workspace.subject_vector_store import SubjectVectorStore
+    from sqlalchemy import text
     
     with SessionLocal() as db:
         mat = db.query(Material).filter(Material.id == material_id).first()
@@ -126,6 +172,8 @@ def delete_material(material_id: str) -> Optional[str]:
         except Exception as e:
             print(f"[DB] Failed to delete vector points for material {material_id}: {e}")
             
+        db.execute(text("DELETE FROM graph_evidence WHERE material_id = :mid"), {"mid": material_id})
+        db.execute(text("DELETE FROM subject_chunks WHERE material_id = :mid"), {"mid": material_id})
         db.delete(mat)
         db.commit()
         return path
@@ -199,8 +247,11 @@ def update_subject_knowledge_graph(subject_id: str, nodes: List[dict], edges: Li
     """Merges new nodes and edges, or replaces them entirely if clear_existing is True."""
     with SessionLocal() as db:
         if clear_existing:
-            db.query(ConceptNode).filter(ConceptNode.subject_id == subject_id).delete()
-            # Cascade will automatically delete the related edges
+            from sqlalchemy import text
+            db.execute(text("DELETE FROM graph_evidence WHERE subject_id = :sid"), {"sid": subject_id})
+            db.execute(text("DELETE FROM concept_edges WHERE subject_id = :sid"), {"sid": subject_id})
+            db.execute(text("DELETE FROM concept_nodes WHERE subject_id = :sid"), {"sid": subject_id})
+            db.commit()
             
         # 1. Load existing nodes to check for duplicates
         existing_nodes = {

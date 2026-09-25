@@ -3,6 +3,7 @@ import sys
 import shutil
 import math
 import subprocess
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
     QListWidget, QListWidgetItem, QSplitter, QFileDialog, QMessageBox,
@@ -298,6 +299,7 @@ class ResourceRow(QFrame):
     
     def __init__(self, material, parent=None):
         super().__init__(parent)
+        self.material = material
         self.material_id = material.id
         self.file_path = getattr(material, 'file_path', None)
         c = ThemeManager.instance().get_colors()
@@ -711,6 +713,7 @@ class SubjectDetailView(QWidget):
                 self._resource_rows[res.id] = row
             else:
                 row.open_requested.connect(self.open_notebook.emit)
+                row.delete_requested.connect(self._on_delete_notebook)
             self.res_list_layout.addWidget(row)
             
         self._filter_resources()
@@ -852,6 +855,20 @@ class SubjectDetailView(QWidget):
                 try: os.remove(path)
                 except Exception: pass
             self.refresh_data()
+
+    def _on_delete_notebook(self, nb_id):
+        reply = QMessageBox.question(
+            self, "Delete Notebook", 
+            "Are you sure you want to delete this notebook?\nThis cannot be undone.", 
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                NotebookStorage.delete_notebook(nb_id)
+                delete_notebook_record(nb_id)
+            except Exception as e:
+                QMessageBox.warning(self, "Delete Failed", f"Failed to delete notebook:\n{e}")
+            self.refresh_data()
             
     def _open_file_external(self, path: str):
         if not path or not os.path.exists(path):
@@ -891,7 +908,7 @@ class SubjectDetailView(QWidget):
                 rows.append(w)
                 
         if sort_idx == 0:
-            rows.sort(key=lambda w: getattr(w.material, "created_at", getattr(w.material, "updated_at", None)), reverse=True)
+            rows.sort(key=lambda w: (getattr(w.material, "created_at", None) or getattr(w.material, "updated_at", None) or datetime.min), reverse=True)
         elif sort_idx == 1:
             rows.sort(key=lambda w: getattr(w.material, "filename", getattr(w.material, "title", getattr(w.material, "name", ""))).lower())
         elif sort_idx == 2:

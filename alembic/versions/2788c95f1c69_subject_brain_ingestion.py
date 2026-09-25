@@ -79,14 +79,12 @@ def upgrade() -> None:
     """)
     op.execute("""
         CREATE TRIGGER IF NOT EXISTS subject_chunks_ad AFTER DELETE ON subject_chunks BEGIN
-            INSERT INTO subject_chunks_fts(subject_chunks_fts, rowid, text, document_title, chapter, section, chunk_id, subject_id)
-            VALUES ('delete', old.rowid, old.text, old.document_title, old.chapter, old.section, old.id, old.subject_id);
+            DELETE FROM subject_chunks_fts WHERE rowid = old.rowid;
         END;
     """)
     op.execute("""
         CREATE TRIGGER IF NOT EXISTS subject_chunks_au AFTER UPDATE ON subject_chunks BEGIN
-            INSERT INTO subject_chunks_fts(subject_chunks_fts, rowid, text, document_title, chapter, section, chunk_id, subject_id)
-            VALUES ('delete', old.rowid, old.text, old.document_title, old.chapter, old.section, old.id, old.subject_id);
+            DELETE FROM subject_chunks_fts WHERE rowid = old.rowid;
             INSERT INTO subject_chunks_fts(rowid, text, document_title, chapter, section, chunk_id, subject_id)
             VALUES (new.rowid, new.text, new.document_title, new.chapter, new.section, new.id, new.subject_id);
         END;
